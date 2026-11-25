@@ -34,8 +34,11 @@ if (-not $Defaults) {
     # Ray passes trace a structure that is never built and write garbage:
     # rainbow speckles, black walls (list from puffnfresh/rebox's fast.c;
     # 2026-11-25 runs s15/s16: walls lit, fewer speckles without them).
+    # CS_CombinedReflections reads what they leave in their buffers (left out,
+    # their producers leave old garbage there): without it, run s21, faces
+    # and walls are clean and the rainbow glitter is mostly gone.
     if (-not $env:VILOCITY_LEAVE_OUT) {
-        $env:VILOCITY_LEAVE_OUT = "TraceRays_BVH,RTShadowTrace,RTDistantShadowTrace,RTDistantLODLightShadow,TraceShadowRays,RaytraceShadows,RaytraceVBuffer,IrradianceCache_ShadowTrace,ShadowRaytracing,CollisionRaytraced,PPR_Raytrace"
+        $env:VILOCITY_LEAVE_OUT = "TraceRays_BVH,RTShadowTrace,RTDistantShadowTrace,RTDistantLODLightShadow,TraceShadowRays,RaytraceShadows,RaytraceVBuffer,IrradianceCache_ShadowTrace,ShadowRaytracing,CollisionRaytraced,PPR_Raytrace,CS_CombinedReflections"
     }
 }
 

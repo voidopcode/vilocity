@@ -43,25 +43,33 @@ loads saves and gets into the world. The world is where the work is now.
 | 2 | Intro video with sound | ✅ works | ██████████ |
 | 3 | Start screen, profile and saves | ✅ works | ██████████ |
 | 4 | Loading into the world | ✅ works | ██████████ |
-| 5 | The world renders | 🟡 0.6-4.9 fps, hundreds of draws a frame dropped | ████░░░░░░ |
-| 6 | The world keeps running | 🟡 the loss 2-3 minutes in is fixed; a memory fault some 7 minutes in has a fix under test | █████░░░░░ |
-| 7 | Playable frame rate (30 fps) | 🔴 not yet | ░░░░░░░░░░ |
-| 8 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
+| 5 | The world renders | 🟡 prologue cutscenes and the first room play, 2-5 fps; some draws still dropped | █████░░░░░ |
+| 6 | The picture | 🟡 faces lit, walls lit, smooth edges (AMD's PC FSR); ray-traced light stands in as a constant, ray passes left out; a few sparkles and blocky edges against blurred backgrounds remain | █████░░░░░ |
+| 7 | The world keeps running | 🟡 the loss 2-3 minutes in is fixed; a driver timeout some 7 minutes in remains (a longer GPU timeout is being tested) | █████░░░░░ |
+| 8 | Playable frame rate (30 fps) | 🔴 not yet: the card waits on our copies of game memory (about 240 MB a frame in, 50 MB back) | █░░░░░░░░░ |
+| 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-25 14:57, game build Series 1.0.2.1
+**Latest test run:** 2026-11-25 15:06, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 31.9 fps |
-| Median frame time | 71 ms |
-| Last frame | 3.5 fps, 285 ms, 4758 draws, 578 dropped without a pipeline |
+| Best frame rate (menus included) | 30.5 fps |
+| Median frame time | 113 ms |
+| Last frame | 2.4 fps, 410 ms, 6582 draws, 694 dropped without a pipeline |
 | Shaders that failed to translate | compute 1 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Next up: the GPU device loss in the world, the draws dropped for lack of a
-host pipeline, and cutting frame time from hundreds of milliseconds to 33 ms.
+Latest: the console's ray-tracing passes are left out (they traced a
+structure that is never built and left rainbow speckles and black walls);
+the two halves of a 64-lane console wave meet between buffer writes and
+reads on 32-lane GPUs (after shadPS4 #5310); integer render targets no
+longer blend, so the pipelines the driver refused draw again.
+
+Next up: cutting the game-memory copies that leave the card idle most of
+the frame, the driver timeout some 7 minutes in, and the remaining
+sparkles and blocky edges.
 
 > [!WARNING]
 > Runs used to end with the GPU device removed 2-3 minutes into the world.
