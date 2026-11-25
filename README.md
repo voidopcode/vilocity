@@ -42,6 +42,18 @@ loads saves and gets into the world. The world is where the work is now.
 | 7 | Playable frame rate (30 fps) | 🔴 not yet | ░░░░░░░░░░ |
 | 8 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
+<!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
+**Latest test run:** 2026-11-25 11:31, game build Series 1.0.2.1
+
+| Measure | Value |
+|---------|-------|
+| Best frame rate (menus included) | 30.0 fps |
+| Median frame time | 731 ms |
+| Last frame | 1.4 fps, 734 ms, 7069 draws, 740 dropped without a pipeline |
+| Shaders that failed to translate | compute 1 |
+| Host pipelines refused by the driver | 1 |
+<!-- status:end -->
+
 Shaders the world uses, translated to DXIL so far:
 
 | Kind | Translated | |

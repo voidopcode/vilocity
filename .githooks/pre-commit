@@ -1,0 +1,5 @@
+#!/bin/sh
+# Refreshes the README's "Latest test run" block from the newest GTA VI log, so
+# every commit (and so every push) carries the current status.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/update-status.ps1 || exit 1
+git add README.md
