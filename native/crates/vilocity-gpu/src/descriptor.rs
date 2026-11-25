@@ -438,6 +438,8 @@ const DSV_TAG: u32 = u32::from_le_bytes(*b"vDSV");
 pub(crate) enum View {
     /// Constant buffer: GPU address and size.
     Constant(u64, u32),
+    /// An explicitly unbound constant-buffer descriptor.
+    NullConstant,
     /// Shader resource: resource, description (none: the resource's own).
     Shader(usize, Option<[u32; 10]>),
     /// Unordered access: resource, counter resource, description.
@@ -464,7 +466,7 @@ impl View {
             View::Shader(r, _) | View::Unordered(r, _, _) => {
                 crate::resource::buffer_bytes(*r as This).is_some()
             }
-            View::Sampler(_) | View::ConsoleSampler(_) => false,
+            View::NullConstant | View::Sampler(_) | View::ConsoleSampler(_) => false,
         }
     }
 }
@@ -941,6 +943,8 @@ pub(crate) extern "system" fn create_cbv(_: This, desc: *const [u32; 4], handle:
     if let Some([lo, hi, size, _]) = words(desc) {
         let address = u64::from(lo) | u64::from(hi) << 32;
         record(handle, View::Constant(address, size));
+    } else {
+        record(handle, View::NullConstant);
     }
 }
 
@@ -1301,6 +1305,25 @@ mod tests {
         slot::<extern "system" fn(This) -> u32>(h, 0x10)(h);
         // SAFETY: this allocation belongs to the test.
         unsafe { VirtualFree(memory, 0, MEM_RELEASE) };
+    }
+
+    #[test]
+    fn a_null_cbv_replaces_a_live_descriptor_and_survives_a_copy() {
+        let mut slots = [0u64; 8];
+        let first = slots.as_mut_ptr() as u64;
+        let second = first + 32;
+        let device = std::ptr::null();
+        create_cbv(device, &[0x1000, 1, 256, 0], first);
+        copy_simple(device, 1, second, first, VIEWS_KIND);
+        let live = view(second).expect("copied constant buffer");
+        assert_eq!(live, View::Constant(0x1_0000_1000, 256));
+
+        create_cbv(device, std::ptr::null(), first);
+        let cleared = view(first).expect("an explicit null descriptor can be copied");
+        assert_eq!(cleared, View::NullConstant);
+        assert_eq!(view(second), Some(live));
+        copy_simple(device, 1, second, first, VIEWS_KIND);
+        assert_eq!(view(second), Some(cleared));
     }
 
     #[test]
