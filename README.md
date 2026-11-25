@@ -44,19 +44,19 @@ loads saves and gets into the world. The world is where the work is now.
 | 3 | Start screen, profile and saves | ✅ works | ██████████ |
 | 4 | Loading into the world | ✅ works | ██████████ |
 | 5 | The world renders | 🟡 prologue cutscenes and the first room play, 4-8 fps (about 130-280 ms a frame, 200 ms median); every shader translates; some draws still dropped | ██████░░░░ |
-| 6 | The picture | 🟡 no rainbow glitter, no orange dashes, faces and rooms lit, window light and shadows on heads, no holes in the jumpsuits, jumpsuits their real orange, smooth edges (AMD's PC FSR); ray-traced light stands in as a constant; some characters' faces are still too dark in the cutscenes | ████████░░ |
+| 6 | The picture | 🟡 no rainbow glitter, no orange dashes, faces and rooms lit, window light and shadows on heads, no holes in the jumpsuits, jumpsuits their real orange, smooth edges (AMD's PC FSR); ray-traced light stands in as a constant; the jumpsuits are orange in some runs and red in others | ████████░░ |
 | 7 | The world keeps running | 🟡 the loss 2-3 minutes in is fixed; a driver timeout some 7 minutes in remains (a longer GPU timeout is being tested) | █████░░░░░ |
 | 8 | Playable frame rate (30 fps) | 🔴 not yet: the card's own work is 70-130 ms a frame and our submit thread's copies and copy-back 100-150 ms; the card no longer waits for the game's writes beside shader writes | ██░░░░░░░░ |
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-25 22:27, game build Series 1.0.2.1
+**Latest test run:** 2026-11-25 22:50, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 31.3 fps |
-| Median frame time | 349 ms |
-| Last frame | 2.5 fps, 399 ms, 4729 draws, 582 dropped without a pipeline |
+| Best frame rate (menus included) | 30.0 fps |
+| Median frame time | 222 ms |
+| Last frame | 2.8 fps, 360 ms, 4775 draws, 587 dropped without a pipeline |
 | Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -77,7 +77,9 @@ target dumps (`VILOCITY_DUMP_BUFFERS`). The same lost barrier waits in the
 ped skinning and meshlet culling programs left a dark jagged hole that came
 and went on the jumpsuit's shoulders, and in the hair tile programs a dark band across
 the bald inmate's head and red instead of orange jumpsuits; those wait at
-every barrier too now.
+every barrier too now. So do the face programs (subsurface tiles, blend
+shape normals, lips, eyes): faces in the prologue cutscenes are lit now
+instead of black but for the eyes.
 
 Before that, the shadow programs themselves got the same treatment: a lane
 that left a loop early passed a barrier whose wait was dropped, and the
@@ -96,7 +98,7 @@ instructions (VIctory #2143: 16-18 KiB of local memory per thread on
 NVIDIA), constant buffer views capped at 64 KiB (VItoriaBr), null constant
 buffer writes (VIcky), and a 64-thread card compare (victory-fork #1014).
 
-Next up: faces still too dark in the cutscenes, our submit thread's copies of game
+Next up: the jumpsuit colour that changes from run to run, our submit thread's copies of game
 memory, the heaviest compute programs, and the driver timeout some 7 minutes
 in.
 
