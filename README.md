@@ -44,7 +44,7 @@ loads saves and gets into the world. The world is where the work is now.
 | 3 | Start screen, profile and saves | ✅ works | ██████████ |
 | 4 | Loading into the world | ✅ works | ██████████ |
 | 5 | The world renders | 🟡 prologue cutscenes and the first room play, 4-8 fps (about 130-280 ms a frame, 200 ms median); every shader translates; some draws still dropped | ██████░░░░ |
-| 6 | The picture | 🟡 no rainbow glitter, no orange dashes, faces and rooms lit, window light and shadows on heads, no holes in the jumpsuits, jumpsuits their real orange, smooth edges (AMD's PC FSR); ray-traced light stands in as a constant; the jumpsuits are orange in some runs and red in others | ████████░░ |
+| 6 | The picture | 🟡 no rainbow glitter, no orange dashes, faces and rooms lit, window light and shadows on heads, no holes in the jumpsuits, smooth edges (AMD's PC FSR); ray-traced light stands in as a constant; the jumpsuits are orange in some runs and red in others | ████████░░ |
 | 7 | The world keeps running | 🟡 the loss 2-3 minutes in is fixed; a driver timeout some 7 minutes in remains (a longer GPU timeout is being tested) | █████░░░░░ |
 | 8 | Playable frame rate (30 fps) | 🔴 not yet: the card's own work is 70-130 ms a frame and our submit thread's copies and copy-back 100-150 ms; the card no longer waits for the game's writes beside shader writes | ██░░░░░░░░ |
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
@@ -98,7 +98,8 @@ instructions (VIctory #2143: 16-18 KiB of local memory per thread on
 NVIDIA), constant buffer views capped at 64 KiB (VItoriaBr), null constant
 buffer writes (VIcky), and a 64-thread card compare (victory-fork #1014).
 
-Next up: the jumpsuit colour that changes from run to run, our submit thread's copies of game
+Next up: the jumpsuit colour that changes from run to run, our submit
+thread's copies of game
 memory, the heaviest compute programs, and the driver timeout some 7 minutes
 in.
 
