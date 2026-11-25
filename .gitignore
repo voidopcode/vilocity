@@ -3,3 +3,6 @@
 *.exe
 *.dll
 *.pdb
+
+# Local notes, not published
+/docs/LINEAGE.md

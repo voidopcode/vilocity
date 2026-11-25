@@ -1,6 +1,10 @@
 <p align="center">
-  <img src="compat/assets/readme/banner.svg" width="100%" alt="Vilocity: Xbox Series X|S games you own, running natively on Windows">
+  <img src="assets/logo.svg" width="160" alt="Vilocity logo">
 </p>
+
+<h1 align="center">Vilocity</h1>
+
+<p align="center"><b>Xbox Series X|S games you own, running natively on Windows.</b></p>
 
 <p align="center">
   <img alt="Status: not playable yet" src="https://img.shields.io/badge/GTA%20VI-in%20world%2C%20not%20playable-f5a623?style=for-the-badge">
@@ -8,8 +12,6 @@
   <img alt="Direct3D 12, Shader Model 6.6" src="https://img.shields.io/badge/D3D12-SM%206.6-1fb9d8?style=for-the-badge">
   <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-7c5cff?style=for-the-badge">
 </p>
-
-# Vilocity
 
 Runs Xbox Series X|S (GDK) games you own natively on Windows. There is no CPU
 emulation: the game's x64 code runs in our process, Vilocity supplies the
@@ -147,23 +149,11 @@ No game data is needed.
 - `native/`: the native engine's crates (`vilocity-core`, `-gpu`, `-shader`, ...) and `vilocity-native`
 - `compat/`: the compat engine, crate `vilocity-compat`
 - `scripts/`: GTA VI launcher and live monitor
-- `upstream-watch/`: daily review of upstream commits to port
 
 One Cargo workspace at the root; one `target\` folder for everything.
 
-## Credits and licences
+## Licence
 
-Vilocity is built on two open-source projects:
-
-- the **native** engine is [VIctory](https://github.com/Marvisak/VIctory)
-  (GPL-3.0-or-later, `native/LICENSE`), with the changes of
-  [fxceless's VIctory fork](https://github.com/fxceless/victory-fork) and the
-  forks it credits,
-- the **compat** engine is [XCL](https://github.com/xcl-dev/xcl) by ivall
-  (GPL-2.0-only, `compat/LICENSE`, `compat/THIRD_PARTY.md`).
-
-Which upstream commits each engine carries, and what Vilocity changed on top,
-is in [docs/LINEAGE.md](docs/LINEAGE.md).
-
-Each engine keeps its licence. `vilocity.exe` links both, which is fine for
+The native engine is GPL-3.0-or-later (`native/LICENSE`), the compat engine
+GPL-2.0-only (`compat/LICENSE`). `vilocity.exe` links both, which is fine for
 your own use, but that binary cannot be redistributed under either licence.
