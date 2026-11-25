@@ -50,13 +50,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-25 16:08, game build Series 1.0.2.1
+**Latest test run:** 2026-11-25 16:44, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 30.8 fps |
-| Median frame time | 141 ms |
-| Last frame | 4.7 fps, 211 ms, 4520 draws, 592 dropped without a pipeline |
+| Best frame rate (menus included) | 30.0 fps |
+| Median frame time | 38 ms |
+| Last frame | 3.7 fps, 268 ms, 5260 draws, 675 dropped without a pipeline |
 | Shaders that failed to translate | compute 1 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->

@@ -1875,6 +1875,10 @@ struct CardRange {
 }
 
 /// What a submission does for copies in the card's memory.
+/// Since the last frame-rate line: changed ranges that went up to copies in
+/// the card's memory through the scatter pass ([`crate::scatter`]).
+static SCATTERED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 struct CardPlan {
     ranges: Vec<CardRange>,
     /// The compare, run after the submission's lists.
@@ -1882,6 +1886,9 @@ struct CardPlan {
     /// The copies whose card side was brought up to date, alive until the
     /// submission has run.
     _synced: Vec<std::sync::Arc<crate::shadow::Shadow>>,
+    /// The run tables of the scatter passes that brought them up to date
+    /// ([`crate::scatter`]), alive until the submission has run.
+    _tables: Vec<crate::scatter::Table>,
     /// The lists of ours the plan recorded (whether the compare, the
     /// list), given back by `Host::card_done`.
     lists: Vec<(bool, Prelude)>,
@@ -3093,9 +3100,13 @@ fn stale_under_flights(runs: &[&HostList]) -> bool {
         // (`VILOCITY_MERGE_RUNS`: the cap. Run 218 had 500 to 5,400 changed
         // runs a frame of a few bytes each, and the cap of 512 settled the
         // flights twice a frame, 50 ms of the submitting thread.)
+        // With the scatter pass (`crate::scatter`) the runs go up in one
+        // dispatch however many there are: run gta6-20261125-154843 had
+        // 60-70 thousand a frame, and settled for them at any cap.
         static RUNS: OnceLock<usize> = OnceLock::new();
         let mut runs_left = *RUNS.get_or_init(|| {
-            std::env::var("VILOCITY_MERGE_RUNS").ok().and_then(|v| v.trim().parse::<usize>().ok()).map_or(512, |n| n.clamp(1, 1 << 16))
+            let default = if crate::scatter::get().is_some() { 1 << 22 } else { 512 };
+            std::env::var("VILOCITY_MERGE_RUNS").ok().and_then(|v| v.trim().parse::<usize>().ok()).map_or(default, |n| n.clamp(1, 1 << 22))
         });
         return spans.iter().any(|(shadow, from, to)| shadow.merge_under_writes(*from, *to - *from, &mut runs_left));
     }
@@ -3516,8 +3527,9 @@ fn late_line(frames: f64) {
     if late_exact() {
         let [pages, runs, bytes] = crate::shadow::merged_stats().map(|n| n as f64 / frames);
         let [unwatched, unknown, no_snapshot, too_many] = crate::shadow::unmerged_stats().map(|n| n as f64 / frames);
+        let scattered = SCATTERED.swap(0, Ordering::Relaxed) as f64 / frames;
         tracing::info!(
-            "title bytes put in under flights' shader writes per frame (VILOCITY_LATE_WAIT=2): {pages:.0} pages looked at,              {runs:.0} changed runs, {:.2} MB; left to a settle: {unwatched:.1} not write-watched, {unknown:.1} not known              what was written, {no_snapshot:.1} without a snapshot, {too_many:.1} over VILOCITY_MERGE_RUNS",
+            "title bytes put in under flights' shader writes per frame (VILOCITY_LATE_WAIT=2): {pages:.0} pages looked at,              {runs:.0} changed runs, {:.2} MB; left to a settle: {unwatched:.1} not write-watched, {unknown:.1} not known              what was written, {no_snapshot:.1} without a snapshot, {too_many:.1} over VILOCITY_MERGE_RUNS; changed ranges              sent to the card by the scatter pass: {scattered:.0}",
             bytes / (1 << 20) as f64
         );
     }
@@ -4178,6 +4190,7 @@ impl Host {
             }
         }
         let mut used: Vec<(bool, Prelude)> = Vec::new();
+        let mut tables: Vec<crate::scatter::Table> = Vec::new();
         // The changed bytes through the copy queue (`VILOCITY_QUEUE2` bit
         // 2): the landing buffer they are in, in the order of `dirty`'s
         // ranges, once the direct queue has waited. `None`: straight from
@@ -4244,13 +4257,37 @@ impl Host {
                         let Some((staging, before, size)) = shadow.card_sides() else {
                             continue;
                         };
-                        for &(a, b) in ranges {
-                            match &landed {
-                                Some(landing) => list.CopyBufferRegion(&shadow.buffer, a as u64, landing, at, (b - a) as u64),
-                                None => list.CopyBufferRegion(&shadow.buffer, a as u64, staging, a as u64, (b - a) as u64),
+                        // Many runs straight from the CPU side: one scatter
+                        // pass instead of a copy each (`crate::scatter`).
+                        let scatter = (landed.is_none() && ranges.len() >= crate::scatter::FEWEST)
+                            .then(crate::scatter::get)
+                            .flatten()
+                            .zip(crate::scatter::table(ranges))
+                            .and_then(|(pass, words)| Some((pass, words.len(), crate::scatter::upload(&words)?)));
+                        let scattered = scatter.is_some();
+                        if let Some((pass, n, runs)) = scatter {
+                            // A buffer's state decayed to common at its last
+                            // submission's end; this list is its first use.
+                            list.ResourceBarrier(&[transition(
+                                &shadow.buffer,
+                                D3D12_RESOURCE_STATE_COMMON,
+                                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                            )]);
+                            pass.record(list, staging, &shadow.buffer, &runs.buffer, (n / 2) as u32);
+                            tables.push(runs);
+                            SCATTERED.fetch_add(ranges.len() as u64, Ordering::Relaxed);
+                            for &(a, b) in ranges {
+                                crate::shadow::CARD_STATS[0].fetch_add((b - a) as u64, Ordering::Relaxed);
                             }
-                            at += (b - a) as u64;
-                            crate::shadow::CARD_STATS[0].fetch_add((b - a) as u64, Ordering::Relaxed);
+                        } else {
+                            for &(a, b) in ranges {
+                                match &landed {
+                                    Some(landing) => list.CopyBufferRegion(&shadow.buffer, a as u64, landing, at, (b - a) as u64),
+                                    None => list.CopyBufferRegion(&shadow.buffer, a as u64, staging, a as u64, (b - a) as u64),
+                                }
+                                at += (b - a) as u64;
+                                crate::shadow::CARD_STATS[0].fetch_add((b - a) as u64, Ordering::Relaxed);
+                            }
                         }
                         crate::shadow::CARD_STATS[1].fetch_add(ranges.len() as u64, Ordering::Relaxed);
                         let Some(before) = before else {
@@ -4265,7 +4302,11 @@ impl Host {
                         if !ranges.is_empty() {
                             list.ResourceBarrier(&[transition(
                                 &shadow.buffer,
-                                D3D12_RESOURCE_STATE_COPY_DEST,
+                                if scattered {
+                                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS
+                                } else {
+                                    D3D12_RESOURCE_STATE_COPY_DEST
+                                },
                                 D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                             )]);
                         }
@@ -4279,8 +4320,11 @@ impl Host {
                         } else {
                             ranges.iter().map(|&(a, b)| shadow.card_run(a, b)).collect()
                         };
-                        // The same pieces in fewer passes (`rehash_runs`).
-                        let runs = if rehash_runs() { crate::shadow::joined_piece_runs(runs) } else { runs };
+                        // The same pieces in fewer passes (`rehash_runs`), and
+                        // always for many ranges: the merge of the title's
+                        // bytes under shader writes sends up tens of thousands
+                        // of runs a frame, a pass each without this.
+                        let runs = if rehash_runs() || runs.len() > 64 { crate::shadow::joined_piece_runs(runs) } else { runs };
                         CARD_PASSES[0].fetch_add(runs.len() as u64, Ordering::Relaxed);
                         CARD_PASSES[1].fetch_add(runs.iter().map(|r| u64::from(r.pieces)).sum::<u64>(), Ordering::Relaxed);
                         for run in runs {
@@ -4306,6 +4350,7 @@ impl Host {
             ranges: Vec::new(),
             check: None,
             _synced: dirty.into_iter().map(|(shadow, _)| shadow).collect(),
+            _tables: tables,
             lists: used,
             sent_as,
             inflight: false,
