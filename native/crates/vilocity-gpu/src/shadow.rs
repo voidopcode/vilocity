@@ -1747,6 +1747,16 @@ pub(crate) fn merged_stats() -> [u64; 3] {
     [0, 1, 2].map(|i| MERGED[i].swap(0, Ordering::Relaxed))
 }
 
+/// Since the last frame-rate line, why [`Shadow::merge_under_writes`] left
+/// the flights to be settled: memory not write-watched, the journal could
+/// not say what was written, no snapshot, more changed runs than allowed.
+static UNMERGED: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
+
+/// [`UNMERGED`], taken.
+pub(crate) fn unmerged_stats() -> [u64; 4] {
+    [0, 1, 2, 3].map(|i| UNMERGED[i].swap(0, Ordering::Relaxed))
+}
+
 /// `runs` (in order) with those a gap of `gap` bytes or fewer apart made
 /// one run, the gap's bytes included.
 fn joined_over(runs: Vec<(usize, usize)>, gap: usize) -> Vec<(usize, usize)> {
@@ -2887,6 +2897,7 @@ impl Shadow {
             return false;
         }
         if self.watched.load(Ordering::Relaxed) == NOT_WATCHED {
+            UNMERGED[0].fetch_add(1, Ordering::Relaxed);
             return true;
         }
         let base = start / PAGE;
@@ -2899,6 +2910,7 @@ impl Shadow {
             // those were all of run 99's cases: the flights were settled
             // 4-5 times a frame for "0 pages looked at".
             let Some((now, written)) = crate::watch::writes(a, e, true) else {
+                UNMERGED[1].fetch_add(1, Ordering::Relaxed);
                 return true;
             };
             let stale: Vec<usize> = {
@@ -2934,6 +2946,7 @@ impl Shadow {
                     let held = unsafe { std::slice::from_raw_parts_mut(self.data.add(at), n) };
                     let runs = joined_over(changed_runs(title, held), merge_gap());
                     if runs.len() > *runs_left {
+                        UNMERGED[3].fetch_add(1, Ordering::Relaxed);
                         return true;
                     }
                     *runs_left -= runs.len();
@@ -2945,6 +2958,7 @@ impl Shadow {
                     }
                 } else {
                     let Some(snapshot) = before.as_mut() else {
+                        UNMERGED[2].fetch_add(1, Ordering::Relaxed);
                         return true;
                     };
                     // SAFETY: the snapshot's allocation holds the copy's

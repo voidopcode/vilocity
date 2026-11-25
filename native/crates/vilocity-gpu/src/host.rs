@@ -2589,7 +2589,7 @@ fn blocked_by(written: &[(usize, usize)], runs: &[&HostList], count: bool) -> Op
                         // buffer of its own, four a frame, 43 to 60 ms a
                         // frame) and neither side had other bytes after
                         // one. A copy INTO such a range still waits.
-                        if !touches(written, dst, dst + len) && fill_ahead::on() {
+                        if !touches(written, dst, dst + len) && fill_ahead::ahead(src, len) {
                             if count {
                                 fill_ahead::read(src, len);
                             }
@@ -2607,7 +2607,7 @@ fn blocked_by(written: &[(usize, usize)], runs: &[&HostList], count: bool) -> Op
                     if touches(written, src, src + len) {
                         // Not waited for, and checked when the flights land
                         // (`fill_ahead`).
-                        if fill_ahead::on() {
+                        if fill_ahead::ahead(src, len) {
                             if count {
                                 fill_ahead::read(src, len);
                             }
@@ -2661,7 +2661,7 @@ fn blocked_by(written: &[(usize, usize)], runs: &[&HostList], count: bool) -> Op
 /// there, over every fill that read ahead of them) and from then on fills
 /// wait as before. `VILOCITY_FILL_WAIT=1`: they wait from the start.
 mod fill_ahead {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
     use std::sync::{Mutex, OnceLock};
 
@@ -2673,7 +2673,17 @@ mod fill_ahead {
     const KEEP: u64 = 16;
 
     /// A flight changed bytes a fill had read ahead of it: fills wait.
+    /// Set when more than [`MOST_HOT`] pieces are hot.
     static WAIT: AtomicBool = AtomicBool::new(false);
+    /// The pieces where a flight changed bytes a read ahead had taken: reads
+    /// there wait for flights from then on, the others still read ahead.
+    /// (Run gta6-20261125-153312: one 2 KiB buffer copy out of a range
+    /// shaders write turned waiting on for every fill, and the fills of
+    /// 480-byte constants out of the 174 MB buffer, whose bytes never
+    /// changed, cost 70 ms a frame waiting for the card.)
+    static HOT: Mutex<Option<HashSet<usize>>> = Mutex::new(None);
+    /// More hot pieces than this: every read waits, as before.
+    const MOST_HOT: usize = 64;
     /// Since the last frame line: fills that read ahead; landings' writes
     /// that touched one's piece. Since the start: fills that read bytes a
     /// flight then changed.
@@ -2705,6 +2715,33 @@ mod fill_ahead {
     pub(super) fn on() -> bool {
         static ON: OnceLock<bool> = OnceLock::new();
         *ON.get_or_init(|| std::env::var_os("VILOCITY_FILL_WAIT").is_none_or(|v| v != "1")) && !WAIT.load(Relaxed)
+    }
+
+    /// Whether a read of `len` bytes at `src` goes ahead of flights: [`on`],
+    /// and none of its pieces is hot ([`HOT`]).
+    pub(super) fn ahead(src: usize, len: usize) -> bool {
+        if !on() {
+            return false;
+        }
+        let hot = HOT.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(hot) = hot.as_ref() else { return true };
+        len == 0 || !(src / PIECE..=(src + len - 1) / PIECE).any(|piece| hot.contains(&piece))
+    }
+
+    /// Reads of `[from, to)` wait for flights from now on; every read when
+    /// too many pieces are hot. Whether `[from, to)` had a piece that was not
+    /// hot yet.
+    fn heat(from: usize, to: usize) -> bool {
+        let mut hot = HOT.lock().unwrap_or_else(|e| e.into_inner());
+        let hot = hot.get_or_insert_with(HashSet::new);
+        let mut new = false;
+        for piece in from / PIECE..=(to.max(from + 1) - 1) / PIECE {
+            new |= hot.insert(piece);
+        }
+        if hot.len() > MOST_HOT {
+            WAIT.store(true, Relaxed);
+        }
+        new
     }
 
     /// A fill reads `len` bytes at `src` ahead of flights that may write
@@ -2762,16 +2799,39 @@ mod fill_ahead {
             }
             let n = COUNT[2].fetch_add(1, Relaxed) + 1;
             let first = now.iter().zip(&new[a - at..b - at]).position(|(x, y)| x != y).unwrap_or(0);
-            if !WAIT.swap(true, Relaxed) {
+            if heat(from, to) {
                 tracing::warn!(
-                    "a fill of upload memory read {} bytes at {from:#x} in frame {read_in} ahead of a flight whose shaders changed \
-                     them (first at {:#x}, landed in frame {frame}): the lists of that submission drew with the bytes from before. \
-                     Fills wait for flights again from here on, as with VILOCITY_FILL_WAIT=1 ({n} such fills)",
+                    "a read of {} bytes at {from:#x} in frame {read_in} went ahead of a flight whose shaders changed them                      (first at {:#x}, landed in frame {frame}): the lists of that submission drew with the bytes from before.                      Reads of those 64 KiB pieces wait for flights from here on ({n} such reads; every read waits past                      {MOST_HOT} such pieces{})",
                     to - from,
-                    a + first
+                    a + first,
+                    if WAIT.load(Relaxed) { ", now" } else { "" }
                 );
             }
-            return;
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{MOST_HOT, PIECE, WAIT, ahead, heat};
+        use std::sync::atomic::Ordering::Relaxed;
+
+        /// Only reads touching a piece a flight changed after a read ahead
+        /// wait; past the cap every read does.
+        #[test]
+        fn reads_wait_only_in_hot_pieces() {
+            let base = 0x7f00_0000_0000usize;
+            assert!(ahead(base + 10, 100), "nothing hot yet");
+            assert!(heat(base + 10, base + 110), "a new hot piece");
+            assert!(!heat(base + 20, base + 30), "already hot");
+            assert!(!ahead(base + 500, 4), "same piece waits");
+            assert!(!ahead(base - 4, 8), "a read reaching into it waits");
+            assert!(ahead(base + PIECE, 64), "the next piece reads ahead");
+            assert!(ahead(base + 3 * PIECE, 0), "an empty read");
+            for i in 0..=MOST_HOT {
+                heat(base + (10 + i) * PIECE, base + (10 + i) * PIECE + 1);
+            }
+            assert!(WAIT.load(Relaxed) && !ahead(base + 5 * PIECE, 4), "past the cap every read waits");
+            WAIT.store(false, Relaxed);
         }
     }
 
@@ -2799,7 +2859,11 @@ mod fill_ahead {
             ahead as f64 / frames,
             looked as f64 / frames,
             COUNT[2].load(Relaxed),
-            if WAIT.load(Relaxed) { " (fills wait again)" } else { "" }
+            match (WAIT.load(Relaxed), HOT.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map_or(0, HashSet::len)) {
+                (true, _) => " (every fill waits again)".to_owned(),
+                (false, 0) => String::new(),
+                (false, n) => format!(" ({n} pieces of 64 KiB wait)"),
+            }
         );
     }
 }
@@ -3451,9 +3515,9 @@ fn late_line(frames: f64) {
     }
     if late_exact() {
         let [pages, runs, bytes] = crate::shadow::merged_stats().map(|n| n as f64 / frames);
+        let [unwatched, unknown, no_snapshot, too_many] = crate::shadow::unmerged_stats().map(|n| n as f64 / frames);
         tracing::info!(
-            "title bytes put in under flights' shader writes per frame (VILOCITY_LATE_WAIT=2): {pages:.0} pages looked at, \
-             {runs:.0} changed runs, {:.2} MB",
+            "title bytes put in under flights' shader writes per frame (VILOCITY_LATE_WAIT=2): {pages:.0} pages looked at,              {runs:.0} changed runs, {:.2} MB; left to a settle: {unwatched:.1} not write-watched, {unknown:.1} not known              what was written, {no_snapshot:.1} without a snapshot, {too_many:.1} over VILOCITY_MERGE_RUNS",
             bytes / (1 << 20) as f64
         );
     }

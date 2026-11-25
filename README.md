@@ -43,33 +43,38 @@ loads saves and gets into the world. The world is where the work is now.
 | 2 | Intro video with sound | ✅ works | ██████████ |
 | 3 | Start screen, profile and saves | ✅ works | ██████████ |
 | 4 | Loading into the world | ✅ works | ██████████ |
-| 5 | The world renders | 🟡 prologue cutscenes and the first room play, 2-5 fps; some draws still dropped | █████░░░░░ |
+| 5 | The world renders | 🟡 prologue cutscenes and the first room play, 3-7 fps (about 210-270 ms a frame); some draws still dropped | █████░░░░░ |
 | 6 | The picture | 🟡 faces lit, walls lit, smooth edges (AMD's PC FSR); ray-traced light stands in as a constant, ray passes left out; a few sparkles and blocky edges against blurred backgrounds remain | █████░░░░░ |
 | 7 | The world keeps running | 🟡 the loss 2-3 minutes in is fixed; a driver timeout some 7 minutes in remains (a longer GPU timeout is being tested) | █████░░░░░ |
-| 8 | Playable frame rate (30 fps) | 🔴 not yet: the card waits on our copies of game memory (about 240 MB a frame in, 50 MB back) | █░░░░░░░░░ |
+| 8 | Playable frame rate (30 fps) | 🔴 not yet: the card's own work is about 110 ms a frame, and the card still waits for game memory the CPU writes beside shader writes (about 100 ms a frame) | ██░░░░░░░░ |
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-25 15:06, game build Series 1.0.2.1
+**Latest test run:** 2026-11-25 16:08, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 30.5 fps |
-| Median frame time | 113 ms |
-| Last frame | 2.4 fps, 410 ms, 6582 draws, 694 dropped without a pipeline |
+| Best frame rate (menus included) | 30.8 fps |
+| Median frame time | 141 ms |
+| Last frame | 4.7 fps, 211 ms, 4520 draws, 592 dropped without a pipeline |
 | Shaders that failed to translate | compute 1 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: the console's ray-tracing passes are left out (they traced a
-structure that is never built and left rainbow speckles and black walls);
-the two halves of a 64-lane console wave meet between buffer writes and
-reads on 32-lane GPUs (after shadPS4 #5310); integer render targets no
-longer blend, so the pipelines the driver refused draw again.
+Latest: the denoisers of the ray-traced passes (`CS_SpatialFilter*`,
+`CS_BilateralBlur*`) are left out with them: they took 90 of 203 ms of the
+card's time a frame and spread the rays' garbage over heads; frames went
+from 300-410 to about 210-270 ms. Reads of game memory that shaders in
+flight may write no longer all wait once one of them mismatched: only its
+64 KiB piece does (70 ms a frame of waiting gone). Before that: the
+ray-tracing passes left out (rainbow speckles, black walls), the two
+halves of a 64-lane console wave meet between buffer writes and reads on
+32-lane GPUs (after shadPS4 #5310), integer render targets no longer blend.
 
-Next up: cutting the game-memory copies that leave the card idle most of
-the frame, the driver timeout some 7 minutes in, and the remaining
-sparkles and blocky edges.
+Next up: the CPU's scattered writes into memory shaders also write (60,000
+tiny changes a frame that end in a wait for the card), the remaining card
+time, the driver timeout some 7 minutes in, and the last sparkles and
+blocky edges.
 
 > [!WARNING]
 > Runs used to end with the GPU device removed 2-3 minutes into the world.

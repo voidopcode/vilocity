@@ -1,13 +1,18 @@
 # Plays GTA VI with Vilocity (in its sandbox) and opens a live monitor window.
-#   scripts\play-gta6.ps1 [-Game <folder>] [-Defaults]
+#   scripts\play-gta6.ps1 [-Game <folder>] [-Defaults] [-Diag] [-NoSandbox]
 # -Defaults leaves the frame-rate switches below off (the fork's defaults).
+# -Diag runs the diagnostics build (cargo build --profile diag -p vilocity
+# --features diagnostics), which logs where each frame's time goes.
+# -NoSandbox runs the game as you, outside its sandbox (for measuring).
 param(
     [string]$Game = $env:VILOCITY_GTA6_DIR,
-    [switch]$Defaults
+    [switch]$Defaults,
+    [switch]$Diag,
+    [switch]$NoSandbox
 )
 if (-not $Game) { throw "Pass -Game <game folder> or set VILOCITY_GTA6_DIR" }
 $root = Split-Path $PSScriptRoot
-$exe = Join-Path $root "target\release\vilocity.exe"
+$exe = Join-Path $root $(if ($Diag) { "target\diag\vilocity.exe" } else { "target\release\vilocity.exe" })
 $logs = Join-Path $env:LOCALAPPDATA "vilocity\logs"
 New-Item -ItemType Directory -Force $logs | Out-Null
 $log = Join-Path $logs ("gta6-{0:yyyyMMdd-HHmmss}.log" -f (Get-Date))
@@ -37,8 +42,12 @@ if (-not $Defaults) {
     # CS_CombinedReflections reads what they leave in their buffers (left out,
     # their producers leave old garbage there): without it, run s21, faces
     # and walls are clean and the rainbow glitter is mostly gone.
+    # CS_SpatialFilter* and CS_BilateralBlur* denoise those ray results: 90 of
+    # 203 ms of card time a frame (timing run gta6-20261125-155709); without
+    # them the frame went from 300-410 to 207 ms and the glitter they spread
+    # over heads is gone (run gta6-20261125-160106).
     if (-not $env:VILOCITY_LEAVE_OUT) {
-        $env:VILOCITY_LEAVE_OUT = "TraceRays_BVH,RTShadowTrace,RTDistantShadowTrace,RTDistantLODLightShadow,TraceShadowRays,RaytraceShadows,RaytraceVBuffer,IrradianceCache_ShadowTrace,ShadowRaytracing,CollisionRaytraced,PPR_Raytrace,CS_CombinedReflections"
+        $env:VILOCITY_LEAVE_OUT = "TraceRays_BVH,RTShadowTrace,RTDistantShadowTrace,RTDistantLODLightShadow,TraceShadowRays,RaytraceShadows,RaytraceVBuffer,IrradianceCache_ShadowTrace,ShadowRaytracing,CollisionRaytraced,PPR_Raytrace,CS_CombinedReflections,CS_SpatialFilter,CS_BilateralBlur"
     }
 }
 
@@ -52,7 +61,8 @@ if (Test-Path (Join-Path $ffx "amd_fidelityfx_upscaler_dx12.dll")) { $env:VILOCI
 $watch = Start-Process powershell -PassThru -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$monitor`" -Log `"$log`""
 Write-Host "log: $log"
 try {
-    & $exe play $Game *> $log
+    $sandbox = @(if ($NoSandbox) { '--no-sandbox' })
+    & $exe play $Game @sandbox *> $log
     Write-Host "Vilocity exited with code $LASTEXITCODE (log: $log)"
 } finally {
     # The monitor goes with the game (also when this window is closed with Ctrl+C).
