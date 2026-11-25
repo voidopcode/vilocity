@@ -298,6 +298,9 @@ struct Lower<'a> {
     /// With `split_lds`, LDS accesses in lane branches: per IR block whether every lane runs
     /// it, and whether the host waves meet at its start and before its exit ([`lds_meetings`]).
     lds_meet: Option<(Vec<bool>, Vec<(bool, bool)>)>,
+    /// [`split::buffer_meetings`]; (block, a store not yet met) as it is lowered.
+    buffer_meet: Option<(Vec<bool>, Vec<u8>)>,
+    buffer_at: (usize, u8),
     /// A console wave64 program run as two host waves of 32 that exchange through LDS: the first
     /// of two exchange dwords, whether the group has no upper half (32 threads or fewer), and per
     /// IR block whether every lane runs it (exchanges need both halves there).
@@ -1688,7 +1691,10 @@ impl<'a> Lower<'a> {
                 }
             }
         }
+        let buffer_meet = split::buffer_meetings(p, x.st, x.native.wave64, x.split, s.threads);
         Lower {
+            buffer_meet,
+            buffer_at: (usize::MAX, 0),
             s,
             x,
             bad,
@@ -5509,6 +5515,7 @@ impl<'a> Lower<'a> {
             let void = self.s.t.void;
             self.s.op(self.cur, "barrier", Attr::NoDuplicate, void, 80, &[mode]);
         }
+        self.buffer_meeting(b, name);
         let r = match &inst.fields {
             Fields::Sop { .. } => self.sop(inst),
             Fields::Sopp { .. } if name == "s_barrier" && self.no_barrier.contains(&b) => Ok(()),

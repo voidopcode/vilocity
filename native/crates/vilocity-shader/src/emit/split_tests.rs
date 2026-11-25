@@ -465,3 +465,4 @@ fn a_half_waits_for_its_late_partner() {
     check_in(&program_in(&[a, b, vop1(V_MOV_B32, 1, 20)], [256, 1, 1], 0), |t| t / 64 * 64 + 40);
 }
 
+

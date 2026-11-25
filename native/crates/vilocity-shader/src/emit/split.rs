@@ -383,3 +383,147 @@ impl<'a> Lower<'a> {
         self.s.m.select(self.cur, upper, hi, lo)
     }
 }
+
+/// A buffer or image store whose value a later load of the console wave may read.
+fn buffer_store(name: &str) -> bool {
+    ["buffer_store", "tbuffer_store", "global_store", "flat_store", "image_store"]
+        .iter()
+        .any(|p| name.starts_with(p))
+}
+
+/// A buffer or image load that may read what the other half of the console wave stored.
+fn buffer_load(name: &str) -> bool {
+    ["buffer_load", "tbuffer_load", "global_load", "flat_load", "image_load"]
+        .iter()
+        .any(|p| name.starts_with(p))
+}
+
+/// Since the halves last met: a store (1), a load (2).
+const STORED: u8 = 1;
+const LOADED: u8 = 2;
+
+/// Whether the halves meet before `name`, with `since` what came since they last met; then
+/// what has come since.
+fn buffer_step(name: &str, runs: bool, since: u8) -> (bool, u8) {
+    let (load, store) = (buffer_load(name), buffer_store(name));
+    // a load after a store reads it; a store after a load must not overwrite it first
+    let meet = runs && (load && since & STORED != 0 || store && since & LOADED != 0);
+    let since = if meet { 0 } else { since };
+    (meet, since | u8::from(store) * STORED | u8::from(load) * LOADED)
+}
+
+/// Buffer memory a console wave64 compute program writes and reads back within its wave: the
+/// console's 64 lanes run in step, so the title needs no barrier between a store and a load of
+/// the same memory (either order); two host waves of 32 race there (shadPS4 #5310: flickering
+/// effects on NVIDIA). The halves meet (a group barrier with a UAV fence) before a load a store
+/// may precede, and before a store a load may precede, since they last met, in blocks every
+/// lane runs. Per IR block: whether every lane runs it, and what may come before its start
+/// ([`STORED`], [`LOADED`]). `None` where nothing needs it. `VILOCITY_BUFFER_MEET=0` leaves it
+/// out.
+/// shortcut: groups of one console wave only (33 to 64 threads), where a barrier in a block
+/// every lane runs is reached by the whole group; stores and loads in lane branches are not
+/// ordered.
+pub(super) fn buffer_meetings(p: &Program, st: &Structured, wave64: bool, split: bool, threads: Option<[u32; 3]>) -> Option<(Vec<bool>, Vec<u8>)> {
+    let group: u32 = threads?.iter().product();
+    let off = std::env::var_os("VILOCITY_BUFFER_MEET").is_some_and(|v| v == "0");
+    if off || !wave64 || !(split || host_max_wave() == 32) || !(33..=64).contains(&group) || super::super::group_sync() == 0 {
+        return None;
+    }
+    let names = || p.blocks.iter().flat_map(|b| b.insts.iter()).map(|i| i.name());
+    if !names().any(buffer_store) || !names().any(buffer_load) {
+        return None;
+    }
+    let all = all_lane_blocks(st)?;
+    let runs = |b: usize| all.get(b).copied().unwrap_or(false);
+    let out = |b: usize, since: u8| {
+        p.blocks[b].insts.iter().fold(since, |since, i| buffer_step(i.name(), runs(b), since).1)
+    };
+    let mut since_in = vec![0u8; p.blocks.len()];
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for b in 0..p.blocks.len() {
+            let came = p.blocks[b].preds.iter().fold(since_in[b], |a, &q| a | out(q, since_in[q]));
+            if came != since_in[b] {
+                since_in[b] = came;
+                changed = true;
+            }
+        }
+    }
+    Some((all, since_in))
+}
+
+impl<'a> Lower<'a> {
+    /// Before instruction `name` of IR block `b` ([`buffer_meetings`]): the host waves meet
+    /// where the other half's store or load must be done first.
+    pub(super) fn buffer_meeting(&mut self, b: usize, name: &str) {
+        let Some((all, since_in)) = &self.buffer_meet else {
+            return;
+        };
+        let (runs, entered) = (all.get(b).copied().unwrap_or(false), since_in[b]);
+        if self.buffer_at.0 != b {
+            self.buffer_at = (b, entered);
+        }
+        let (meet, since) = buffer_step(name, runs, self.buffer_at.1);
+        self.buffer_at.1 = since;
+        if meet {
+            #[cfg(test)]
+            buffer_tests::MET.with(|m| m.set(m.get() + 1));
+            // a wait for the group, with UAV and shared-memory fences
+            let mode = self.s.m.i32(1 | 2 | 8);
+            let void = self.s.t.void;
+            self.s.op(self.cur, "barrier", Attr::NoDuplicate, void, 80, &[mode]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod buffer_tests {
+    use super::{LOADED, STORED, buffer_step};
+    use crate::emit::split_tests::{V_ADD_NC_U32, V_LSHLREV_B32, check_in, k, program_in, try_lower, vop2};
+
+    thread_local! {
+        /// Meetings the lowering on this thread added.
+        pub(super) static MET: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+
+    #[test]
+    fn a_half_reads_what_the_other_half_stored() {
+        // Each thread stores tid + 64 at dword tid, then loads dword tid ^ 32: the other
+        // half's. The console's lanes run in step; the split form's halves meet between the
+        // store and the load, and between the load and the final store.
+        const BUFFER_STORE_DWORD: u8 = 0x1C;
+        const BUFFER_LOAD_DWORD: u8 = 0x0C;
+        const V_XOR_B32: u8 = 0x1D;
+        let mubuf = |op: u8, vdata: u8, vaddr: u8| {
+            [0x38 << 26 | (op as u32) << 18 | 1 << 12, 0x80 << 24 | 2 << 16 | (vdata as u32) << 8 | vaddr as u32]
+        };
+        let mut body = vec![vop2(V_LSHLREV_B32, 2, k(2), 0), vop2(V_ADD_NC_U32, 3, k(64), 0)];
+        body.extend_from_slice(&mubuf(BUFFER_STORE_DWORD, 3, 2));
+        body.extend_from_slice(&[vop2(V_XOR_B32, 4, k(32), 0), vop2(V_LSHLREV_B32, 4, k(2), 4)]);
+        body.extend_from_slice(&mubuf(BUFFER_LOAD_DWORD, 1, 4));
+        let native = program_in(&body, [64, 1, 1], 0);
+        let met = |split| {
+            MET.with(|m| m.set(0));
+            try_lower(&native, split).expect("lower");
+            MET.with(|m| m.get())
+        };
+        assert_eq!(met(true), 2, "the split form's halves meet twice");
+        assert_eq!(met(false), 0, "one 64-lane wave needs no meeting");
+        check_in(&native, |t| (t ^ 32) + 64);
+    }
+
+    #[test]
+    fn the_halves_meet_between_a_store_and_a_load_either_way() {
+        // a load after a store meets, and then has met
+        assert_eq!(buffer_step("buffer_load_dword", true, STORED), (true, LOADED));
+        // a store after a load meets
+        assert_eq!(buffer_step("global_store_dword", true, LOADED), (true, STORED));
+        // loads after loads, stores after stores, and other instructions do not
+        assert_eq!(buffer_step("image_load", true, LOADED), (false, LOADED));
+        assert_eq!(buffer_step("buffer_store_dword", true, STORED), (false, STORED));
+        assert_eq!(buffer_step("v_add_nc_u32", true, STORED | LOADED), (false, STORED | LOADED));
+        // where not every lane runs, no barrier: what came is carried on
+        assert_eq!(buffer_step("buffer_load_dword", false, STORED), (false, STORED | LOADED));
+    }
+}
