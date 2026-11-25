@@ -33,22 +33,22 @@ loads saves and gets into the world. The world is where the work is now.
 
 | # | Stage | Status | |
 |---|-------|--------|---|
-| 1 | Boot and first-boot screens (accessibility, language, settings, legal) | ✅ works, 30 fps | `██████████` |
-| 2 | Intro video with sound | ✅ works | `██████████` |
-| 3 | Start screen, profile and saves | ✅ works | `██████████` |
-| 4 | Loading into the world (about 50 s) | ✅ works | `██████████` |
-| 5 | First room of the first mission renders | 🟡 lit and drawn, 250-380 ms a frame (3-4 fps) | `██████░░░░` |
-| 6 | Full world scene (streets, traffic, ray tracing) | 🔴 most of the scene still missing | `██░░░░░░░░` |
-| 7 | Playable frame rate (30 fps) | 🔴 not yet | `░░░░░░░░░░` |
-| 8 | Missions start to finish | 🔴 not yet | `░░░░░░░░░░` |
+| 1 | Boot and first-boot screens (accessibility, language, settings, legal) | ✅ works, 30 fps | ██████████ |
+| 2 | Intro video with sound | ✅ works | ██████████ |
+| 3 | Start screen, profile and saves | ✅ works | ██████████ |
+| 4 | Loading into the world (about 50 s) | ✅ works | ██████████ |
+| 5 | First room of the first mission renders | 🟡 lit and drawn, 250-380 ms a frame (3-4 fps) | ██████░░░░ |
+| 6 | Full world scene (streets, traffic, ray tracing) | 🔴 most of the scene still missing | ██░░░░░░░░ |
+| 7 | Playable frame rate (30 fps) | 🔴 not yet | ░░░░░░░░░░ |
+| 8 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 Shaders the world uses, translated to DXIL so far:
 
 | Kind | Translated | |
 |------|-----------:|---|
-| Mesh | 8,191 / 8,506 (96 %) | `██████████░` |
-| Vertex / pixel | 10,617 / 12,346 (86 %) | `█████████░░` |
-| Compute | 1,643 / 2,539 (65 %) | `███████░░░░` |
+| Mesh | 8,191 / 8,506 (96 %) | ██████████░ |
+| Vertex / pixel | 10,617 / 12,346 (86 %) | █████████░░ |
+| Compute | 1,643 / 2,539 (65 %) | ███████░░░░ |
 
 Next up: the remaining world shaders (including the ray-tracing builder),
 cutting frame time from hundreds of milliseconds to 33 ms, and GPU hangs a few
