@@ -10,7 +10,9 @@ if (-not $log) { Write-Host "update-status: no GTA VI log, README left as is"; e
 
 $fps = @(); $ms = @(); $draws = @(); $dropped = @()
 $untranslated = @{}; $refused = @{}; $build = $null
-foreach ($line in [IO.File]::ReadLines($log.FullName)) {
+# The game may still be writing the log, so open it shared.
+$reader = New-Object IO.StreamReader ([IO.File]::Open($log.FullName, 'Open', 'Read', 'ReadWrite'))
+while ($null -ne ($line = $reader.ReadLine())) {
     if ($line -match 'vilocity_gpu::host: ([\d.]+) fps, ([\d.]+) ms/frame.*?(\d+) draws/frame, dropped (\d+) without a host pipeline') {
         $fps += [double]$Matches[1]; $ms += [double]$Matches[2]
         $draws += [int]$Matches[3]; $dropped += [int]$Matches[4]
@@ -22,6 +24,7 @@ foreach ($line in [IO.File]::ReadLines($log.FullName)) {
         $build = $Matches[1]
     }
 }
+$reader.Close()
 
 $inv = [Globalization.CultureInfo]::InvariantCulture
 function Fmt($v, $f) { $v.ToString($f, $inv) }

@@ -169,6 +169,9 @@ pub(crate) struct Shader {
     pub wave_size: Option<u32>,
     /// Thread-group shared memory, in dwords.
     pub lds_dwords: u32,
+    /// The title's own part of it (what `ds_*` may reach): a spare dword
+    /// follows it, where out-of-range accesses go.
+    pub lds_title: u32,
     lds: Option<V>,
     main: V,
     pub entry: usize,
@@ -224,6 +227,7 @@ impl Shader {
             threads: None,
             wave_size: None,
             lds_dwords: 0,
+            lds_title: 0,
             lds: None,
             main,
             entry,

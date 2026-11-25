@@ -1446,7 +1446,9 @@ impl<'a> Lower<'a> {
         let mut halves: Option<u32> = None;
         if let StageIo::Cs(cs) = x.native.io {
             s.threads = Some(cs.threads);
-            s.lds_dwords = cs.lds_bytes() / 4;
+            s.lds_title = cs.lds_bytes() / 4;
+            // One spare dword past the title's for out-of-range `ds_*`.
+            s.lds_dwords = s.lds_title + u32::from(s.lds_title > 0);
             // Code reading other lanes needs the console's wave size and
             // lane order; so do lane masks read as numbers, and LDS shared
             // within one wave, where the console compiler leaves out barriers.
@@ -1598,7 +1600,8 @@ impl<'a> Lower<'a> {
             let mvc = g.max_vertex_count.max(1);
             let prims = GeometryIo::PRIMITIVES;
             s.threads = Some([64, 1, 1]);
-            s.lds_dwords = (64 * g.es_item_bytes + prims * mvc * g.vertex_bytes).div_ceil(4);
+            s.lds_title = (64 * g.es_item_bytes + prims * mvc * g.vertex_bytes).div_ceil(4);
+            s.lds_dwords = s.lds_title + u32::from(s.lds_title > 0);
             s.mesh = Some(super::shader::Mesh {
                 max_vertices: prims * mvc,
                 max_primitives: prims * mvc.saturating_sub(2).max(1),
@@ -1643,7 +1646,8 @@ impl<'a> Lower<'a> {
         if let StageIo::Ms(ms) = &x.native.io {
             s.prims = x.prims.clone();
             s.threads = Some([ms.threads, 1, 1]);
-            s.lds_dwords = ms.lds_bytes.div_ceil(4);
+            s.lds_title = ms.lds_bytes.div_ceil(4);
+            s.lds_dwords = s.lds_title + u32::from(s.lds_title > 0);
             s.mesh = Some(super::shader::Mesh {
                 max_vertices: ms.max_vertices,
                 max_primitives: ms.max_primitives,
@@ -5082,15 +5086,21 @@ impl<'a> Lower<'a> {
             return Err("LDS the program does not allocate");
         }
         let a = self.vgprs(inst, addr.as_ref().ok_or("an LDS address")?, 1)?[0];
-        // shortcut: LDS addresses are taken as aligned to what they access
-        // and in bounds (out-of-bounds console accesses read 0 and drop
-        // writes).
+        // shortcut: LDS addresses are taken as aligned to what they access.
+        // Out of range (the console reads 0 and drops the write), an access
+        // goes to the spare dword past the title's: an index past the array
+        // is undefined on the host and can stop an NVIDIA card. Reads there
+        // give 0 unless an earlier out-of-range write left something (after
+        // VItoriaBr a13a719).
         let dword = |l: &mut Self, bytes: u32| -> V {
             let c = l.cur;
             let o = l.s.m.i32(bytes);
             let at = l.s.m.bin(c, Bin::Add, a, o);
             let two = l.s.m.i32(2);
             let index = l.s.m.bin(c, Bin::LShr, at, two);
+            let spare = l.s.m.i32(l.s.lds_title);
+            let inside = l.s.m.cmp(c, pred::IULT, index, spare);
+            let index = l.s.m.select(c, inside, index, spare);
             let lds = l.s.lds();
             l.s.m.element(c, lds, index)
         };

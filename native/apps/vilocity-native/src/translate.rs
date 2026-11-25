@@ -198,7 +198,20 @@ pub fn warm_listed(paths: Vec<PathBuf>, file: &Path, jobs: Option<usize>) -> Res
                             let Some(bytes) = job.bytes() else {
                                 continue;
                             };
-                            let hash = blake3::hash(&bytes).to_hex()[..16].to_owned();
+                            // As the title passes it, so the hash is the one a run's log names.
+                            let size = bytes.get(0x18..0x1c).map_or(0, |b| {
+                                u32::from_le_bytes(b.try_into().expect("4")) as usize
+                            });
+                            let bytes = &bytes[..size.min(bytes.len())];
+                            let hash = blake3::hash(bytes).to_hex()[..16].to_owned();
+                            // `VILOCITY_DUMP_DIR=<folder>`: each container found is written
+                            // there too (`<hash>.dxbc`), for `shader-info --disasm`.
+                            if !all
+                                && wanted.contains(&hash)
+                                && let Some(dir) = std::env::var_os("VILOCITY_DUMP_DIR")
+                            {
+                                let _ = std::fs::write(PathBuf::from(dir).join(format!("{hash}.dxbc")), bytes);
+                            }
                             if limit.is_some_and(|n| began.elapsed().as_secs() >= n) {
                                 counts[3].fetch_add(1, Ordering::Relaxed);
                                 break;

@@ -175,9 +175,11 @@ pub fn loop_limit() -> u32 {
 /// thread: the group stands until Windows resets the card. (The console's
 /// barrier is the wave's, whatever lanes are live, and a wave that ended
 /// is not waited for.) `VILOCITY_GROUP_SYNC`:
-/// - unset or `2`: every barrier waits, as before.
-/// - `1`: the title's `s_barrier` waits only in a block every lane runs,
-///   in a program no lane can be cut out of at the iteration limit.
+/// - unset or `1`: the title's `s_barrier` waits only in a block every lane
+///   runs, in a program no lane can be cut out of at the iteration limit
+///   (GTA VI lost the card about two minutes in, every run, in a dispatch
+///   of a few groups, on an RTX 5080; VItoriaBr runs this way on NVIDIA).
+/// - `2`: every barrier waits, as before.
 /// - `0`: no barrier waits, neither the title's nor the ones the
 ///   translation adds (wave64 programs in two host waves exchange through
 ///   them, so such programs compute wrong values). For one run that tells
@@ -190,8 +192,8 @@ pub fn group_sync() -> u8 {
     static MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
     *MODE.get_or_init(|| match std::env::var("VILOCITY_GROUP_SYNC").ok().as_deref().map(str::trim) {
         Some("0") => 0,
-        Some("1") => 1,
-        _ => 2,
+        Some("2") => 2,
+        _ => 1,
     })
 }
 

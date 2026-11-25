@@ -26,6 +26,14 @@ if (-not $Defaults) {
     # 4.7 GB of the card's copies spilled into PC memory; levels the title
     # does not hold take no card memory with this (the fork: 2-3 GB saved).
     $env:VILOCITY_LEVELS_ON_DEMAND = "1"
+    # VItoriaBr's preset (RTX 5060 Ti, 3.5-6 fps in the world, no driver
+    # timeouts): a 1080p television instead of 4K, so the title renders
+    # less; wider refreshes and merged copies; more card memory for buffers.
+    $env:VILOCITY_DISPLAY_MODE = "1920x1080"
+    $env:VILOCITY_WIDE_REFRESH = "1"
+    $env:VILOCITY_WIDE_MERGE = "1"
+    $env:VILOCITY_JOIN_COPIES = "1"
+    $env:VILOCITY_CARD_BUFFERS_MB = "6144"
 }
 
 # One quoted string: the paths hold spaces ("Vilocity project").
