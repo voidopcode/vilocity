@@ -192,6 +192,9 @@ pub fn loop_limit() -> u32 {
 /// Part of the translation: the shader cache keys on it (`vilocity-gpu`'s
 /// does).
 pub fn group_sync() -> u8 {
+    if SYNC_FULL.with(std::cell::Cell::get) {
+        return 2;
+    }
     static MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
     *MODE.get_or_init(|| match std::env::var("VILOCITY_GROUP_SYNC").ok().as_deref().map(str::trim) {
         Some("0") => 0,
@@ -340,11 +343,52 @@ pub fn translate(container: &[u8]) -> Result<HostShader, ShaderError> {
     translate_for(container, false)
 }
 
+thread_local! {
+    /// The program being translated has every barrier wait ([`sync_full`]).
+    static SYNC_FULL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether the program in `container` translates with every group barrier
+/// waiting ([`group_sync`] 2) whatever the switch says for the others:
+/// `VILOCITY_GROUP_SYNC_FULL=a,b` (names that hold one of these; `none`:
+/// no program), the shadow programs by default (`CS_Shadow`, `ShadowMask`:
+/// the tiled ones write the dashed targets, the masks read them). In the tiled shadow
+/// programs a lane that left a loop early passed a barrier whose wait was
+/// dropped, and the other half-wave read group-shared memory before it was
+/// written: rows of orange dashes over GTA VI's picture (target dump of run
+/// gta6-20261125-173003; gone with every barrier waiting, run
+/// gta6-20261125-180405, which made every program slower: 350-420 ms frames
+/// for 180-260). TuxBox 8feefd2 found the same race on GeForce.
+fn sync_full(container: &[u8]) -> bool {
+    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let names = NAMES.get_or_init(|| {
+        let set = std::env::var("VILOCITY_GROUP_SYNC_FULL").unwrap_or_else(|_| "CS_Shadow,ShadowMask".to_owned());
+        set.split(',').map(str::trim).filter(|n| !n.is_empty() && *n != "none").map(str::to_owned).collect()
+    });
+    if names.is_empty() {
+        return false;
+    }
+    const END: &[u8] = b"_Wrapped";
+    let Some(at) = container.windows(END.len()).position(|w| w == END) else {
+        return false;
+    };
+    let before = &container[at.saturating_sub(100)..at];
+    let name = before.rsplit(|b| !b.is_ascii_alphanumeric() && *b != b'_').next().unwrap_or_default();
+    names.iter().any(|n| name.windows(n.len()).any(|w| w == n.as_bytes()))
+}
+
 /// [`translate`] for a host GPU that runs only 32-lane waves when
 /// `wave32_only` (NVIDIA): a wave64 compute program that needs the
 /// console's 64 lanes gets the split form instead of `WaveSize(64)`, which
 /// such a driver refuses.
 pub fn translate_for(container: &[u8], wave32_only: bool) -> Result<HostShader, ShaderError> {
+    let was = SYNC_FULL.replace(sync_full(container));
+    let r = translate_for_mode(container, wave32_only);
+    SYNC_FULL.set(was);
+    r
+}
+
+fn translate_for_mode(container: &[u8], wave32_only: bool) -> Result<HostShader, ShaderError> {
     // A translator bug on one program refuses that program instead of ending
     // the run (the panic message still goes to the log).
     let attempt = || {
@@ -2173,5 +2217,17 @@ mod barycentric_tests {
         let [e0, e1] = exp_mrt0(4);
         let words = [0xC812_0000, e0, e1, S_ENDPGM];
         assert!(pixel(&words, PERSP_CENTER).is_err());
+    }
+}
+
+#[cfg(test)]
+mod sync_full_tests {
+    /// Only the tiled shadow programs wait at every barrier by default.
+    #[test]
+    fn tiled_shadow_programs_wait_at_every_barrier() {
+        assert!(super::sync_full(b"\0\0CS_ShadowRenderTiledMiscCB_9945271c_Wrapped\0"));
+        assert!(super::sync_full(b"x CS_ShadowRenderTiledCascades_9945271c_Wrapped"));
+        assert!(!super::sync_full(b"\0CS_FinalGather_0_1_1_0_a1d0fa7d_Wrapped\0"));
+        assert!(!super::sync_full(b"no name here"));
     }
 }

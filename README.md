@@ -43,25 +43,34 @@ loads saves and gets into the world. The world is where the work is now.
 | 2 | Intro video with sound | ✅ works | ██████████ |
 | 3 | Start screen, profile and saves | ✅ works | ██████████ |
 | 4 | Loading into the world | ✅ works | ██████████ |
-| 5 | The world renders | 🟡 prologue cutscenes and the first room play, 3-7 fps (about 210-270 ms a frame); some draws still dropped | █████░░░░░ |
-| 6 | The picture | 🟡 no rainbow glitter, faces and rooms lit, jumpsuits their real orange, smooth edges (AMD's PC FSR); ray-traced light stands in as a constant; orange dashes from the tiled cascade shadows and blocky edges against blurred backgrounds remain | ███████░░░ |
+| 5 | The world renders | 🟡 prologue cutscenes and the first room play, 4-8 fps (about 130-280 ms a frame, 200 ms median); every shader translates; some draws still dropped | ██████░░░░ |
+| 6 | The picture | 🟡 no rainbow glitter, faces and rooms lit, jumpsuits their real orange, smooth edges (AMD's PC FSR); ray-traced light stands in as a constant; a few orange marks from the shadows remain | ███████░░░ |
 | 7 | The world keeps running | 🟡 the loss 2-3 minutes in is fixed; a driver timeout some 7 minutes in remains (a longer GPU timeout is being tested) | █████░░░░░ |
 | 8 | Playable frame rate (30 fps) | 🔴 not yet: the card's own work is 70-130 ms a frame and our submit thread's copies and copy-back 100-150 ms; the card no longer waits for the game's writes beside shader writes | ██░░░░░░░░ |
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-25 18:01, game build Series 1.0.2.1
+**Latest test run:** 2026-11-25 18:23, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 31.0 fps |
-| Median frame time | 118 ms |
-| Last frame | 5.0 fps, 200 ms, 4823 draws, 601 dropped without a pipeline |
+| Best frame rate (menus included) | 30.0 fps |
+| Median frame time | 133 ms |
+| Last frame | 3.5 fps, 285 ms, 6229 draws, 808 dropped without a pipeline |
 | Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: the rainbow glitter is gone. A dump of every render target of a
+Latest: the orange dashes over the picture were a race in the shadow
+programs on 32-lane GPUs: a lane that left a loop early passed a barrier
+whose wait was dropped, and the other half-wave read shared memory before
+it was written (the same race TuxBox found on GeForce). The shadow programs
+now wait at every barrier (`VILOCITY_GROUP_SYNC_FULL`), the rest keep the
+fast form; frames 200 ms median. The tiled cascade shadow programs also
+translate exactly now (victory-fork #1002), so every shader of the game
+translates.
+
+Before that, the rainbow glitter went. A dump of every render target of a
 world frame showed it in the final gather's output, fed by the screen
 probes' radiance, which `CS_ScreenProbes_Inject` filled from the ray
 passes' stale buffers. That program now clears its outputs and gives the
@@ -72,10 +81,8 @@ instructions (VIctory #2143: 16-18 KiB of local memory per thread on
 NVIDIA), constant buffer views capped at 64 KiB (VItoriaBr), null constant
 buffer writes (VIcky), and a 64-thread card compare (victory-fork #1014).
 
-Next up: the tiled cascade shadows on 32-lane GPUs (the orange dashes and
-~16 px steps; victory-fork #1002), our submit thread's copies of game
-memory, the heaviest compute programs, and the driver timeout some 7
-minutes in.
+Next up: the last orange marks, our submit thread's copies of game memory,
+the heaviest compute programs, and the driver timeout some 7 minutes in.
 
 > [!WARNING]
 > Runs used to end with the GPU device removed 2-3 minutes into the world.
