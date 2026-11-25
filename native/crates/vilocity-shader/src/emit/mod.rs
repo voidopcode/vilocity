@@ -372,10 +372,17 @@ thread_local! {
 /// reached the tiled shadow lists (dumped lists of run gta6-20261125-212014),
 /// and the tiles left out kept the clear's "lit": the last orange dashes,
 /// on heads and shirts by the cell window (gone, run gta6-20261125-213252).
+///
+/// And the ped skinning and meshlet culling programs (`Skinning`:
+/// `CS_PedStandardSkinning_*`, `CSComputeSkinning*`; `BatchCull`:
+/// `CS_BatchCullPreSkinnedMeshlets*`): with their barriers fenced only, a
+/// dark jagged hole came and went on the inmate's shirt shoulders (4 of 8
+/// world frames); with every barrier waiting it was in none of 6, at the
+/// same frame time.
 fn sync_full(container: &[u8]) -> bool {
     static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     let names = NAMES.get_or_init(|| {
-        let set = std::env::var("VILOCITY_GROUP_SYNC_FULL").unwrap_or_else(|_| "CS_Shadow,RasterClassification".to_owned());
+        let set = std::env::var("VILOCITY_GROUP_SYNC_FULL").unwrap_or_else(|_| "CS_Shadow,RasterClassification,Skinning,BatchCull".to_owned());
         set.split(',').map(str::trim).filter(|n| !n.is_empty() && *n != "none").map(str::to_owned).collect()
     });
     if names.is_empty() {
@@ -2243,6 +2250,8 @@ mod sync_full_tests {
         assert!(super::sync_full(b"x CS_ShadowUnifiedClearRaster_6bcdd348_Wrapped"));
         assert!(super::sync_full(b"x CS_CalcRasterClassificationListCounts_71bbdf9d_Wrapped"));
         assert!(super::sync_full(b"x CS_WriteRasterClassificationResults_71bbdf9d_Wrapped"));
+        assert!(super::sync_full(b"x CS_PedStandardSkinning_3_0a1b2c3d_Wrapped"));
+        assert!(super::sync_full(b"x CS_BatchCullPreSkinnedMeshlets_Prev_b589f3cd_Wrapped"));
         assert!(!super::sync_full(b"x CS_GenerateShadowMasks_Checkerboard_NoHair_5e982407_Wrapped"));
         assert!(!super::sync_full(b"\0CS_FinalGather_0_1_1_0_a1d0fa7d_Wrapped\0"));
         assert!(!super::sync_full(b"no name here"));
