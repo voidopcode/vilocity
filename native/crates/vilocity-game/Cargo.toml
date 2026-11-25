@@ -1,0 +1,16 @@
+[package]
+name = "vilocity-game"
+description = "Everything specific to the title: its containers, build identities, patches."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+memchr.workspace = true
+miniz_oxide.workspace = true
+zlib-rs.workspace = true
+
+[lints]
+workspace = true

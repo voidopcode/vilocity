@@ -1,0 +1,5 @@
+/target/
+# Game data never goes in here; each engine's own .gitignore lists the rest.
+*.exe
+*.dll
+*.pdb

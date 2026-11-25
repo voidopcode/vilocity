@@ -1,0 +1,41 @@
+{
+  "note": "Last commit of each upstream already looked at. The upstream-watch task reports commits after these and then moves them forward.",
+  "repos": {
+    "xcl-dev/xcl": {
+      "engine": "compat",
+      "branch": "main",
+      "last_seen": "568e7db7729c8fa6c8f0f4b32d798faaf11462bb",
+      "why": "compat/ follows xcl in full up to 568e7db (merged 2026-11-25), except the release-profile debug=2 change"
+    },
+    "Marvisak/VIctory": {
+      "engine": "native",
+      "branch": "main",
+      "last_seen": "940d32f69b22265690a0b5a15d6ded572ba33baf",
+      "why": "native/ has upstream up to 70564ae (fork as base, fork wins clashes); of 70564ae..940d32f only a3acc87, 7216ab7, 0601955 taken (2026-11-25); the rest is not ported yet (see report-2026-11-25.md)"
+    },
+    "fxceless/victory-fork": {
+      "engine": "native",
+      "branch": "main",
+      "last_seen": "f85101b6095e8cf3cecf8f0647cc7f5428daa177",
+      "why": "merged into native/ (2026-11-24/25) up to f85101b; its own cache key/warm-up folded into upstream's"
+    },
+    "Belobug/VIctory-Belobug-AMD": {
+      "engine": "native",
+      "branch": "main",
+      "last_seen": "4cbe9d76cf3c1fdca7f9a8d8364eacc33e7aa597",
+      "why": "AMD fork of VIctory at 8e79c80 (285 own commits, RX 9070 XT, 3-5 fps); not ported. Worth a look: hoisted indirect clamps (VICTORY_HOIST_CLAMPS, GPU 225->80 ms/frame), twice the dynamic descriptor slots, ambient constant while rays do not run"
+    },
+    "Zettrox/ztrx": {
+      "engine": "native",
+      "branch": "main",
+      "last_seen": "90b529f878a470fec9bf07b7be316bc769a12232",
+      "why": "fxceless/victory-fork plus one commit (README, launcher); nothing to port as of 2026-11-25"
+    },
+    "uiliannn/VItoriaBr": {
+      "engine": "native",
+      "branch": "main",
+      "last_seen": "a93b052255eec962a6f662d26760161314db6815",
+      "why": "VIctory ffe310e fork tuned on an RTX 5060 Ti (32-lane NVIDIA); 63 commits not in fxceless's fork. Taken 2026-11-25: LOOP_LIMIT 4096 (783a957). Candidates: barriers after loop aborts (808a209, 1ece3a6), mesh caps (1ca533d, 6f99f75, bd33acc, 911267c), LDS bounds (a13a719, 40beb26), submission chunks (8a75883)"
+    }
+  }
+}

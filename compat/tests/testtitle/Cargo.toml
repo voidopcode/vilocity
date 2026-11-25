@@ -1,0 +1,25 @@
+[package]
+name = "vilocity-testtitle"
+description = "Fake 'console title' used to test Vilocity. Imports console DLLs (kernelx.dll, xgameruntime.dll, d3d12_xs.dll) and cannot run on plain Windows."
+version.workspace = true
+edition = "2021"
+license = "GPL-2.0-only"
+publish = false
+
+[[bin]]
+name = "vilocity_testtitle"
+path = "src/main.rs"
+
+[dependencies]
+# zlib for the synthetic retail-format console shader (XBCH)
+miniz_oxide = "0.9"
+
+# D3D12 types/interfaces only – the device itself comes from d3d12_xs.dll (Vilocity).
+[dependencies.windows]
+version = "0.62"
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Dxgi_Common",
+]

@@ -1,0 +1,36 @@
+[package]
+name = "vilocity-native"
+description = "The native engine's command line: inspect, census, convert, run."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+vilocity-core.workspace = true
+vilocity-pe.workspace = true
+vilocity-loader.workspace = true
+vilocity-hle.workspace = true
+vilocity-gpu.workspace = true
+vilocity-shader = { workspace = true, features = ["host"] }
+vilocity-game.workspace = true
+anyhow.workspace = true
+blake3.workspace = true
+memchr.workspace = true
+clap.workspace = true
+walkdir.workspace = true
+tracing.workspace = true
+
+[features]
+# Debug-level logs and the debugging switches (frame capture, stack dumps,
+# the host debug layer, scripted keys). Off in a plain release build.
+diagnostics = [
+    "vilocity-core/diagnostics",
+    "vilocity-hle/diagnostics",
+    "vilocity-loader/diagnostics",
+    "vilocity-shader/diagnostics",
+]
+
+[lints]
+workspace = true

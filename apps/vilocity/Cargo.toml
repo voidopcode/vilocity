@@ -1,0 +1,25 @@
+[package]
+name = "vilocity"
+description = "Vilocity: runs Xbox Series GDK titles on Windows with the native or the compat engine."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# Links the compat engine (GPL-2.0-only) and the native engine (GPL-3.0-or-later):
+# fine for your own use, but this combined binary cannot be redistributed under either licence.
+license = "GPL-2.0-only AND GPL-3.0-or-later"
+publish.workspace = true
+
+[dependencies]
+vilocity-native.workspace = true
+vilocity-compat.workspace = true
+vilocity-core.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Isolation", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+[features]
+# The native engine's debugging build (see the workspace's `diag` profile).
+diagnostics = ["vilocity-native/diagnostics"]
+
+[lints]
+workspace = true

@@ -1,0 +1,169 @@
+<p align="center">
+  <img src="compat/assets/readme/banner.svg" width="100%" alt="Vilocity: Xbox Series X|S games you own, running natively on Windows">
+</p>
+
+<p align="center">
+  <img alt="Status: not playable yet" src="https://img.shields.io/badge/GTA%20VI-in%20world%2C%20not%20playable-f5a623?style=for-the-badge">
+  <img alt="Windows 10 / 11 x64" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-2f80ed?style=for-the-badge">
+  <img alt="Direct3D 12, Shader Model 6.6" src="https://img.shields.io/badge/D3D12-SM%206.6-1fb9d8?style=for-the-badge">
+  <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-7c5cff?style=for-the-badge">
+</p>
+
+# Vilocity
+
+Runs Xbox Series X|S (GDK) games you own natively on Windows. There is no CPU
+emulation: the game's x64 code runs in our process, Vilocity supplies the
+console's system libraries, and the console's RDNA2 GPU code is recompiled to
+Direct3D 12 shaders. Two engines, one executable:
+
+| Engine | Folder | Best at |
+|--------|--------|---------|
+| **native** | `native/` | Grand Theft Auto VI. Shaders become regular host D3D12 shaders. |
+| **compat** | `compat/` | Other GDK titles: Minecraft Preview, Unicorn Overlord, Fortnite, XDefiant. Shaders read the game's memory directly. |
+
+No game files are in this repository. Everything is built from files you
+supply at runtime.
+
+## GTA VI progress
+
+**Not playable yet.** The game boots, runs its menus at a steady 30 fps,
+loads saves and gets into the world. The world is where the work is now.
+
+| # | Stage | Status | |
+|---|-------|--------|---|
+| 1 | Boot and first-boot screens (accessibility, language, settings, legal) | ✅ works, 30 fps | `██████████` |
+| 2 | Intro video with sound | ✅ works | `██████████` |
+| 3 | Start screen, profile and saves | ✅ works | `██████████` |
+| 4 | Loading into the world (about 50 s) | ✅ works | `██████████` |
+| 5 | First room of the first mission renders | 🟡 lit and drawn, 250-380 ms a frame (3-4 fps) | `██████░░░░` |
+| 6 | Full world scene (streets, traffic, ray tracing) | 🔴 most of the scene still missing | `██░░░░░░░░` |
+| 7 | Playable frame rate (30 fps) | 🔴 not yet | `░░░░░░░░░░` |
+| 8 | Missions start to finish | 🔴 not yet | `░░░░░░░░░░` |
+
+Shaders the world uses, translated to DXIL so far:
+
+| Kind | Translated | |
+|------|-----------:|---|
+| Mesh | 8,191 / 8,506 (96 %) | `██████████░` |
+| Vertex / pixel | 10,617 / 12,346 (86 %) | `█████████░░` |
+| Compute | 1,643 / 2,539 (65 %) | `███████░░░░` |
+
+Next up: the remaining world shaders (including the ray-tracing builder),
+cutting frame time from hundreds of milliseconds to 33 ms, and GPU hangs a few
+minutes into the world. The per-subsystem table is in
+[`native/README.md`](native/README.md#status-2026-11-23).
+
+> [!WARNING]
+> Entering the world on a real GPU can still hang it, and Windows then resets
+> the display driver (every monitor goes black for a moment).
+
+Tested on one machine so far: Windows 11, AMD RX 6700 XT.
+
+## Requirements
+
+- Windows 10/11 x64, a CPU with AVX2
+- A Direct3D 12 GPU with shader model 6.6 (and mesh shaders for the GTA VI world)
+- Rust (version pinned in `rust-toolchain.toml`), Windows SDK for DXC
+- Your own copy of the game
+
+Each engine's README ([native](native/README.md), [compat](compat/README.md))
+lists the details.
+
+## Build
+
+```powershell
+cargo build --release -p vilocity
+```
+
+That makes `target\release\vilocity.exe`. `cargo build --release` also builds
+each engine on its own, `vilocity-native.exe` and `vilocity-compat.exe`.
+
+## Play
+
+```powershell
+target\release\vilocity.exe play <game folder or exe>
+```
+
+`play` picks the engine: native for GTA VI (`game_scarlett_master.exe`),
+compat for everything else. `--engine native|compat` overrides it. Each
+engine's own commands are under `vilocity native ...` and `vilocity compat ...`.
+
+### GTA VI first run
+
+Translate every shader and build every pipeline ahead of time, so the game
+does not stop to do it while playing (again after an update of the shader
+translator):
+
+```powershell
+target\release\vilocity.exe native translate --cache --pipelines <game folder>\shaders.rpf <game folder>\game_scarlett_master.exe <game folder>\XboxBvhBuilder.dll
+```
+
+That fills the shader cache (about 1.3 GB) and the pipeline library (about
+27,000 pipelines, some 20 minutes on 16 threads). A second run skips what is
+already there. The library belongs to the GPU and driver it was built on.
+
+Then `scripts\play-gta6.ps1` starts the game with the frame-rate switches
+measured so far and opens `scripts\monitor-gta6.ps1`: frame rate, memory, CPU
+and GPU use, where each frame's time goes, and the log's warnings and errors
+(logs in `%LOCALAPPDATA%\vilocity\logs`).
+
+### Controls
+
+| Keys | Pad |
+|------|-----|
+| Enter / Backspace | A / B |
+| Arrows | D-pad |
+| W A S D | left stick |
+
+XInput pads work too. The full keyboard map is in
+[`native/README.md`](native/README.md#getting-started).
+
+### Sandbox
+
+`play` runs the native engine in an AppContainer with no network at all
+(loopback included) inside a job object. The game can read only its own
+folder (and the FidelityFX folder, if set) and write only Vilocity's `cache`
+and `data` folders. It can't touch your files, other programs, the clipboard
+or system settings, and every process of it dies with `vilocity.exe`. GPU,
+audio and input are not slowed. `--no-sandbox` runs the game as you instead.
+`vilocity native run ...` and `translate` are not sandboxed (translate only
+reads the game's files).
+
+Data lives in `%LOCALAPPDATA%\Vilocity` (the compat engine's per-game folders
+in `%LOCALAPPDATA%\Vilocity\compat`). Settings use `VILOCITY_*` environment
+variables.
+
+## Tests
+
+```powershell
+cargo test --workspace -- --test-threads=4
+```
+
+No game data is needed.
+
+## Layout
+
+- `apps/vilocity`: `vilocity.exe` (engine choice, both engines' helper processes)
+- `native/`: the native engine's crates (`vilocity-core`, `-gpu`, `-shader`, ...) and `vilocity-native`
+- `compat/`: the compat engine, crate `vilocity-compat`
+- `scripts/`: GTA VI launcher and live monitor
+- `upstream-watch/`: daily review of upstream commits to port
+
+One Cargo workspace at the root; one `target\` folder for everything.
+
+## Credits and licences
+
+Vilocity is built on two open-source projects:
+
+- the **native** engine is [VIctory](https://github.com/Marvisak/VIctory)
+  (GPL-3.0-or-later, `native/LICENSE`), with the changes of
+  [fxceless's VIctory fork](https://github.com/fxceless/victory-fork) and the
+  forks it credits,
+- the **compat** engine is [XCL](https://github.com/xcl-dev/xcl) by ivall
+  (GPL-2.0-only, `compat/LICENSE`, `compat/THIRD_PARTY.md`).
+
+Which upstream commits each engine carries, and what Vilocity changed on top,
+is in [docs/LINEAGE.md](docs/LINEAGE.md).
+
+Each engine keeps its licence. `vilocity.exe` links both, which is fine for
+your own use, but that binary cannot be redistributed under either licence.

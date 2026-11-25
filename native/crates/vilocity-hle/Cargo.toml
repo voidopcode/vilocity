@@ -1,0 +1,59 @@
+[package]
+name = "vilocity-hle"
+description = "Our implementation of the Xbox system API surface the title imports."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+vilocity-gpu.workspace = true
+vilocity-loader.workspace = true
+vilocity-pe.workspace = true
+vilocity-formats.workspace = true
+opus-pure.workspace = true
+zlib-rs.workspace = true
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Media",
+    "Win32_Security",
+    "Win32_Security_Cryptography",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Power",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Input_XboxController",
+    "Win32_UI_WindowsAndMessaging",
+] }
+# The host's D3D12 objects handed to a host library (`modules::fidelityfx`);
+# diagnostics: recording our own audio (`modules::audio::capture`).
+windows = { workspace = true, features = [
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Media_Audio",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+] }
+# `#[implement]` names it.
+windows-core = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[features]
+# Debugging switches (scripted keys and the like).
+diagnostics = ["vilocity-gpu/diagnostics", "vilocity-loader/diagnostics", "dep:windows-core"]
+
+[lints]
+workspace = true
