@@ -351,8 +351,10 @@ thread_local! {
 /// Whether the program in `container` translates with every group barrier
 /// waiting ([`group_sync`] 2) whatever the switch says for the others:
 /// `VILOCITY_GROUP_SYNC_FULL=a,b` (names that hold one of these; `none`:
-/// no program), the shadow programs by default (`CS_Shadow`, `ShadowMask`:
-/// the tiled ones write the dashed targets, the masks read them). In the tiled shadow
+/// no program), the shadow programs by default (`CS_Shadow`: the tiled ones
+/// write the dashed targets). Not the masks that read them
+/// (`CS_GenerateShadowMasks`): with every barrier waiting they took 14.7 ms
+/// of the card a frame for 6 and the marks were the same. In the tiled shadow
 /// programs a lane that left a loop early passed a barrier whose wait was
 /// dropped, and the other half-wave read group-shared memory before it was
 /// written: rows of orange dashes over GTA VI's picture (target dump of run
@@ -362,7 +364,7 @@ thread_local! {
 fn sync_full(container: &[u8]) -> bool {
     static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     let names = NAMES.get_or_init(|| {
-        let set = std::env::var("VILOCITY_GROUP_SYNC_FULL").unwrap_or_else(|_| "CS_Shadow,ShadowMask".to_owned());
+        let set = std::env::var("VILOCITY_GROUP_SYNC_FULL").unwrap_or_else(|_| "CS_Shadow".to_owned());
         set.split(',').map(str::trim).filter(|n| !n.is_empty() && *n != "none").map(str::to_owned).collect()
     });
     if names.is_empty() {
@@ -2227,6 +2229,8 @@ mod sync_full_tests {
     fn tiled_shadow_programs_wait_at_every_barrier() {
         assert!(super::sync_full(b"\0\0CS_ShadowRenderTiledMiscCB_9945271c_Wrapped\0"));
         assert!(super::sync_full(b"x CS_ShadowRenderTiledCascades_9945271c_Wrapped"));
+        assert!(super::sync_full(b"x CS_ShadowUnifiedClearRaster_6bcdd348_Wrapped"));
+        assert!(!super::sync_full(b"x CS_GenerateShadowMasks_Checkerboard_NoHair_5e982407_Wrapped"));
         assert!(!super::sync_full(b"\0CS_FinalGather_0_1_1_0_a1d0fa7d_Wrapped\0"));
         assert!(!super::sync_full(b"no name here"));
     }
