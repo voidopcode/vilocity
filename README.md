@@ -17,10 +17,7 @@
   <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-7c5cff?style=for-the-badge">
 </p>
 
-## Community
-
-Progress updates, releases and help are on the
-[Vilocity Discord server](https://discord.gg/mWzP7ejTek).
+<p align="center">Progress updates, releases and help are on the <a href="https://discord.gg/mWzP7ejTek">Vilocity Discord server</a>.</p>
 
 Runs Xbox Series X|S (GDK) games you own natively on Windows. There is no CPU
 emulation: the game's x64 code runs in our process, Vilocity supplies the
