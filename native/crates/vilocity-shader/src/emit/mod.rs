@@ -378,14 +378,14 @@ thread_local! {
 /// `CS_BatchCullPreSkinnedMeshlets*`): with their barriers fenced only, a
 /// dark jagged hole came and went on the inmate's shirt shoulders (4 of 8
 /// world frames); with every barrier waiting it was in none of 6, at the
-/// same frame time. And the hair tile programs (`Hair`: `CS_HairTile*`):
+/// same frame time. And the hair tile programs (`CS_HairTile`):
 /// fenced only, a dark band crossed the bald inmate's head at ear height and
 /// the jumpsuits went from orange to red; waiting, neither (run of
 /// 2026-11-25 22:2x, 6 world frames).
 fn sync_full(container: &[u8]) -> bool {
     static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     let names = NAMES.get_or_init(|| {
-        let set = std::env::var("VILOCITY_GROUP_SYNC_FULL").unwrap_or_else(|_| "CS_Shadow,RasterClassification,Skinning,BatchCull,Hair".to_owned());
+        let set = std::env::var("VILOCITY_GROUP_SYNC_FULL").unwrap_or_else(|_| "CS_Shadow,RasterClassification,Skinning,BatchCull,CS_HairTile".to_owned());
         set.split(',').map(str::trim).filter(|n| !n.is_empty() && *n != "none").map(str::to_owned).collect()
     });
     if names.is_empty() {
