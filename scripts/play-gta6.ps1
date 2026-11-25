@@ -47,8 +47,12 @@ if (-not $Defaults) {
     # them the frame went from 300-410 to 207 ms and the glitter they spread
     # over heads is gone (run gta6-20261125-160106).
     if (-not $env:VILOCITY_LEAVE_OUT) {
-        $env:VILOCITY_LEAVE_OUT = "TraceRays_BVH,RTShadowTrace,RTDistantShadowTrace,RTDistantLODLightShadow,TraceShadowRays,RaytraceShadows,RaytraceVBuffer,IrradianceCache_ShadowTrace,ShadowRaytracing,CollisionRaytraced,PPR_Raytrace,CS_CombinedReflections,CS_SpatialFilter,CS_BilateralBlur"
+        $env:VILOCITY_LEAVE_OUT = "TraceRays_BVH,RTShadowTrace,RTDistantShadowTrace,RTDistantLODLightShadow,TraceShadowRays,RaytraceShadows,RaytraceVBuffer,IrradianceCache_ShadowTrace,ShadowRaytracing,CollisionRaytraced,PPR_Raytrace,CS_SpatialFilter,CS_BilateralBlur"
     }
+    # Left out, CS_CombinedReflections's outputs kept whatever their memory
+    # held (glitter on some runs, none on others): cleared, the lighting
+    # reads no reflected light there instead.
+    if (-not $env:VILOCITY_ZERO_OUT) { $env:VILOCITY_ZERO_OUT = "CS_CombinedReflections" }
 }
 
 # One quoted string: the paths hold spaces ("Vilocity project").

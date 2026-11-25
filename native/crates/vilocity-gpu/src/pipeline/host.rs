@@ -929,6 +929,7 @@ impl HostPipeline {
             container: Vec::new(),
             resolves_light: false,
             hair: false,
+            zeroed: false,
             walks: std::sync::OnceLock::new(),
             translated: std::sync::OnceLock::from(Some(Translated {
                 host,

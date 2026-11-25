@@ -68,6 +68,9 @@ pub(crate) struct Shader {
     /// It animates or draws hair strands ([`hair_strands`]).
     #[cfg(windows)]
     pub(crate) hair: bool,
+    /// Its dispatches clear what it writes instead ([`zero_out`]).
+    #[cfg(windows)]
+    pub(crate) zeroed: bool,
     #[cfg(windows)]
     translated: OnceLock<Option<Translated>>,
     /// Whether its code walks the ray-tracing structures, once looked at
@@ -135,6 +138,8 @@ impl Shader {
                 .any(|w| w == crate::ambient::PROGRAM),
             #[cfg(windows)]
             hair: hair_strands(bytes),
+            #[cfg(windows)]
+            zeroed: zero_out(bytes),
             #[cfg(windows)]
             translated: OnceLock::new(),
             #[cfg(windows)]
@@ -638,6 +643,49 @@ fn hair_strands(container: &[u8]) -> bool {
 #[cfg(windows)]
 pub(crate) fn left_out(this: This) -> bool {
     !this.is_null() && pipeline(this).shaders.iter().any(|s| s.hair)
+}
+
+/// The program's name in its container: the word before `_Wrapped`.
+#[cfg(windows)]
+fn program_name(container: &[u8]) -> Option<&[u8]> {
+    const END: &[u8] = b"_Wrapped";
+    let at = container.windows(END.len()).position(|w| w == END)?;
+    let before = &container[at.saturating_sub(100)..at];
+    before.rsplit(|b| !b.is_ascii_alphanumeric() && *b != b'_').next()
+}
+
+/// Whether a container's program is one whose dispatches clear the views it
+/// writes to zero instead of running (`VILOCITY_ZERO_OUT=a,b`: names that
+/// hold one of these). For a program whose inputs nothing makes on the
+/// host: left out, its outputs would keep whatever their memory held, which
+/// changes from run to run (`CS_CombinedReflections` without the ray
+/// passes: rainbow glitter on some runs and not on others); cleared, what
+/// reads them sees none of its light.
+#[cfg(windows)]
+fn zero_out(container: &[u8]) -> bool {
+    static NAMES: OnceLock<Vec<String>> = OnceLock::new();
+    let names = NAMES.get_or_init(|| {
+        let set = std::env::var("VILOCITY_ZERO_OUT").unwrap_or_default();
+        set.split(',').map(str::trim).filter(|n| !n.is_empty()).map(str::to_owned).collect()
+    });
+    if names.is_empty() {
+        return false;
+    }
+    let Some(name) = program_name(container) else {
+        return false;
+    };
+    let zeroed = names.iter().any(|n| name.windows(n.len()).any(|w| w == n.as_bytes()));
+    if zeroed {
+        tracing::info!(program = %String::from_utf8_lossy(name), "cleared instead of run (VILOCITY_ZERO_OUT)");
+    }
+    zeroed
+}
+
+/// Whether dispatches of `this` clear what it writes instead of running
+/// ([`zero_out`]).
+#[cfg(windows)]
+pub(crate) fn zeroed(this: This) -> bool {
+    !this.is_null() && pipeline(this).shaders.iter().any(|s| s.zeroed)
 }
 
 #[cfg(all(windows, feature = "diagnostics"))]

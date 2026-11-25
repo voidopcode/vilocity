@@ -44,37 +44,38 @@ loads saves and gets into the world. The world is where the work is now.
 | 3 | Start screen, profile and saves | ✅ works | ██████████ |
 | 4 | Loading into the world | ✅ works | ██████████ |
 | 5 | The world renders | 🟡 prologue cutscenes and the first room play, 3-7 fps (about 210-270 ms a frame); some draws still dropped | █████░░░░░ |
-| 6 | The picture | 🟡 faces lit, walls lit, smooth edges (AMD's PC FSR); ray-traced light stands in as a constant, ray passes left out; a few sparkles and blocky edges against blurred backgrounds remain | █████░░░░░ |
+| 6 | The picture | 🟡 faces lit, walls and rooms lit, smooth edges (AMD's PC FSR); ray-traced light stands in as a constant, ray passes left out and their reflections cleared; a few sparkles on jackets and hair, and blocky edges against blurred backgrounds remain | ██████░░░░ |
 | 7 | The world keeps running | 🟡 the loss 2-3 minutes in is fixed; a driver timeout some 7 minutes in remains (a longer GPU timeout is being tested) | █████░░░░░ |
-| 8 | Playable frame rate (30 fps) | 🔴 not yet: the card's own work is about 110 ms a frame, and the card still waits for game memory the CPU writes beside shader writes (about 100 ms a frame) | ██░░░░░░░░ |
+| 8 | Playable frame rate (30 fps) | 🔴 not yet: the card's own work is 70-130 ms a frame and our submit thread's copies and copy-back 100-150 ms; the card no longer waits for the game's writes beside shader writes | ██░░░░░░░░ |
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-25 16:44, game build Series 1.0.2.1
+**Latest test run:** 2026-11-25 16:54, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 30.0 fps |
-| Median frame time | 38 ms |
-| Last frame | 3.7 fps, 268 ms, 5260 draws, 675 dropped without a pipeline |
+| Best frame rate (menus included) | 31.0 fps |
+| Median frame time | 150 ms |
+| Last frame | 2.5 fps, 400 ms, 4729 draws, 1105 dropped without a pipeline |
 | Shaders that failed to translate | compute 1 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: the denoisers of the ray-traced passes (`CS_SpatialFilter*`,
-`CS_BilateralBlur*`) are left out with them: they took 90 of 203 ms of the
-card's time a frame and spread the rays' garbage over heads; frames went
-from 300-410 to about 210-270 ms. Reads of game memory that shaders in
-flight may write no longer all wait once one of them mismatched: only its
-64 KiB piece does (70 ms a frame of waiting gone). Before that: the
-ray-tracing passes left out (rainbow speckles, black walls), the two
-halves of a 64-lane console wave meet between buffer writes and reads on
-32-lane GPUs (after shadPS4 #5310), integer render targets no longer blend.
+Latest: the reflection pass that reads the ray passes' results
+(`CS_CombinedReflections`) clears its outputs instead of running
+(`VILOCITY_ZERO_OUT`): left out, they kept whatever their memory held, so
+the rainbow glitter came back on some runs; cleared, jackets and heads are
+clean in both test runs and rooms are lighter. The game's 60,000 tiny
+writes a frame beside shader writes go up to the card in one scatter pass
+instead of ending in a wait for the card. Before that: the ray denoisers
+left out (90 of 203 ms of card time), reads ahead of shader writes wait
+per 64 KiB piece, the ray-tracing passes left out, the two halves of a
+64-lane console wave meet between buffer writes and reads on 32-lane GPUs
+(after shadPS4 #5310), integer render targets no longer blend.
 
-Next up: the CPU's scattered writes into memory shaders also write (60,000
-tiny changes a frame that end in a wait for the card), the remaining card
-time, the driver timeout some 7 minutes in, and the last sparkles and
-blocky edges.
+Next up: our submit thread's copies of game memory, the remaining card
+time (the heaviest compute programs), the driver timeout some 7 minutes
+in, and the last sparkles and blocky edges.
 
 > [!WARNING]
 > Runs used to end with the GPU device removed 2-3 minutes into the world.

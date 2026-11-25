@@ -2120,10 +2120,39 @@ impl State {
         }
     }
 
+    /// Instead of a dispatch of a program in `VILOCITY_ZERO_OUT`
+    /// ([`crate::pipeline::zeroed`]): every view it writes through its
+    /// tables cleared to zero.
+    fn zero_outputs(&mut self, list: &HostList) {
+        let Some(p) = crate::pipeline::host_pipeline(self.pipeline as This) else {
+            return;
+        };
+        let Some(stage) = p.stages.first() else {
+            return;
+        };
+        let views: Vec<u64> = stage
+            .translated()
+            .used
+            .iter()
+            .filter(|u| u.kind == ResourceType::Uav && u.root == RootType::Table)
+            .filter_map(|u| match self.roots_ref(true).get(usize::from(u.slot)) {
+                Some(&Root::Table(table)) => Some(table + u64::from(u.table_offset_dwords) * 4),
+                _ => None,
+            })
+            .collect();
+        for view in views {
+            self.clear_unordered(list, view, [0; 4], false, &[]);
+        }
+    }
+
     /// Runs a dispatch on the host.
     pub(crate) fn dispatch(&mut self, list: &HostList, x: u32, y: u32, z: u32) {
         // It may write the arguments a window holds clamped.
         self.window = None;
+        if crate::pipeline::zeroed(self.pipeline as This) {
+            self.zero_outputs(list);
+            return;
+        }
         if crate::pipeline::left_out(self.pipeline as This) {
             return;
         }
@@ -3158,6 +3187,10 @@ impl State {
         count: Option<u64>,
     ) -> bool {
         // Skip before the argument clamp can mutate the indirect buffer.
+        if kind == 2 && crate::pipeline::zeroed(self.pipeline as This) {
+            self.zero_outputs(list);
+            return true;
+        }
         if crate::pipeline::left_out(self.pipeline as This) {
             return false;
         }
