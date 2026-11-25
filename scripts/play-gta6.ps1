@@ -51,8 +51,12 @@ if (-not $Defaults) {
     }
     # Left out, CS_CombinedReflections's outputs kept whatever their memory
     # held (glitter on some runs, none on others): cleared, the lighting
-    # reads no reflected light there instead.
-    if (-not $env:VILOCITY_ZERO_OUT) { $env:VILOCITY_ZERO_OUT = "CS_CombinedReflections" }
+    # reads no reflected light there instead. CS_ScreenProbes_Inject put the
+    # rays' stale buffers into the probes' radiance, which the final gather
+    # turned into rainbow glitter on faces and jackets and a red tint on the
+    # orange jumpsuits (target dump, run gta6-20261125-173003): cleared, and
+    # its radiance given the ambient light (crate::ambient::INJECT).
+    if (-not $env:VILOCITY_ZERO_OUT) { $env:VILOCITY_ZERO_OUT = "CS_CombinedReflections,CS_ScreenProbes_Inject" }
 }
 
 # One quoted string: the paths hold spaces ("Vilocity project").

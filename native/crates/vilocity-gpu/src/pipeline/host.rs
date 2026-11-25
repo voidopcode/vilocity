@@ -930,6 +930,7 @@ impl HostPipeline {
             resolves_light: false,
             hair: false,
             zeroed: false,
+            injects_light: false,
             walks: std::sync::OnceLock::new(),
             translated: std::sync::OnceLock::from(Some(Translated {
                 host,

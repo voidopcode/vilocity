@@ -44,38 +44,38 @@ loads saves and gets into the world. The world is where the work is now.
 | 3 | Start screen, profile and saves | ✅ works | ██████████ |
 | 4 | Loading into the world | ✅ works | ██████████ |
 | 5 | The world renders | 🟡 prologue cutscenes and the first room play, 3-7 fps (about 210-270 ms a frame); some draws still dropped | █████░░░░░ |
-| 6 | The picture | 🟡 faces lit, walls and rooms lit, smooth edges (AMD's PC FSR); ray-traced light stands in as a constant, ray passes left out and their reflections cleared; a few sparkles on jackets and hair, and blocky edges against blurred backgrounds remain | ██████░░░░ |
+| 6 | The picture | 🟡 no rainbow glitter, faces and rooms lit, jumpsuits their real orange, smooth edges (AMD's PC FSR); ray-traced light stands in as a constant; orange dashes from the tiled cascade shadows and blocky edges against blurred backgrounds remain | ███████░░░ |
 | 7 | The world keeps running | 🟡 the loss 2-3 minutes in is fixed; a driver timeout some 7 minutes in remains (a longer GPU timeout is being tested) | █████░░░░░ |
 | 8 | Playable frame rate (30 fps) | 🔴 not yet: the card's own work is 70-130 ms a frame and our submit thread's copies and copy-back 100-150 ms; the card no longer waits for the game's writes beside shader writes | ██░░░░░░░░ |
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-25 17:25, game build Series 1.0.2.1
+**Latest test run:** 2026-11-25 17:51, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 30.0 fps |
-| Median frame time | 36 ms |
-| Last frame | 1.5 fps, 674 ms, 5017 draws, 1099 dropped without a pipeline |
+| Best frame rate (menus included) | 30.8 fps |
+| Median frame time | 119 ms |
+| Last frame | 4.0 fps, 251 ms, 4804 draws, 586 dropped without a pipeline |
 | Shaders that failed to translate | compute 1 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: the reflection pass that reads the ray passes' results
-(`CS_CombinedReflections`) clears its outputs instead of running
-(`VILOCITY_ZERO_OUT`): left out, they kept whatever their memory held, so
-the rainbow glitter came back on some runs; cleared, jackets and heads are
-clean in both test runs and rooms are lighter. The game's 60,000 tiny
-writes a frame beside shader writes go up to the card in one scatter pass
-instead of ending in a wait for the card. Before that: the ray denoisers
-left out (90 of 203 ms of card time), reads ahead of shader writes wait
-per 64 KiB piece, the ray-tracing passes left out, the two halves of a
-64-lane console wave meet between buffer writes and reads on 32-lane GPUs
-(after shadPS4 #5310), integer render targets no longer blend.
+Latest: the rainbow glitter is gone. A dump of every render target of a
+world frame showed it in the final gather's output, fed by the screen
+probes' radiance, which `CS_ScreenProbes_Inject` filled from the ray
+passes' stale buffers. That program now clears its outputs and gives the
+probes the same constant ambient light as their resolve
+(`VILOCITY_ZERO_OUT`); the orange jumpsuits lost their red tint with it.
+Also ported this round: cube mip levels (DexNom), code tables after the
+instructions (VIctory #2143: 16-18 KiB of local memory per thread on
+NVIDIA), constant buffer views capped at 64 KiB (VItoriaBr), null constant
+buffer writes (VIcky), and a 64-thread card compare (victory-fork #1014).
 
-Next up: our submit thread's copies of game memory, the remaining card
-time (the heaviest compute programs), the driver timeout some 7 minutes
-in, and the last sparkles and blocky edges.
+Next up: the tiled cascade shadows on 32-lane GPUs (the orange dashes and
+~16 px steps; victory-fork #1002), our submit thread's copies of game
+memory, the heaviest compute programs, and the driver timeout some 7
+minutes in.
 
 > [!WARNING]
 > Runs used to end with the GPU device removed 2-3 minutes into the world.

@@ -2130,18 +2130,31 @@ impl State {
         let Some(stage) = p.stages.first() else {
             return;
         };
-        let views: Vec<u64> = stage
+        let views: Vec<(u64, (u8, u32))> = stage
             .translated()
             .used
             .iter()
             .filter(|u| u.kind == ResourceType::Uav && u.root == RootType::Table)
             .filter_map(|u| match self.roots_ref(true).get(usize::from(u.slot)) {
-                Some(&Root::Table(table)) => Some(table + u64::from(u.table_offset_dwords) * 4),
+                Some(&Root::Table(table)) => {
+                    Some((table + u64::from(u.table_offset_dwords) * 4, (u.slot, u.table_offset_dwords)))
+                }
                 _ => None,
             })
             .collect();
-        for view in views {
+        for &(view, _) in &views {
             self.clear_unordered(list, view, [0; 4], false, &[]);
+        }
+        // The probes' radiance gets the ambient light instead of nothing
+        // (`crate::ambient::INJECT`); without it rooms lit only by bounced
+        // light went dark.
+        if stage.shader.injects_light
+            && let Some(&(view, _)) = views.iter().find(|v| v.1 == crate::ambient::INJECTED)
+            && let Some(crate::descriptor::View::Unordered(r, ..)) = crate::descriptor::view(view)
+            && r != 0
+            && crate::ambient::raise(list, r as This, None)
+        {
+            self.host_state_lost();
         }
     }
 

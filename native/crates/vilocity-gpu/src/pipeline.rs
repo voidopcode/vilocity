@@ -71,6 +71,10 @@ pub(crate) struct Shader {
     /// Its dispatches clear what it writes instead ([`zero_out`]).
     #[cfg(windows)]
     pub(crate) zeroed: bool,
+    /// The program that injects ray results into the probes' radiance
+    /// ([`crate::ambient::INJECT`]).
+    #[cfg(windows)]
+    pub(crate) injects_light: bool,
     #[cfg(windows)]
     translated: OnceLock<Option<Translated>>,
     /// Whether its code walks the ray-tracing structures, once looked at
@@ -140,6 +144,8 @@ impl Shader {
             hair: hair_strands(bytes),
             #[cfg(windows)]
             zeroed: zero_out(bytes),
+            #[cfg(windows)]
+            injects_light: bytes.windows(crate::ambient::INJECT.len()).any(|w| w == crate::ambient::INJECT),
             #[cfg(windows)]
             translated: OnceLock::new(),
             #[cfg(windows)]

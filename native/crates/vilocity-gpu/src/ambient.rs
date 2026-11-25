@@ -33,6 +33,17 @@ pub(crate) const PROGRAM: &[u8] = b"CS_ScreenProbes_TemporalResolve";
 /// integers): root parameter and place in its table.
 pub(crate) const LIGHT: (u8, u32) = (1, 176);
 
+/// The program that puts what the rays found into the screen probes'
+/// radiance, ahead of the resolve. Without rays it put in what their
+/// buffers held: rainbow glitter through the final gather on faces and
+/// jackets (target dump of run gta6-20261125-173003: the final gather's
+/// outputs carry it, fed by the probes' radiance). Its outputs are cleared
+/// instead (`VILOCITY_ZERO_OUT`) and its radiance is the same constant.
+pub(crate) const INJECT: &[u8] = b"CS_ScreenProbes_Inject";
+/// Where it writes the probes' radiance (R9G9B9E5 as 32-bit integers, a
+/// 2048x456 atlas): root parameter and place in its table.
+pub(crate) const INJECTED: (u8, u32) = (1, 112);
+
 /// 0.6 looked balanced in run a2. `VILOCITY_AMBIENT=off` leaves what the
 /// title's resolve wrote; 0 is no indirect diffuse light at all.
 const DEFAULT: f32 = 0.6;
