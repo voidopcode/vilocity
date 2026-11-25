@@ -452,6 +452,12 @@ pub(crate) fn dispatched() -> u64 {
     DISPATCHED.load(Ordering::Relaxed)
 }
 
+/// The largest dword-aligned byte offset at which 16 bytes still lie within
+/// `left` bytes ([`vilocity_shader::emit::USER_VIEW_LIMIT`]).
+fn view_limit(left: u64) -> u32 {
+    (left.saturating_sub(16).min(u64::from(u32::MAX)) as u32) & !3
+}
+
 /// The host address of a root view: its buffer's host copy, or for a
 /// constant buffer not 256-byte aligned there (the console needs 16) a
 /// copy in upload memory.
@@ -781,9 +787,19 @@ impl State {
         dword: u32,
         memory: Option<&crate::memory::Ready>,
     ) -> u32 {
-        use vilocity_shader::emit::{USER_MEMORY_BASE, USER_VIEW_ADDRESS, USER_VIEW_BIAS};
+        use vilocity_shader::emit::{USER_MEMORY_BASE, USER_VIEW_ADDRESS, USER_VIEW_BIAS, USER_VIEW_LIMIT};
         if kind == USER_MEMORY_BASE {
             return memory.map_or(0, |m| m.base);
+        }
+        if kind == USER_VIEW_LIMIT {
+            // The root view is bound at its title address in the copy
+            // (`root_view`): 16 bytes readable up to its end. Unknown: no limit.
+            return match self.roots_ref(compute).get(usize::from(slot)) {
+                Some(&Root::View(address)) => {
+                    crate::shadow::find(address, 1).map_or(u32::MAX, |s| view_limit(s.left(address)))
+                }
+                _ => u32::MAX,
+            };
         }
         if kind == USER_VIEW_BIAS {
             // The view begins on 16 bytes of the copy the address finds
@@ -3648,5 +3664,19 @@ pub(crate) fn depth_bounds(list: &HostList, min: f32, max: f32) {
     {
         // SAFETY: an open list on a device that supports depth bounds.
         unsafe { l1.OMSetDepthBounds(min, max) };
+    }
+}
+
+#[cfg(test)]
+mod view_limit_tests {
+    #[test]
+    fn a_root_view_limit_keeps_a_16_byte_read_inside_the_copy() {
+        use super::view_limit;
+        assert_eq!(view_limit(0), 0, "nothing left: reads start at 0");
+        assert_eq!(view_limit(16), 0);
+        assert_eq!(view_limit(17), 0, "aligned down to a dword");
+        assert_eq!(view_limit(20), 4);
+        assert_eq!(view_limit(4096), 4080);
+        assert_eq!(view_limit(1 << 40), u32::MAX & !3, "past 4 GiB: the most an offset holds");
     }
 }

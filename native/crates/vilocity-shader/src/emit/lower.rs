@@ -7069,7 +7069,17 @@ impl<'a> Lower<'a> {
                         Ok(self.s.root_cbv_handle(rp.slot))
                     }
                     (RootType::Descriptor, Some(ResourceType::Srv), 11) => {
-                        Ok(self.s.root_srv_handle(rp.slot))
+                        let h = self.s.root_srv_handle(rp.slot);
+                        // Draws: reads kept inside the memory behind the view
+                        // ([`super::shader::USER_VIEW_LIMIT`]).
+                        if (self.s.threads.is_none() || self.s.mesh.is_some())
+                            && !self.s.limits.iter().any(|l| l.0 == h)
+                        {
+                            let code = RootType::Other(super::shader::USER_VIEW_LIMIT);
+                            let limit = self.host_word(code, rp.slot, 0);
+                            self.s.limits.push((h, limit));
+                        }
+                        Ok(h)
                     }
                     // A root UAV: a raw buffer whether the access reads
                     // (11) or writes (11 with the UAV bit). Indexed

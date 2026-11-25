@@ -68,6 +68,13 @@ pub const USER_VIEW_ADDRESS: u32 = 0x101;
 /// view. Asked for every root UAV, and for the root SRVs of programs with
 /// a spilled user-data table.
 pub const USER_VIEW_BIAS: u32 = 0x103;
+/// `RootType::Other` code of a user-data dword the host computes: the
+/// largest byte offset at which 16 bytes can be read through the root view
+/// of root parameter `slot` (to the end of its host copy; `u32::MAX` when
+/// not known). Root views have no bounds: a draw with wild vertex numbers
+/// read far past its buffer and the card stopped with an MMU fault (GTA VI,
+/// after Belobug's 78028ad, "a cascade-shadow draw ... 2.3 GB past its buffer").
+pub const USER_VIEW_LIMIT: u32 = 0x104;
 
 /// `ShaderFlags` bits (metadata) and their `SFI0` feature bits.
 pub(crate) mod flags {
@@ -156,6 +163,9 @@ pub(crate) struct Shader {
     pub root_cbvs: Vec<(u8, V)>,
     /// Root SRVs (raw buffers) read, likewise.
     pub root_srvs: Vec<(u8, V)>,
+    /// Root views whose raw loads are kept below a limit: handle, limit
+    /// ([`USER_VIEW_LIMIT`]).
+    pub limits: Vec<(V, V)>,
     /// Root UAVs (raw buffers): root parameter and handle.
     pub root_uavs: Vec<(u8, V)>,
     /// Root UAVs 64-bit atomics use (the container says so).
@@ -221,6 +231,7 @@ impl Shader {
             root_cbvs: Vec::new(),
             root_srvs: Vec::new(),
             root_uavs: Vec::new(),
+            limits: Vec::new(),
             atomic64_uavs: Vec::new(),
             flags: 0,
             nonuniform_handles: 0,
@@ -256,6 +267,18 @@ impl Shader {
         opcode: u32,
         args: &[V],
     ) -> V {
+        // A raw load (rawBufferLoad, 139) through a limited root view starts
+        // at most at its limit (UMin, binary 40).
+        let clamped;
+        let args = match self.limits.iter().find(|l| opcode == 139 && args.first() == Some(&l.0)) {
+            Some(&(_, limit)) => {
+                let i32t = self.t.i32;
+                let at = self.op(block, "binary.i32", Attr::ReadNone, i32t, 40, &[args[1], limit]);
+                clamped = [&[args[0], at][..], &args[2..]].concat();
+                &clamped[..]
+            }
+            None => args,
+        };
         let mut params = vec![self.t.i32];
         params.extend(args.iter().map(|&a| self.m.type_of(a)));
         let fty = self.m.func_ty(ret, params);

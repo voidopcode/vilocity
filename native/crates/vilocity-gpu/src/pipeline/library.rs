@@ -64,6 +64,84 @@ use windows::core::{HSTRING, Interface, PCWSTR};
 
 static DIR: OnceLock<PathBuf> = OnceLock::new();
 
+/// Pipelines whose making crashed the host's shader compiler, by name,
+/// kept in [`REFUSED_FILE`] beside the library: asked again they are not
+/// made, the compiler is not called. A compiler crash is caught inside the
+/// driver (the call returns E_OUTOFMEMORY), but the device did not stay
+/// sound: GTA VI lost the card 12 s after NVIDIA's compiler crashed on a
+/// compute pipeline in the run's process. The warm-up meets them first, so
+/// a run of the title never asks.
+// shortcut: kept across driver updates; delete the file to let a new driver try again.
+const REFUSED_FILE: &str = "refused-pipelines.txt";
+
+mod refused {
+    use std::cell::Cell;
+    use std::collections::HashSet;
+    use std::io::Write;
+    use std::sync::{Mutex, OnceLock};
+
+    use windows_sys::Win32::Foundation::EXCEPTION_ACCESS_VIOLATION;
+    use windows_sys::Win32::System::Diagnostics::Debug::{AddVectoredExceptionHandler, EXCEPTION_POINTERS};
+
+    thread_local! {
+        /// This thread is in the host's call that makes a pipeline, and
+        /// whether something in it faulted.
+        static MAKING: Cell<bool> = const { Cell::new(false) };
+        static FAULTED: Cell<bool> = const { Cell::new(false) };
+    }
+
+    unsafe extern "system" fn note(info: *mut EXCEPTION_POINTERS) -> i32 {
+        // SAFETY: the system passes valid exception pointers.
+        let code = unsafe { (*(*info).ExceptionRecord).ExceptionCode };
+        if code == EXCEPTION_ACCESS_VIOLATION && MAKING.try_with(Cell::get).unwrap_or(false) {
+            let _ = FAULTED.try_with(|f| f.set(true));
+        }
+        0 // EXCEPTION_CONTINUE_SEARCH: the driver's own handler goes on
+    }
+
+    fn names() -> &'static Mutex<HashSet<String>> {
+        static NAMES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+        NAMES.get_or_init(|| {
+            let text = super::DIR.get().and_then(|d| std::fs::read_to_string(d.join(super::REFUSED_FILE)).ok());
+            Mutex::new(text.map(|t| t.lines().map(str::to_owned).collect()).unwrap_or_default())
+        })
+    }
+
+    /// `create`, unless `name` crashed the compiler before; a crash in it
+    /// puts `name` on the list.
+    pub(super) fn make<T>(
+        name: &str,
+        create: impl FnOnce() -> windows::core::Result<T>,
+    ) -> windows::core::Result<T> {
+        if names().lock().unwrap_or_else(|e| e.into_inner()).contains(name) {
+            return Err(windows::core::Error::new(
+                windows::Win32::Foundation::E_FAIL,
+                "the host's compiler crashed on this pipeline before (refused-pipelines.txt)",
+            ));
+        }
+        static HOOK: OnceLock<()> = OnceLock::new();
+        HOOK.get_or_init(|| {
+            // SAFETY: a handler that only reads the record and sets thread-locals.
+            unsafe { AddVectoredExceptionHandler(1, Some(note)) };
+        });
+        MAKING.with(|m| m.set(true));
+        FAULTED.with(|f| f.set(false));
+        let made = create();
+        MAKING.with(|m| m.set(false));
+        if made.is_err() && FAULTED.with(Cell::get) {
+            tracing::warn!(name, "the host's compiler crashed making this pipeline: not asked for again");
+            names().lock().unwrap_or_else(|e| e.into_inner()).insert(name.to_owned());
+            if let Some(dir) = super::DIR.get() {
+                let file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join(super::REFUSED_FILE));
+                if let Ok(mut f) = file {
+                    let _ = writeln!(f, "{name}");
+                }
+            }
+        }
+        made
+    }
+}
+
 /// Keeps the pipeline library and the early list in `dir` from now on.
 pub fn use_pipeline_cache(dir: PathBuf) {
     let _ = DIR.set(dir);
@@ -612,7 +690,7 @@ pub(crate) fn pipeline(
     LAST.set(Some((name.to_owned(), true)));
     let Some(library) = library() else {
         MADE.fetch_add(1, Ordering::Relaxed);
-        return create();
+        return refused::make(name, create);
     };
     let began = std::time::Instant::now();
     let loaded = {
@@ -640,7 +718,7 @@ pub(crate) fn pipeline(
     LAST.set(Some((name.to_owned(), false)));
     let pso = {
         let _call = call("make", name);
-        create()?
+        refused::make(name, create)?
     };
     MADE.fetch_add(1, Ordering::Relaxed);
     crate::host::trail(|| {
