@@ -49,15 +49,15 @@ loads saves and gets into the world. The world is where the work is now.
 | 8 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-25 13:05, game build Series 1.0.2.1
+**Latest test run:** 2026-11-25 13:36, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
 | Best frame rate (menus included) | 30.0 fps |
 | Median frame time | 33 ms |
-| Last frame | 30.0 fps, 33 ms, 5 draws, 0 dropped without a pipeline |
+| Last frame | 30.0 fps, 33 ms, 6 draws, 0 dropped without a pipeline |
 | Shaders that failed to translate | compute 1 |
-| Host pipelines refused by the driver | 1 |
+| Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
 Next up: the GPU device loss in the world, the draws dropped for lack of a

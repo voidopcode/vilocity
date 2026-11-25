@@ -871,6 +871,9 @@ impl State {
 
     /// As [`State::prepare`], for draws (`mesh` false) or mesh dispatches.
     fn prepare_for(&mut self, list: &HostList, indexed: bool, mesh: bool) -> bool {
+        if crate::pipeline::left_out(self.pipeline as This) {
+            return false;
+        }
         #[cfg(feature = "diagnostics")]
         if crate::pipeline::is_skipped(self.pipeline as This) {
             return false;
@@ -2117,6 +2120,9 @@ impl State {
     pub(crate) fn dispatch(&mut self, list: &HostList, x: u32, y: u32, z: u32) {
         // It may write the arguments a window holds clamped.
         self.window = None;
+        if crate::pipeline::left_out(self.pipeline as This) {
+            return;
+        }
         #[cfg(feature = "diagnostics")]
         if crate::pipeline::is_skipped(self.pipeline as This) {
             DROPPED.fetch_add(1, Ordering::Relaxed);
@@ -2164,6 +2170,33 @@ impl State {
         // SAFETY: an open list with everything set.
         unsafe { list.list.Dispatch(x, y, z) };
         DISPATCHED.fetch_add(1, Ordering::Relaxed);
+        if self.ambient(list, p) {
+            self.host_state_lost();
+        }
+    }
+
+    /// After a dispatch of `p`: the least indirect light, if it is the
+    /// program that resolves that ([`crate::ambient`]). Whether it recorded
+    /// (the list's bindings are then ours).
+    fn ambient(&self, list: &HostList, p: &crate::pipeline::host::HostPipeline) -> bool {
+        let Some(stage) = p.stages.first().filter(|s| s.shader.resolves_light) else {
+            return false;
+        };
+        let (slot, offset) = crate::ambient::LIGHT;
+        let used = stage.translated().used.iter().find(|u| {
+            u.kind == ResourceType::Uav && u.root == RootType::Table && (u.slot, u.table_offset_dwords) == (slot, offset)
+        });
+        let view = used.and_then(|u| match self.roots_ref(true).get(usize::from(u.slot)) {
+            Some(&Root::Table(table)) => crate::descriptor::view(table + u64::from(u.table_offset_dwords) * 4),
+            _ => None,
+        });
+        match view {
+            Some(crate::descriptor::View::Unordered(r, ..)) if r != 0 => crate::ambient::raise(list, r as This),
+            _ => {
+                once!("no ambient light: other tables");
+                false
+            }
+        }
     }
 
     /// What a draw or dispatch runs, for the device-removed report
@@ -3110,6 +3143,9 @@ impl State {
         count: Option<u64>,
     ) -> bool {
         // Skip before the argument clamp can mutate the indirect buffer.
+        if crate::pipeline::left_out(self.pipeline as This) {
+            return false;
+        }
         #[cfg(feature = "diagnostics")]
         if crate::pipeline::is_skipped(self.pipeline as This) {
             crate::pipeline::note_drop(self.pipeline as This);

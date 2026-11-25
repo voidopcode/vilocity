@@ -19,10 +19,6 @@ if (-not $Defaults) {
     $env:VILOCITY_QUEUE2 = "1"           # read-backs on a copy queue
     $env:VILOCITY_INDIRECT_WINDOW = "1"  # cheaper indirect draws
     $env:VILOCITY_TEXTURE_NO_WAIT = "1"  # texture refreshes do not wait for remaps
-    # Ours, from the run logs on an RTX 5080: the texture pass took up to
-    # 250 ms a frame (750 with a backlog); 100 ms keeps frames shorter while
-    # textures stream in over more frames.
-    $env:VILOCITY_TEXTURE_STAGE_MS = "100"
     # 4.7 GB of the card's copies spilled into PC memory; levels the title
     # does not hold take no card memory with this (the fork: 2-3 GB saved).
     $env:VILOCITY_LEVELS_ON_DEMAND = "1"

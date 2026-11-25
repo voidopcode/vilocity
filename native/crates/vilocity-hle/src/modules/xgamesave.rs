@@ -177,6 +177,28 @@ fn parse_manifest(bytes: &[u8]) -> Option<Vec<String>> {
     (out.len() >= 2).then_some(out)
 }
 
+/// Removes `dir` and what is in it, with plain deletes: `remove_dir_all`
+/// opens what it removes without following reparse points, which fails in
+/// the sandbox's AppContainer (ERROR_REPARSE_POINT_ENCOUNTERED, 4395), so a
+/// save's old version stayed and the next save failed with it (GTA VI asked
+/// its first-start settings again every run). A link is removed, never
+/// followed.
+fn remove_tree(dir: impl AsRef<Path>) -> std::io::Result<()> {
+    let dir = dir.as_ref();
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_dir() && !kind.is_symlink() {
+            remove_tree(&entry.path())?;
+        } else if kind.is_dir() {
+            std::fs::remove_dir(entry.path())?;
+        } else {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
+    std::fs::remove_dir(dir)
+}
+
 /// The container's newest committed version, if any. Removes what a crash
 /// left: unfinished versions and older ones.
 fn current(dir: &Path) -> std::io::Result<Option<Version>> {
@@ -185,7 +207,7 @@ fn current(dir: &Path) -> std::io::Result<Option<Version>> {
         let file = entry.file_name();
         let file = file.to_string_lossy();
         if file.ends_with(".new") {
-            std::fs::remove_dir_all(entry.path())?;
+            remove_tree(entry.path())?;
         } else if let Some(n) = file.strip_prefix('v').and_then(|n| n.parse::<u64>().ok()) {
             committed.push(n);
         }
@@ -195,7 +217,7 @@ fn current(dir: &Path) -> std::io::Result<Option<Version>> {
         return Ok(None);
     };
     for old in &committed[..committed.len() - 1] {
-        std::fs::remove_dir_all(dir.join(format!("v{old}")))?;
+        remove_tree(dir.join(format!("v{old}")))?;
     }
     let version = dir.join(format!("v{number}"));
     let bad = || std::io::Error::new(std::io::ErrorKind::InvalidData, "bad save manifest");
@@ -243,7 +265,7 @@ fn commit(
 ) -> std::io::Result<()> {
     let staged = dir.join(format!("v{number}.new"));
     if staged.exists() {
-        std::fs::remove_dir_all(&staged)?;
+        remove_tree(&staged)?;
     }
     std::fs::create_dir_all(&staged)?;
     let write = |path: PathBuf, data: &[u8]| -> std::io::Result<()> {
@@ -280,7 +302,7 @@ fn containers(root: &Path) -> Vec<(String, PathBuf)> {
             continue;
         }
         if file.ends_with(".gone") {
-            let _ = std::fs::remove_dir_all(&path);
+            let _ = remove_tree(&path);
         } else if file.contains('~') {
             if let Ok(Some(v)) = current(&path) {
                 out.push((v.name, path));
@@ -317,7 +339,7 @@ fn migrate(root: &Path, name: &str, old: &Path) -> Option<PathBuf> {
             .collect();
         commit(&dir, 1, name, &display, &sources).ok()?;
     }
-    std::fs::remove_dir_all(old).ok()?;
+    remove_tree(old).ok()?;
     tracing::info!(container = name, "game save moved to the versioned layout");
     Some(dir)
 }
@@ -476,7 +498,7 @@ impl Update {
         }
         // The old version is garbage now; a crash here leaves it for later.
         if let Some(old) = &current {
-            let _ = std::fs::remove_dir_all(&old.dir);
+            let _ = remove_tree(&old.dir);
             step();
         }
         S_OK
@@ -493,13 +515,13 @@ fn delete(root: &Path, name: &str) -> HRESULT {
         Err(e) => return io_error(&dir, &e),
     }
     let gone = dir.with_extension("gone");
-    let _ = std::fs::remove_dir_all(&gone);
+    let _ = remove_tree(&gone);
     step();
     if let Err(e) = std::fs::rename(&dir, &gone) {
         return io_error(&dir, &e);
     }
     step();
-    let _ = std::fs::remove_dir_all(&gone);
+    let _ = remove_tree(&gone);
     S_OK
 }
 
@@ -942,6 +964,18 @@ mod tests {
 
     use super::*;
     use crate::modules::xgameruntime::method;
+
+    #[test]
+    fn a_version_folder_is_removed_with_what_it_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = dir.path().join("v1");
+        std::fs::create_dir_all(v.join("inner")).unwrap();
+        std::fs::write(v.join("0"), b"blob").unwrap();
+        std::fs::write(v.join("inner").join("manifest"), b"m").unwrap();
+        remove_tree(&v).unwrap();
+        assert!(!v.exists());
+        assert!(remove_tree(&v).is_err(), "a missing folder is an error, as before");
+    }
 
     fn block() -> AsyncBlock {
         AsyncBlock {

@@ -868,6 +868,8 @@ impl HostPipeline {
             stage: "mesh",
             hash: format!("{}+{}", vs.hash, gs.hash),
             container: Vec::new(),
+            resolves_light: false,
+            hair: false,
             translated: std::sync::OnceLock::from(Some(Translated {
                 host,
                 used,

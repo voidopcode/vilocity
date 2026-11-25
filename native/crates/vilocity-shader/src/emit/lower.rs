@@ -4934,11 +4934,14 @@ impl<'a> Lower<'a> {
         r
     }
 
-    /// Whether a quad-local read must reach discarded lanes: after a pixel's
-    /// discard they are the host's helpers, which only quad reads see (wave
-    /// reads give 0 from them on AMD).
+    /// Whether a quad-local read must reach helper lanes: in a pixel shader,
+    /// always. At a triangle's edge the quad's other pixels are helpers (and
+    /// so are discarded ones), which only quad reads see: before shader
+    /// model 6.7 helpers are no lanes of wave operations on any host (AMD
+    /// gives 0), so a derivative taken by hand was the whole value there and
+    /// edges showed as lines on car paint, glass and skin (Belobug 03629f3).
     fn helpers_read(&self, quad: bool) -> bool {
-        quad && self.s.pixel && !self.x.st.discards.is_empty()
+        quad && self.s.pixel
     }
 
     /// `x` of host lane `lane`. Split: console lanes in this thread's half

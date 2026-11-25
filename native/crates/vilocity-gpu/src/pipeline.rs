@@ -62,6 +62,12 @@ pub(crate) struct Shader {
     /// The first 8 bytes of its BLAKE3, as logged.
     pub(crate) hash: String,
     container: Vec<u8>,
+    /// The program that resolves the indirect light ([`crate::ambient`]).
+    #[cfg(windows)]
+    pub(crate) resolves_light: bool,
+    /// It animates or draws hair strands ([`hair_strands`]).
+    #[cfg(windows)]
+    pub(crate) hair: bool,
     #[cfg(windows)]
     translated: OnceLock<Option<Translated>>,
 }
@@ -119,6 +125,12 @@ impl Shader {
             stage,
             hash: blake3::hash(bytes).to_hex()[..16].to_owned(),
             container: bytes.to_vec(),
+            #[cfg(windows)]
+            resolves_light: bytes
+                .windows(crate::ambient::PROGRAM.len())
+                .any(|w| w == crate::ambient::PROGRAM),
+            #[cfg(windows)]
+            hair: hair_strands(bytes),
             #[cfg(windows)]
             translated: OnceLock::new(),
         }
@@ -473,6 +485,59 @@ fn parse_skip_hashes(value: &str) -> Vec<String> {
             }
         })
         .collect()
+}
+
+/// Whether a container's program is one of those that animate and draw hair
+/// strands, by its name (from Belobug's VIctory fork, 6bca461).
+/// `VILOCITY_HAIR=1` has them run.
+/// shortcut: left out, as some of them do not translate and the others draw
+/// lines all over the screen (orange streaks over GTA VI's hair).
+#[cfg(windows)]
+fn hair_strands(container: &[u8]) -> bool {
+    static RUN: OnceLock<bool> = OnceLock::new();
+    const NAMES: [&[u8]; 18] = [
+        b"InterpolateStrand",
+        b"HairStrand",
+        b"CS_VisHair",
+        b"PS_Smh",
+        b"CS_InitSimBuffer",
+        b"CS_PreSkinSim",
+        b"CS_SolvePer",
+        b"CS_WavePerSpline",
+        b"CS_EstimateStartPosition",
+        b"CS_CachePrev",
+        b"CS_RestoreSimVelocity",
+        b"CS_UpdatePosePosition",
+        b"CS_GenerateAccessories",
+        b"CSGenerateHair",
+        b"CS_CalculateFireVolumes",
+        b"CS_ProjDecalCut",
+        b"CS_CullMaskPass",
+        b"CS_LodBlend",
+    ];
+    if *RUN.get_or_init(|| std::env::var_os("VILOCITY_HAIR").is_some_and(|v| v == "1")) {
+        return false;
+    }
+    const END: &[u8] = b"_Wrapped";
+    container
+        .windows(END.len())
+        .enumerate()
+        .filter(|(_, w)| *w == END)
+        .any(|(at, _)| {
+            let before = &container[at.saturating_sub(100)..at];
+            let name = before
+                .rsplit(|b| !b.is_ascii_alphanumeric() && *b != b'_')
+                .next()
+                .unwrap_or_default();
+            NAMES.iter().any(|n| name.windows(n.len()).any(|w| w == *n))
+        })
+}
+
+/// Whether draws and dispatches of `this` are left out in every build (its
+/// shaders draw hair strands, [`hair_strands`]).
+#[cfg(windows)]
+pub(crate) fn left_out(this: This) -> bool {
+    !this.is_null() && pipeline(this).shaders.iter().any(|s| s.hair)
 }
 
 #[cfg(all(windows, feature = "diagnostics"))]
@@ -1067,5 +1132,17 @@ mod tests {
         put(&mut stream, 0x1e0, 10 | 2 << 32);
         // SAFETY: as above.
         assert_ne!(unsafe { Prebuild::graphics(&stream) }.key(), title.host.key);
+    }
+}
+
+#[cfg(all(test, windows))]
+mod hair_tests {
+    #[test]
+    fn hair_strand_programs_are_known_by_name() {
+        let container = |name: &str| [b"\0\0DXBC..".as_slice(), name.as_bytes(), b"_Wrapped\0rest"].concat();
+        assert!(super::hair_strands(&container("CS_HairStrandSim_1a2b")));
+        assert!(super::hair_strands(&container("PS_Smh_Deferred")));
+        assert!(!super::hair_strands(&container("CS_ScreenProbes_TemporalResolve_7")));
+        assert!(!super::hair_strands(b"no name here at all"));
     }
 }
