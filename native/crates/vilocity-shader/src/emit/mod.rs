@@ -378,11 +378,14 @@ thread_local! {
 /// `CS_BatchCullPreSkinnedMeshlets*`): with their barriers fenced only, a
 /// dark jagged hole came and went on the inmate's shirt shoulders (4 of 8
 /// world frames); with every barrier waiting it was in none of 6, at the
-/// same frame time.
+/// same frame time. And the hair tile programs (`Hair`: `CS_HairTile*`):
+/// fenced only, a dark band crossed the bald inmate's head at ear height and
+/// the jumpsuits went from orange to red; waiting, neither (run of
+/// 2026-11-25 22:2x, 6 world frames).
 fn sync_full(container: &[u8]) -> bool {
     static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     let names = NAMES.get_or_init(|| {
-        let set = std::env::var("VILOCITY_GROUP_SYNC_FULL").unwrap_or_else(|_| "CS_Shadow,RasterClassification,Skinning,BatchCull".to_owned());
+        let set = std::env::var("VILOCITY_GROUP_SYNC_FULL").unwrap_or_else(|_| "CS_Shadow,RasterClassification,Skinning,BatchCull,Hair".to_owned());
         set.split(',').map(str::trim).filter(|n| !n.is_empty() && *n != "none").map(str::to_owned).collect()
     });
     if names.is_empty() {
@@ -2252,6 +2255,7 @@ mod sync_full_tests {
         assert!(super::sync_full(b"x CS_WriteRasterClassificationResults_71bbdf9d_Wrapped"));
         assert!(super::sync_full(b"x CS_PedStandardSkinning_3_0a1b2c3d_Wrapped"));
         assert!(super::sync_full(b"x CS_BatchCullPreSkinnedMeshlets_Prev_b589f3cd_Wrapped"));
+        assert!(super::sync_full(b"x CS_HairTileClassify_0a1b2c3d_Wrapped"));
         assert!(!super::sync_full(b"x CS_GenerateShadowMasks_Checkerboard_NoHair_5e982407_Wrapped"));
         assert!(!super::sync_full(b"\0CS_FinalGather_0_1_1_0_a1d0fa7d_Wrapped\0"));
         assert!(!super::sync_full(b"no name here"));
