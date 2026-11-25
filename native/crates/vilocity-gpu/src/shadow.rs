@@ -2054,7 +2054,7 @@ mod piece_tests {
 /// at `written` alone, so a page of a range shaders may be writing that the
 /// copy never took, and the title had not written lately, was neither
 /// merged nor a reason to settle; the refresh leaves such ranges alone, and
-/// shaders read zeros there (fxceless/vilocity-fork#206: missing geometry
+/// shaders read zeros there (missing geometry
 /// with `VILOCITY_LATE_WAIT`/`VILOCITY_RELAY`).
 fn stale_pages_in(base: usize, copied: &[u64], a: usize, e: usize, written: &[(usize, u64)]) -> Vec<usize> {
     (a / PAGE..e.div_ceil(PAGE))

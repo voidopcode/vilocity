@@ -3,8 +3,6 @@
 </p>
 
 <p align="center">
-  <a href="https://discord.gg/xcl"><img alt="Discord: join the server" src="https://img.shields.io/badge/Discord-join%20the%20server-7c5cff?style=for-the-badge"></a>
-  <a href="https://github.com/xcl-dev/xcl/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/vilocity-dev/vilocity/ci.yml?branch=main&style=for-the-badge&label=CI"></a>
   <a href="LICENSE"><img alt="License: GPL-2.0-only" src="https://img.shields.io/badge/license-GPL--2.0--only-7c5cff?style=for-the-badge"></a>
   <img alt="Windows 10 / 11 x64" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-2f80ed?style=for-the-badge">
   <img alt="Direct3D 12, Shader Model 6.6" src="https://img.shields.io/badge/D3D12-SM%206.6-1fb9d8?style=for-the-badge">
@@ -44,7 +42,7 @@ Vilocity is a compatibility layer that runs Xbox Series X|S (GDK) games you own 
 | **Unicorn Overlord**<br><sub>`SEGAofAmericaInc.Pa253b0c1Y` 1.0.0.6</sub> | ✅&nbsp;playable | fully playable | – |
 | **Fortnite**<br><sub>`436609B6.FortniteClient` 2.0.1461.7919</sub> | ✅&nbsp;works | works fully, as far as the game allows without its online services | the game itself is online-only (multiplayer servers) |
 | **XDefiant**<br><sub>`Ubisoft.XDefiant-Game` 1.0.0.186</sub> | ✅&nbsp;works | works fully, as far as the game allows without its servers | the game's own servers have been shut down |
-| **A newer retail game** | 🚧&nbsp;**≈&nbsp;60&nbsp;%**<br><sub>estimate</sub> | starts in ~4 s, runs at a steady 30 fps without a crash, shows its menus and goes on past the first one to its settings; fits a 32 GB machine (~15 GB committed in the menus). With the NVIDIA integration branch ([#2057](https://github.com/xcl-dev/xcl/pull/2057)) it goes on into its 3D world: **~5 fps there** on an RTX 5090 (14 fps on average over a whole 5-minute run, its menus and loading included) | not playable yet: the picture of the world is incomplete (its minimap and other mesh pipelines are refused), and it does not keep running there for long |
+| **A newer retail game** | 🚧&nbsp;**≈&nbsp;60&nbsp;%**<br><sub>estimate</sub> | starts in ~4 s, runs at a steady 30 fps without a crash, shows its menus and goes on past the first one to its settings; fits a 32 GB machine (~15 GB committed in the menus). With the NVIDIA integration branch it goes on into its 3D world: **~5 fps there** on an RTX 5090 (14 fps on average over a whole 5-minute run, its menus and loading included) | not playable yet: the picture of the world is incomplete (its minimap and other mesh pipelines are refused), and it does not keep running there for long |
 
 ## Highlights
 
@@ -201,7 +199,7 @@ next to `vilocity-compat.exe`, directly next to `vilocity-compat.exe`, in `%LOCA
   and point `VILOCITY_DXC_DIR` at its `bin\x64`. A Windows SDK may hold an older one (the same `10.0.26100.0`
   folder has DXC 1.7.2308 or 1.8.2502, depending on the SDK's revision). DXC 1.7's DXIL was 2–2.7 times the
   size of 1.9's for translated compute programs and took an NVIDIA driver 1.4–2.2 times as long to build
-  pipelines from ([#156](https://github.com/ivall/xcl/issues/156)). `vilocity run` prints the DXC it loaded, and
+  pipelines from. `vilocity run` prints the DXC it loaded, and
   `report.json` has it under `dxc`.
 - **GPU:** developed on AMD RDNA4. The console's geometry and NGG programs run as a compute pass plus a
   mesh pass, so a GPU without mesh shaders draws none of them. On GPUs with 32-lane waves only
@@ -210,7 +208,6 @@ next to `vilocity-compat.exe`, directly next to `vilocity-compat.exe`, in `%LOCA
   64-lane waves, most for groups of several waves; wave64 vertex and pixel shaders that read lanes 32–63
   can still differ there. With `VILOCITY_DIRECT_DXIL=1` and `VILOCITY_PER_LANE=1`, compute groups
   made up of complete native waves can use the per-lane form for branches on whole-wave masks.
-  Test results on other GPUs: [#42](https://github.com/ivall/xcl/issues/42).
 
 ```powershell
 cargo build --release --workspace          # target\release\vilocity-compat.exe
@@ -295,8 +292,7 @@ part of the repository.
 ## Contributing
 
 Help is welcome – [`CONTRIBUTING.md`](CONTRIBUTING.md) has what a pull request needs, in short: small,
-one problem, tested. Test results on your GPU go to [#42](https://github.com/xcl-dev/xcl/issues/42),
-questions and talk to the [Discord server](https://discord.gg/xcl).
+one problem, tested.
 
 <p align="center"><img src="assets/readme/divider.svg" width="100%" alt=""></p>
 

@@ -177,7 +177,6 @@ Vilocity is **GPL-2.0-only**.
 
 ## Reviews and test reports
 
-- **Test results on your GPU** go to [#42](https://github.com/ivall/xcl/issues/42), not a new issue.
 - Testing someone else's PR helps the most when it follows the **Tested / Not tested** outline above
   and names the exact commit tested. Post one comment and edit it when you rerun the tests; do not
   post a new comment for every run.

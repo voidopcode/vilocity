@@ -245,8 +245,7 @@ pub(crate) fn wrote(at: usize, len: usize) {
     // The asking that stands moves with it: `asked` and `writes` give it as
     // "now", and a page noted written after "now" stays stale for every
     // copy that takes it (copied at `now`, written at `now + 1`): copied
-    // again at every refresh, and a reason to settle flights
-    // (fxceless/vilocity-fork#410).
+    // again at every refresh, and a reason to settle flights.
     j.ahead_asked = now;
     for page in at / PAGE..at.saturating_add(len).div_ceil(PAGE) {
         j.written.insert(page, now);

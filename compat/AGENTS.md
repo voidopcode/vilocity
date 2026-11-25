@@ -54,7 +54,7 @@ test counts by hand.
 - **Never run `cargo fmt` on files or the crate**: the tree is not `rustfmt`-clean. Format only the
   lines you change.
 - Before starting, check whether an open PR or issue already covers the work
-  (`gh pr list -R ivall/xcl --search "<keywords>"`), and tell the user if one does.
+  (`gh pr list --search "<keywords>"`), and tell the user if one does.
 - Follow the code around you: reuse existing helpers and the module's patterns instead of adding layers.
 - When your change makes something work (or stop working) for users, update `README.md`. If it makes
   a statement in `HANDOFF.md` or `docs/specs/` wrong, say so in the PR description instead of editing them.
