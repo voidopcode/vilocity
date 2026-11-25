@@ -64,7 +64,9 @@ $monitor = Join-Path $PSScriptRoot "monitor-gta6.ps1"
 # AMD's PC FidelityFX upscaler (FSR), if downloaded into this folder, runs
 # the title's upscaling natively instead of the console build translated.
 $ffx = Join-Path $env:LOCALAPPDATA "vilocity\fidelityfx"
-if (Test-Path (Join-Path $ffx "amd_fidelityfx_upscaler_dx12.dll")) { $env:VILOCITY_FIDELITYFX_DIR = $ffx }
+# (VILOCITY_FIDELITYFX_DIR=off keeps the console's own upscaler.)
+if ($env:VILOCITY_FIDELITYFX_DIR -eq "off") { Remove-Item Env:VILOCITY_FIDELITYFX_DIR }
+elseif (Test-Path (Join-Path $ffx "amd_fidelityfx_upscaler_dx12.dll")) { $env:VILOCITY_FIDELITYFX_DIR = $ffx }
 
 $watch = Start-Process powershell -PassThru -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$monitor`" -Log `"$log`""
 Write-Host "log: $log"

@@ -389,6 +389,19 @@ pub(crate) fn dump_targets(frame: u64) {
         let state = copy.state.load(Relaxed);
         dump_one(host, texture, state, frame, i, *resource as crate::object::This, &d);
     }
+    // `VILOCITY_DUMP_BUFFERS=<hex address>:<bytes>,...`: those bytes of title
+    // memory too, where shaders' writes are copied back once their
+    // submission has run (`frame-N-buf-<address>.bin`).
+    let Some(dir) = folder() else { return };
+    for spec in std::env::var("VILOCITY_DUMP_BUFFERS").unwrap_or_default().split(',') {
+        let Some((a, n)) = spec.trim().split_once(':') else { continue };
+        let (Ok(a), Ok(n)) = (u64::from_str_radix(a.trim_start_matches("0x"), 16), n.parse::<usize>()) else {
+            continue;
+        };
+        let mut bytes = vec![0u8; n];
+        crate::host::copy_mapped(bytes.as_mut_ptr(), a as *const u8, n, false);
+        let _ = std::fs::write(dir.join(format!("frame-{frame}-buf-{a:#x}.bin")), bytes);
+    }
 }
 
 fn dump_one(

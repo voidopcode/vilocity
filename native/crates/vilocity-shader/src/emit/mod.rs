@@ -361,10 +361,21 @@ thread_local! {
 /// gta6-20261125-173003; gone with every barrier waiting, run
 /// gta6-20261125-180405, which made every program slower: 350-420 ms frames
 /// for 180-260). TuxBox 8feefd2 found the same race on GeForce.
+///
+/// The shadow tile classification too (`RasterClassification`:
+/// `CS_CalcRasterClassificationListCounts` and
+/// `CS_WriteRasterClassificationResults`, 1024 threads a group): thread 0
+/// clears 4 KiB of group-shared memory, then a barrier, then each console
+/// wave's first lane writes its tile count there. Their loops can be cut
+/// at the iteration limit, so the barrier lost its wait, and the clear
+/// wiped the counts of waves 1-15: only wave 0's 64 tiles of each group
+/// reached the tiled shadow lists (dumped lists of run gta6-20261125-212014),
+/// and the tiles left out kept the clear's "lit": the last orange dashes,
+/// on heads and shirts by the cell window (gone, run gta6-20261125-213252).
 fn sync_full(container: &[u8]) -> bool {
     static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     let names = NAMES.get_or_init(|| {
-        let set = std::env::var("VILOCITY_GROUP_SYNC_FULL").unwrap_or_else(|_| "CS_Shadow".to_owned());
+        let set = std::env::var("VILOCITY_GROUP_SYNC_FULL").unwrap_or_else(|_| "CS_Shadow,RasterClassification".to_owned());
         set.split(',').map(str::trim).filter(|n| !n.is_empty() && *n != "none").map(str::to_owned).collect()
     });
     if names.is_empty() {
@@ -2230,8 +2241,11 @@ mod sync_full_tests {
         assert!(super::sync_full(b"\0\0CS_ShadowRenderTiledMiscCB_9945271c_Wrapped\0"));
         assert!(super::sync_full(b"x CS_ShadowRenderTiledCascades_9945271c_Wrapped"));
         assert!(super::sync_full(b"x CS_ShadowUnifiedClearRaster_6bcdd348_Wrapped"));
+        assert!(super::sync_full(b"x CS_CalcRasterClassificationListCounts_71bbdf9d_Wrapped"));
+        assert!(super::sync_full(b"x CS_WriteRasterClassificationResults_71bbdf9d_Wrapped"));
         assert!(!super::sync_full(b"x CS_GenerateShadowMasks_Checkerboard_NoHair_5e982407_Wrapped"));
         assert!(!super::sync_full(b"\0CS_FinalGather_0_1_1_0_a1d0fa7d_Wrapped\0"));
         assert!(!super::sync_full(b"no name here"));
     }
 }
+

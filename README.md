@@ -44,31 +44,42 @@ loads saves and gets into the world. The world is where the work is now.
 | 3 | Start screen, profile and saves | ✅ works | ██████████ |
 | 4 | Loading into the world | ✅ works | ██████████ |
 | 5 | The world renders | 🟡 prologue cutscenes and the first room play, 4-8 fps (about 130-280 ms a frame, 200 ms median); every shader translates; some draws still dropped | ██████░░░░ |
-| 6 | The picture | 🟡 no rainbow glitter, faces and rooms lit, jumpsuits their real orange, smooth edges (AMD's PC FSR); ray-traced light stands in as a constant; a few orange marks from the shadows remain | ███████░░░ |
+| 6 | The picture | 🟡 no rainbow glitter, no orange dashes, faces and rooms lit, window light and shadows on heads, jumpsuits their real orange, smooth edges (AMD's PC FSR); ray-traced light stands in as a constant; a dark jagged patch on some shirts remains | ████████░░ |
 | 7 | The world keeps running | 🟡 the loss 2-3 minutes in is fixed; a driver timeout some 7 minutes in remains (a longer GPU timeout is being tested) | █████░░░░░ |
 | 8 | Playable frame rate (30 fps) | 🔴 not yet: the card's own work is 70-130 ms a frame and our submit thread's copies and copy-back 100-150 ms; the card no longer waits for the game's writes beside shader writes | ██░░░░░░░░ |
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-25 18:52, game build Series 1.0.2.1
+**Latest test run:** 2026-11-25 21:46, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 30.4 fps |
-| Median frame time | 132 ms |
-| Last frame | 2.5 fps, 397 ms, 3552 draws, 763 dropped without a pipeline |
+| Best frame rate (menus included) | 30.6 fps |
+| Median frame time | 339 ms |
+| Last frame | 2.8 fps, 355 ms, 4761 draws, 577 dropped without a pipeline |
 | Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: the orange dashes over the picture were a race in the shadow
-programs on 32-lane GPUs: a lane that left a loop early passed a barrier
-whose wait was dropped, and the other half-wave read shared memory before
-it was written (the same race TuxBox found on GeForce). The shadow programs
-now wait at every barrier (`VILOCITY_GROUP_SYNC_FULL`), the rest keep the
-fast form; frames 200 ms median. The tiled cascade shadow programs also
-translate exactly now (victory-fork #1002), so every shader of the game
-translates.
+Latest: the last orange dashes are gone. They were 16-pixel tiles the
+tiled shadow programs never shaded, so they kept the "lit" clear value:
+bright bars on heads and shirts by the cell window. A dump of the shadow
+tile lists showed only 64 tiles of every 1024: the two programs that build
+the lists (`CS_CalcRasterClassificationListCounts`,
+`CS_WriteRasterClassificationResults`) clear their shared memory from one
+thread, then pass a barrier that had lost its wait on the host, and the
+clear wiped the other 15 waves' tile counts. They now wait at every barrier
+like the shadow programs (`VILOCITY_GROUP_SYNC_FULL`), and the window light
+falls on the head with a smooth shadow side. The glass of the cell window
+is clear again with it. New GPU tests cover the patterns these programs use
+on 32-lane cards, and the diagnostics build can dump buffers beside its
+target dumps (`VILOCITY_DUMP_BUFFERS`).
+
+Before that, the shadow programs themselves got the same treatment: a lane
+that left a loop early passed a barrier whose wait was dropped, and the
+other half-wave read shared memory before it was written (the race TuxBox
+found on GeForce). The tiled cascade shadow programs also translate exactly
+(victory-fork #1002), so every shader of the game translates.
 
 Before that, the rainbow glitter went. A dump of every render target of a
 world frame showed it in the final gather's output, fed by the screen
@@ -81,8 +92,9 @@ instructions (VIctory #2143: 16-18 KiB of local memory per thread on
 NVIDIA), constant buffer views capped at 64 KiB (VItoriaBr), null constant
 buffer writes (VIcky), and a 64-thread card compare (victory-fork #1014).
 
-Next up: the last orange marks, our submit thread's copies of game memory,
-the heaviest compute programs, and the driver timeout some 7 minutes in.
+Next up: the dark patch on some shirts, our submit thread's copies of game
+memory, the heaviest compute programs, and the driver timeout some 7 minutes
+in.
 
 > [!WARNING]
 > Runs used to end with the GPU device removed 2-3 minutes into the world.

@@ -466,3 +466,161 @@ fn a_half_waits_for_its_late_partner() {
 }
 
 
+
+/// The console's whole-wave minimum (DPP8 swaps, a row mirror,
+/// `v_permlanex16`, then lane 32 and lane 0 read back) as
+/// `CS_ShadowUnifiedClearRaster` takes it over a 16x16 tile's depth: inside
+/// `s_or_saveexec -1`, lanes out of EXEC give +inf. Lanes 20-63 of each
+/// console wave are in EXEC with 100 - lane, so the minimum is 37 (lane 63,
+/// upper half) in every wave of the 256-thread group.
+#[test]
+fn whole_wave_minimum_of_a_tile_reads_both_halves() {
+    const S_OR_SAVEEXEC_B64: u8 = 0x25;
+    const V_CVT_F32_U32: u16 = 0x06;
+    const V_SUB_F32: u8 = 0x04;
+    const V_MIN_F32: u8 = 0x0F;
+    const V_CNDMASK_B32_E64: u16 = 0x101;
+    const V_PERMLANEX16_B32: u16 = 0x378;
+    const LITERAL: u16 = 0xFF;
+    let dpp8 = |lanes: [u32; 8]| -> [u32; 2] {
+        let sel = lanes.iter().enumerate().fold(0, |s, (i, l)| s | l << (3 * i));
+        [vop2(V_MIN_F32, 2, 0xE9, 2), 2 | sel << 8]
+    };
+    let mut body = vec![
+        vop2(V_AND_B32, 5, k(63), 0),
+        vop1(V_CVT_F32_U32, 8, vgpr(5)),
+        vop2(V_SUB_F32, 8, LITERAL, 8),
+        100f32.to_bits(),
+        vop1(V_MOV_B32, 1, k(7)),
+        vopc(V_CMP_LT_U32, k(19), 5),
+        sop1(S_AND_SAVEEXEC_B64, 12, VCC),
+        sop1(S_OR_SAVEEXEC_B64, 14, MINUS_ONE as u8),
+        vop1(V_MOV_B32, 2, LITERAL),
+        f32::INFINITY.to_bits(),
+    ];
+    body.extend_from_slice(&vop3_3(V_CNDMASK_B32_E64, 2, vgpr(2), vgpr(8), 14));
+    body.extend_from_slice(&dpp8([1, 0, 3, 2, 5, 4, 7, 6]));
+    body.extend_from_slice(&dpp8([2, 2, 0, 0, 6, 6, 4, 4]));
+    body.extend_from_slice(&dpp8([4, 4, 4, 4, 0, 0, 0, 0]));
+    // row_mirror bound_ctrl:1
+    body.extend_from_slice(&[vop2(V_MIN_F32, 2, 0xFA, 2), 2 | 0x140 << 8 | 1 << 19 | 0xF << 24 | 0xF << 28]);
+    body.extend_from_slice(&vop3_3(V_PERMLANEX16_B32, 3, vgpr(2), k(0), k(0)));
+    body.push(vop2(V_MIN_F32, 2, vgpr(3), 2));
+    body.extend_from_slice(&vop3(V_READLANE_B32, 16, vgpr(2), k(32)));
+    body.push(vop2(V_MIN_F32, 2, 16, 2));
+    body.extend_from_slice(&vop3(V_READLANE_B32, 16, vgpr(2), k(0)));
+    body.push(sop1(S_MOV_B64, EXEC, 14));
+    body.push(vop1(V_MOV_B32, 1, 16));
+    body.push(sop2(S_OR_B64, EXEC, EXEC, 12));
+    let want = |t: u32| if t % 64 >= 20 { 37f32.to_bits() } else { 7 };
+    check_in(&program_in(&body, [64, 1, 1], 0), want);
+    check_in(&program_in(&body, [16, 16, 1], 0), want);
+}
+
+/// `CS_WriteRasterClassificationResults`'s count per console wave in a
+/// 1024-thread group: the wave's first lane in EXEC (`s_ff1` of EXEC
+/// against `v_mbcnt`) writes the wave's ballot count to LDS at the wave's
+/// slot; after a barrier every thread reads its own wave's slot and the
+/// next wave's. Every wave must have written (on the host, before the fix,
+/// only wave 0's tiles reached the shadow tile lists).
+#[test]
+fn each_console_wave_of_a_big_group_writes_its_first_lane_slot() {
+    const S_FF1_I32_B64: u8 = 0x14;
+    const V_CMPX_EQ_I32: u16 = 0x92;
+    const S_BARRIER: u8 = 0x0A;
+    let [a, b] = vop3(V_MBCNT_LO_U32_B32, 8, MINUS_ONE, k(0));
+    let [c, d] = vop3(V_MBCNT_HI_U32_B32, 8, MINUS_ONE, vgpr(8));
+    let mut body = vec![a, b, c, d];
+    body.extend_from_slice(&[
+        // the wave's count: its lanes below 40, plus its number (t / 64)
+        vopc(V_CMP_GT_U32, k(40), 8),
+        sop1(S_BCNT1_I32_B64, 20, VCC),
+        vop2(V_LSHRREV_B32, 6, k(6), 0),
+        vop2(V_ADD_NC_U32, 9, 20, 6),
+        // slot = 4 * wave
+        vop2(V_LSHLREV_B32, 7, k(2), 6),
+        sop1(S_FF1_I32_B64, 4, EXEC),
+        sop1(S_MOV_B64, 2, EXEC),
+        vopc(V_CMPX_EQ_I32, 4, 8),
+    ]);
+    body.extend_from_slice(&ds(DS_WRITE_B32, 0, 7, 9));
+    body.push(sop1(S_MOV_B64, EXEC, 2));
+    body.push(sopp(S_WAITCNT, 0));
+    body.push(sopp(S_BARRIER, 0));
+    // v1 = lds[slot] * 100 + lds[(slot + 4) % 64]
+    body.extend_from_slice(&ds(DS_READ_B32, 1, 7, 0));
+    body.push(vop2(V_ADD_NC_U32, 10, k(4), 7));
+    body.push(vop2(V_AND_B32, 10, k(63), 10));
+    body.extend_from_slice(&ds(DS_READ_B32, 11, 10, 0));
+    body.push(sopp(S_WAITCNT, 0));
+    body.extend_from_slice(&vop3_3(V_MAD_U32_U24, 1, vgpr(1), 0xFF, vgpr(11)));
+    body.push(100);
+    let wave = |t: u32| 40 + t / 64;
+    check_in(&program_in(&body, [1024, 1, 1], 1), |t| wave(t) * 100 + wave((t + 64) % 1024));
+}
+
+/// The next step of `CS_WriteRasterClassificationResults`: thread 0 alone
+/// turns the 16 waves' counts into offsets (a loop over the LDS slots with
+/// `v_readfirstlane` where only it runs), then after a barrier every wave
+/// reads its offset: the counts of the waves before it.
+#[test]
+fn thread_zero_sums_the_waves_counts_for_every_wave() {
+    const S_FF1_I32_B64: u8 = 0x14;
+    const V_CMPX_EQ_I32: u16 = 0x92;
+    const V_CMP_EQ_U32: u16 = 0x0C2;
+    const S_BARRIER: u8 = 0x0A;
+    const S_LSHL_B32: u8 = 0x1E;
+    const S_ADD_I32: u8 = 0x02;
+    const S_CBRANCH_SCC0: u8 = 0x04;
+    const fn sopc(op: u8, src0: u8, src1: u8) -> u32 {
+        0xBF00_0000 | (op as u32) << 16 | (src1 as u32) << 8 | src0 as u32
+    }
+    const S_CMP_GT_U32: u8 = 0x08;
+    let [a, b] = vop3(V_MBCNT_LO_U32_B32, 8, MINUS_ONE, k(0));
+    let [c, d] = vop3(V_MBCNT_HI_U32_B32, 8, MINUS_ONE, vgpr(8));
+    let mut body = vec![a, b, c, d];
+    body.extend_from_slice(&[
+        vopc(V_CMP_GT_U32, k(40), 8),
+        sop1(S_BCNT1_I32_B64, 20, VCC),
+        vop2(V_LSHRREV_B32, 6, k(6), 0),
+        vop2(V_ADD_NC_U32, 9, 20, 6),
+        vop2(V_LSHLREV_B32, 7, k(2), 6),
+        sop1(S_FF1_I32_B64, 26, EXEC),
+        sop1(S_MOV_B64, 28, EXEC),
+        vopc(V_CMPX_EQ_I32, 26, 8),
+    ]);
+    body.extend_from_slice(&ds(DS_WRITE_B32, 0, 7, 9));
+    body.push(sop1(S_MOV_B64, EXEC, 28));
+    body.push(sopp(S_WAITCNT, 0));
+    body.push(sopp(S_BARRIER, 0));
+    // thread 0: s31 = 0; for slot in 0..16 { v = lds[slot] + s31; lds[slot] = s31; s31 = first(v) }
+    body.push(vopc(V_CMP_EQ_U32, k(0), 0));
+    body.push(sop1(S_AND_SAVEEXEC_B64, 24, VCC));
+    let skip_at = body.len();
+    body.push(0); // s_cbranch_execz -> end
+    body.push(sop1(S_MOV_B32, 30, k(0) as u8));
+    body.push(sop1(S_MOV_B32, 31, k(0) as u8));
+    let top = body.len();
+    body.push(sop2(S_LSHL_B32, 16, 30, k(2) as u8));
+    body.push(sop2(S_ADD_I32, 30, 30, k(1) as u8));
+    body.push(sopc(S_CMP_GT_U32, 30, k(15) as u8));
+    body.push(vop1(V_MOV_B32, 37, 16));
+    body.extend_from_slice(&ds(DS_READ_B32, 38, 37, 0));
+    body.push(sopp(S_WAITCNT, 0));
+    body.push(vop2(V_ADD_NC_U32, 38, 31, 38));
+    body.push(vop1(V_READFIRSTLANE_B32, 16, vgpr(38)));
+    body.push(vop1(V_MOV_B32, 38, 31));
+    body.extend_from_slice(&ds(DS_WRITE_B32, 0, 37, 38));
+    body.push(sop1(S_MOV_B32, 31, 16));
+    let back = body.len();
+    body.push(sopp(S_CBRANCH_SCC0, (top as i32 - back as i32 - 1) as i16 as u16));
+    let end = body.len();
+    body[skip_at] = sopp(S_CBRANCH_EXECZ, (end - skip_at - 1) as u16);
+    body.push(sop1(S_MOV_B64, EXEC, 24));
+    body.push(sopp(S_WAITCNT, 0));
+    body.push(sopp(S_BARRIER, 0));
+    body.extend_from_slice(&ds(DS_READ_B32, 1, 7, 0));
+    body.push(sopp(S_WAITCNT, 0));
+    let before = |w: u32| (0..w).map(|u| 40 + u).sum::<u32>();
+    check_in(&program_in(&body, [1024, 1, 1], 1), |t| before(t / 64));
+}
