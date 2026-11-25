@@ -156,6 +156,8 @@ One Cargo workspace at the root; one `target\` folder for everything.
 
 ## Licence
 
+Vilocity is a modified version of GPL-licensed software, changed in November 2026.
+
 The native engine is GPL-3.0-or-later (`native/LICENSE`), the compat engine
 GPL-2.0-only (`compat/LICENSE`). `vilocity.exe` links both, which is fine for
 your own use, but that binary cannot be redistributed under either licence.
