@@ -7,12 +7,20 @@
 <p align="center"><b>Xbox Series X|S games you own, running natively on Windows.</b></p>
 
 <p align="center">
+  <a href="https://discord.gg/mWzP7ejTek"><img alt="Join the Vilocity Discord" src="https://img.shields.io/badge/Join%20the%20Discord-5865f2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+</p>
+
+<p align="center">
   <img alt="Status: not playable yet" src="https://img.shields.io/badge/GTA%20VI-in%20world%2C%20not%20playable-f5a623?style=for-the-badge">
   <img alt="Windows 10 / 11 x64" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-2f80ed?style=for-the-badge">
   <img alt="Direct3D 12, Shader Model 6.6" src="https://img.shields.io/badge/D3D12-SM%206.6-1fb9d8?style=for-the-badge">
   <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-7c5cff?style=for-the-badge">
-  <a href="https://discord.gg/mWzP7ejTek"><img alt="Discord: join the server" src="https://img.shields.io/badge/Discord-join%20the%20server-5865f2?style=for-the-badge&logo=discord&logoColor=white"></a>
 </p>
+
+## Community
+
+Progress updates, releases and help are on the
+[Vilocity Discord server](https://discord.gg/mWzP7ejTek).
 
 Runs Xbox Series X|S (GDK) games you own natively on Windows. There is no CPU
 emulation: the game's x64 code runs in our process, Vilocity supplies the
@@ -44,13 +52,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 8 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-25 12:47, game build Series 1.0.2.1
+**Latest test run:** 2026-11-25 13:05, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 30.5 fps |
-| Median frame time | 380 ms |
-| Last frame | 2.2 fps, 448 ms, 6986 draws, 326 dropped without a pipeline |
+| Best frame rate (menus included) | 30.0 fps |
+| Median frame time | 33 ms |
+| Last frame | 30.0 fps, 33 ms, 5 draws, 0 dropped without a pipeline |
 | Shaders that failed to translate | compute 1 |
 | Host pipelines refused by the driver | 1 |
 <!-- status:end -->
@@ -68,11 +76,6 @@ host pipeline, and cutting frame time from hundreds of milliseconds to 33 ms.
 
 Tested on one machine so far: Windows 11 Pro, NVIDIA GeForce RTX 5080,
 AMD Ryzen 9 9950X3D, 64 GB RAM.
-
-## Community
-
-Progress updates, releases and help are on the
-[Vilocity Discord server](https://discord.gg/mWzP7ejTek).
 
 ## Requirements
 
