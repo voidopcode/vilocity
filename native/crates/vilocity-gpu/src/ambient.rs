@@ -50,10 +50,137 @@ pub(crate) fn level() -> Option<f32> {
     (level >= 0.0).then_some(level)
 }
 
+/// The light's colour: warm white, or what `VILOCITY_AMBIENT_TINT=r,g,b`
+/// gives. With `VILOCITY_AMBIENT_FILE=<file>` (diagnostics builds) the file's
+/// `level r g b` is read again twice a second, to tune both by eye in a
+/// running game.
+fn tint() -> [f32; 3] {
+    let live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, tint)) = *live {
+        return tint;
+    }
+    static SET: OnceLock<[f32; 3]> = OnceLock::new();
+    *SET.get_or_init(|| {
+        let set: Vec<f32> = std::env::var("VILOCITY_AMBIENT_TINT")
+            .unwrap_or_default()
+            .split(',')
+            .filter_map(|v| v.trim().parse().ok())
+            .collect();
+        match set[..] {
+            [r, g, b] => [r, g, b],
+            _ => [1.0, 0.98, 0.94],
+        }
+    })
+}
+
+/// The level and colour last read from `VILOCITY_AMBIENT_FILE`, if any.
+static LIVE: std::sync::Mutex<Option<(f32, [f32; 3])>> = std::sync::Mutex::new(None);
+
+/// Where the resolve reads the scene's depth (reversed, D32 with stencil):
+/// root parameter and place in its table.
+pub(crate) const DEPTH: (u8, u32) = (0, 464);
+
+/// How much less of the light reaches creases and corners, worked out from
+/// the depth image alone: strength (0 for none), the radius looked at in
+/// metres, the near plane's distance, and the tangent of half the vertical
+/// field of view (the last two are guesses the picture is not sensitive
+/// to). `VILOCITY_AMBIENT_SHADE=s,r,n,t` sets them; the file's values after
+/// its first four replace them.
+/// shortcut: stands in for the occlusion the title's traced probes carry.
+static SHADE: std::sync::Mutex<Option<[f32; 4]>> = std::sync::Mutex::new(None);
+
+fn shade() -> [f32; 4] {
+    if let Some(live) = *SHADE.lock().unwrap_or_else(|e| e.into_inner()) {
+        return live;
+    }
+    static SET: OnceLock<[f32; 4]> = OnceLock::new();
+    *SET.get_or_init(|| {
+        let mut shade = [1.0, 0.6, 0.1, 0.45];
+        let set = std::env::var("VILOCITY_AMBIENT_SHADE").unwrap_or_default();
+        for (to, v) in shade.iter_mut().zip(set.split(',')) {
+            if let Ok(v) = v.trim().parse() {
+                *to = v;
+            }
+        }
+        shade
+    })
+}
+
+/// The level from `VILOCITY_AMBIENT_FILE`, if it gave one; starts the thread
+/// that reads the file.
+fn live_level() -> Option<f32> {
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    STARTED.call_once(|| {
+        if !cfg!(feature = "diagnostics") {
+            return;
+        }
+        let Some(file) = std::env::var_os("VILOCITY_AMBIENT_FILE") else { return };
+        let _ = std::thread::Builder::new().name("vilocity-ambient".into()).spawn(move || {
+            loop {
+                let read: Vec<f32> = std::fs::read_to_string(&file)
+                    .unwrap_or_default()
+                    .split_whitespace()
+                    .filter_map(|v| v.parse().ok())
+                    .collect();
+                if let [level, r, g, b, ref rest @ ..] = read[..] {
+                    if let [s, r, n, t] = rest[..] {
+                        *SHADE.lock().unwrap_or_else(|e| e.into_inner()) = Some([s, r, n, t]);
+                    }
+                    let new = Some((level.max(0.0), [r, g, b]));
+                    let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+                    if *live != new {
+                        tracing::info!(level, r, g, b, "ambient light set from the file");
+                        *live = new;
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+        });
+    });
+    LIVE.lock().unwrap_or_else(|e| e.into_inner()).map(|(level, _)| level)
+}
+
 const SOURCE: &str = r#"
-#define RS "RootConstants(num32BitConstants=4, b0), DescriptorTable(UAV(u0))"
-cbuffer Floor : register(b0) { float level; float3 tint; };
+#define RS "RootConstants(num32BitConstants=8, b0), DescriptorTable(UAV(u0), SRV(t0))"
+cbuffer Floor : register(b0) {
+    float level; float3 tint;
+    float strength; float radius; float near; float tan_y;
+};
 RWTexture2D<uint> light : register(u0);
+Texture2D<float> depth : register(t0);
+// The point seen at a texel, in metres from the eye (x right, y up, z away).
+float3 seen(int2 p, float2 size) {
+    float d = depth.Load(int3(clamp(p, int2(0, 0), int2(size) - 1), 0));
+    float z = near / max(d, 1e-7);
+    float2 ndc = (float2(p) + 0.5) / size * 2.0 - 1.0;
+    return float3(ndc.x * tan_y * size.x / size.y * z, -ndc.y * tan_y * z, z);
+}
+// How much of the light from around reaches the texel: 1 in the open.
+float open_to_light(int2 p, float2 size) {
+    float3 c = seen(p, size);
+    if (c.z > 400.0) return 1.0;
+    float3 l = seen(p + int2(-1, 0), size), r = seen(p + int2(1, 0), size);
+    float3 u = seen(p + int2(0, -1), size), d = seen(p + int2(0, 1), size);
+    float3 dx = abs(l.z - c.z) < abs(r.z - c.z) ? c - l : r - c;
+    float3 dy = abs(u.z - c.z) < abs(d.z - c.z) ? c - u : d - c;
+    float3 n = normalize(cross(dy, dx));
+    if (dot(n, c) > 0.0) n = -n;
+    float px = radius * size.y / (2.0 * tan_y * c.z);
+    if (px < 1.5) return 1.0;
+    px = min(px, 128.0);
+    float noise = frac(52.9829189 * frac(dot(float2(p), float2(0.06711056, 0.00583715))));
+    float sum = 0.0;
+    const int N = 16;
+    for (int i = 0; i < N; i++) {
+        float a = i * 2.399963 + noise * 6.2831853;
+        float2 o = float2(cos(a), sin(a)) * (sqrt((i + 0.5) / N) * px);
+        float3 v = seen(p + int2(round(o)), size) - c;
+        float vv = dot(v, v);
+        float over = dot(v, n) - 0.004 * c.z - 0.005;
+        sum += max(over, 0.0) / sqrt(vv + 1e-6) * saturate(1.0 - vv / (radius * radius));
+    }
+    return saturate(1.0 - strength * 2.0 * sum / N);
+}
 float3 unpack(uint v) {
     return float3(v & 511, (v >> 9) & 511, (v >> 18) & 511) * exp2(float(v >> 27) - 24.0);
 }
@@ -75,7 +202,8 @@ void main(uint3 at : SV_DispatchThreadID) {
     // What the resolve left is not kept: without rays its inputs are never
     // written and it holds whatever their memory did (bright magenta on
     // translucent surfaces, blocks of colours indoors: run v6, 2026-11-25).
-    light[at.xy] = pack(tint * level);
+    float open = strength > 0.0 ? open_to_light(int2(at.xy), float2(w, h)) : 1.0;
+    light[at.xy] = pack(tint * level * open);
 }
 "#;
 
@@ -139,7 +267,7 @@ fn make(device: &ID3D12Device) -> windows::core::Result<Pass> {
         let kind = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
         let views = device.CreateDescriptorHeap(&D3D12_DESCRIPTOR_HEAP_DESC {
             Type: kind,
-            NumDescriptors: SLOTS,
+            NumDescriptors: SLOTS * 2,
             Flags: D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
             NodeMask: 0,
         })?;
@@ -165,7 +293,7 @@ fn uav_barrier(list: &ID3D12GraphicsCommandList) {
 /// Raises what `light` holds to the floor, in `list`, after the program that
 /// wrote it as an image. Whether it recorded anything (the list's bindings
 /// are then ours).
-pub(crate) fn raise(list: &HostList, light: This) -> bool {
+pub(crate) fn raise(list: &HostList, light: This, depth: Option<This>) -> bool {
     let (Some(level), Some(host)) = (level(), host()) else {
         return false;
     };
@@ -193,8 +321,18 @@ pub(crate) fn raise(list: &HostList, light: This) -> bool {
     ONCE.call_once(|| {
         tracing::info!(level, width = d.Width, height = d.Height, "ambient light");
     });
-    let slot = pass.next.fetch_add(1, Ordering::Relaxed) % SLOTS;
+    let slot = pass.next.fetch_add(1, Ordering::Relaxed) % SLOTS * 2;
     list.keep(light);
+    // The depth the resolve just read, in the state it read it in; of the
+    // light's size, or the shading is left out.
+    let depth = depth.and_then(crate::resource::host_resource).filter(|t| {
+        // SAFETY: a live resource.
+        let t = unsafe { t.GetDesc() };
+        t.Format == DXGI_FORMAT_R32G8X24_TYPELESS && (t.Width, t.Height) == (d.Width, d.Height)
+    });
+    if let Some(depth) = depth {
+        list.keep(depth);
+    }
     let l = &list.list;
     uav_barrier(l);
     // SAFETY: an open list; a live texture the list keeps, in the
@@ -213,11 +351,25 @@ pub(crate) fn raise(list: &HostList, light: This) -> bool {
         };
         host.device
             .CreateUnorderedAccessView(light, None::<&ID3D12Resource>, Some(&view), at);
+        let seen = D3D12_SHADER_RESOURCE_VIEW_DESC {
+            Format: DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS,
+            ViewDimension: D3D12_SRV_DIMENSION_TEXTURE2D,
+            Shader4ComponentMapping: D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+            Anonymous: D3D12_SHADER_RESOURCE_VIEW_DESC_0 {
+                Texture2D: D3D12_TEX2D_SRV { MipLevels: 1, ..Default::default() },
+            },
+        };
+        let beside = D3D12_CPU_DESCRIPTOR_HANDLE { ptr: at.ptr + pass.step as usize };
+        host.device.CreateShaderResourceView(depth, Some(&seen), beside);
         l.SetDescriptorHeaps(&[Some(pass.views.clone())]);
         l.SetComputeRootSignature(&pass.root);
         l.SetPipelineState(&pass.pso);
-        let constants = [level, 1.0f32, 0.98, 0.94];
-        l.SetComputeRoot32BitConstants(0, 4, constants.as_ptr().cast(), 0);
+        let [r, g, b] = tint();
+        let level = live_level().unwrap_or(level);
+        let [strength, radius, near, tan_y] = shade();
+        let strength = if depth.is_some() { strength } else { 0.0 };
+        let constants = [level, r, g, b, strength, radius, near, tan_y];
+        l.SetComputeRoot32BitConstants(0, 8, constants.as_ptr().cast(), 0);
         l.SetComputeRootDescriptorTable(
             1,
             D3D12_GPU_DESCRIPTOR_HANDLE {

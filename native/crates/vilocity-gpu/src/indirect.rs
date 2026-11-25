@@ -1536,7 +1536,9 @@ void main() {
         for i in 0..RECORDS as usize {
             let rec = &out_words[i * 6..(i + 1) * 6];
             if rec[0] == (1 << 22) && rec[1] == 16 {
-                assert!(i == 1 || i == 2, "the first two real draws fit the budget");
+                // Groups charge in no set order, records in lane order: the
+                // first two real draws of whichever group charged first.
+                assert!(matches!(i, 1 | 2 | 64 | 65), "the first two real draws of a group fit the budget, not {i}");
                 kept += 1;
             } else {
                 assert_eq!((rec[0], rec[1]), (0, 0), "excess draw must be zeroed");

@@ -181,9 +181,13 @@ const WINDOW_MOST: u64 = 64;
 /// (`crate::indirect::bound_ahead`); a tail record that looks real is
 /// charged what it asks, a few thousand of 2^27. And arguments the title's CPU side changes are seen as
 /// before, at the next submission.
+///
+/// Off for the rest of the run from the first error the card's driver
+/// reports to the system (`crate::drvwatch`): every loss of the card in a
+/// run with windows was announced that way seconds ahead.
 fn windows() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("VILOCITY_INDIRECT_WINDOW").is_some_and(|v| v == "1"))
+    *ON.get_or_init(|| std::env::var_os("VILOCITY_INDIRECT_WINDOW").is_some_and(|v| v == "1")) && !crate::drvwatch::tripped()
 }
 
 /// What one title list has set, and what its host list was last given.
@@ -2129,6 +2133,12 @@ impl State {
             crate::pipeline::note_drop(self.pipeline as This);
             return;
         }
+        // A program that walks ray-tracing structures nothing has built.
+        if crate::pipeline::walk_held(self.pipeline as This) {
+            #[cfg(feature = "diagnostics")]
+            crate::pipeline::note_why("a walk of ray-tracing structures that are not built (VILOCITY_BVH_HOLD=1)".to_owned());
+            return;
+        }
         // The ray-tracing structure builder's stages run all or none.
         if crate::pipeline::is_builder(self.pipeline as This) && !crate::pipeline::builder_runs() {
             DROPPED.fetch_add(1, Ordering::Relaxed);
@@ -2182,16 +2192,21 @@ impl State {
         let Some(stage) = p.stages.first().filter(|s| s.shader.resolves_light) else {
             return false;
         };
-        let (slot, offset) = crate::ambient::LIGHT;
-        let used = stage.translated().used.iter().find(|u| {
-            u.kind == ResourceType::Uav && u.root == RootType::Table && (u.slot, u.table_offset_dwords) == (slot, offset)
-        });
-        let view = used.and_then(|u| match self.roots_ref(true).get(usize::from(u.slot)) {
-            Some(&Root::Table(table)) => crate::descriptor::view(table + u64::from(u.table_offset_dwords) * 4),
+        let view = |kind: ResourceType, (slot, offset): (u8, u32)| {
+            let u = stage.translated().used.iter().find(|u| {
+                u.kind == kind && u.root == RootType::Table && (u.slot, u.table_offset_dwords) == (slot, offset)
+            })?;
+            match self.roots_ref(true).get(usize::from(u.slot)) {
+                Some(&Root::Table(table)) => crate::descriptor::view(table + u64::from(u.table_offset_dwords) * 4),
+                _ => None,
+            }
+        };
+        let depth = match view(ResourceType::Srv, crate::ambient::DEPTH) {
+            Some(crate::descriptor::View::Shader(r, _)) if r != 0 => Some(r as This),
             _ => None,
-        });
-        match view {
-            Some(crate::descriptor::View::Unordered(r, ..)) if r != 0 => crate::ambient::raise(list, r as This),
+        };
+        match view(ResourceType::Uav, crate::ambient::LIGHT) {
+            Some(crate::descriptor::View::Unordered(r, ..)) if r != 0 => crate::ambient::raise(list, r as This, depth),
             _ => {
                 once!("no ambient light: other tables");
                 false
@@ -3152,6 +3167,13 @@ impl State {
             return false;
         }
         if crate::pipeline::is_builder(self.pipeline as This) && !crate::pipeline::builder_runs() {
+            return false;
+        }
+        // A program that walks ray-tracing structures nothing has built:
+        // dropped before the argument clamp, like a skipped one.
+        if crate::pipeline::walk_held(self.pipeline as This) {
+            #[cfg(feature = "diagnostics")]
+            crate::pipeline::note_why("a walk of ray-tracing structures that are not built (VILOCITY_BVH_HOLD=1)".to_owned());
             return false;
         }
         const DRAW: u32 = 0;

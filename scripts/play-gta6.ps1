@@ -19,6 +19,7 @@ if (-not $Defaults) {
     $env:VILOCITY_QUEUE2 = "1"           # read-backs on a copy queue
     $env:VILOCITY_INDIRECT_WINDOW = "1"  # cheaper indirect draws
     $env:VILOCITY_TEXTURE_NO_WAIT = "1"  # texture refreshes do not wait for remaps
+    $env:VILOCITY_COPY_PLAIN = "1"       # title memory copied in place (fork 0b0074e: 145 -> 124 ms at 4,500 draws)
     # 4.7 GB of the card's copies spilled into PC memory; levels the title
     # does not hold take no card memory with this (the fork: 2-3 GB saved).
     $env:VILOCITY_LEVELS_ON_DEMAND = "1"
@@ -30,11 +31,27 @@ if (-not $Defaults) {
     $env:VILOCITY_WIDE_MERGE = "1"
     $env:VILOCITY_JOIN_COPIES = "1"
     $env:VILOCITY_CARD_BUFFERS_MB = "6144"
+    # Ray passes trace a structure that is never built and write garbage:
+    # rainbow speckles, black walls (list from puffnfresh/rebox's fast.c;
+    # 2026-11-25 runs s15/s16: walls lit, fewer speckles without them).
+    if (-not $env:VILOCITY_LEAVE_OUT) {
+        $env:VILOCITY_LEAVE_OUT = "TraceRays_BVH,RTShadowTrace,RTDistantShadowTrace,RTDistantLODLightShadow,TraceShadowRays,RaytraceShadows,RaytraceVBuffer,IrradianceCache_ShadowTrace,ShadowRaytracing,CollisionRaytraced,PPR_Raytrace"
+    }
 }
 
 # One quoted string: the paths hold spaces ("Vilocity project").
 $monitor = Join-Path $PSScriptRoot "monitor-gta6.ps1"
-Start-Process powershell -ArgumentList "-NoExit -NoProfile -ExecutionPolicy Bypass -File `"$monitor`" -Log `"$log`""
+# AMD's PC FidelityFX upscaler (FSR), if downloaded into this folder, runs
+# the title's upscaling natively instead of the console build translated.
+$ffx = Join-Path $env:LOCALAPPDATA "vilocity\fidelityfx"
+if (Test-Path (Join-Path $ffx "amd_fidelityfx_upscaler_dx12.dll")) { $env:VILOCITY_FIDELITYFX_DIR = $ffx }
+
+$watch = Start-Process powershell -PassThru -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$monitor`" -Log `"$log`""
 Write-Host "log: $log"
-& $exe play $Game *> $log
-Write-Host "Vilocity exited with code $LASTEXITCODE (log: $log)"
+try {
+    & $exe play $Game *> $log
+    Write-Host "Vilocity exited with code $LASTEXITCODE (log: $log)"
+} finally {
+    # The monitor goes with the game (also when this window is closed with Ctrl+C).
+    if (-not $watch.HasExited) { Stop-Process -Id $watch.Id -Force -ErrorAction SilentlyContinue }
+}

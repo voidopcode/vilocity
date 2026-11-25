@@ -46,6 +46,8 @@ while ($true) {
     $game = Get-CimInstance Win32_Process -Filter "Name='vilocity.exe'" |
         Where-Object CommandLine -like '*native run*' | Select-Object -First 1
     $g = if ($game) { Get-Process -Id $game.ProcessId -ErrorAction SilentlyContinue }
+    # The window closes with the game (once it has started).
+    if ($g) { $seen = $true } elseif ($seen) { exit }
     $gpu = (nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw --format=csv,noheader,nounits 2>$null) -split ',\s*'
     $os = Get-CimInstance Win32_OperatingSystem
 
