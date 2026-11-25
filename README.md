@@ -11,6 +11,7 @@
   <img alt="Windows 10 / 11 x64" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-2f80ed?style=for-the-badge">
   <img alt="Direct3D 12, Shader Model 6.6" src="https://img.shields.io/badge/D3D12-SM%206.6-1fb9d8?style=for-the-badge">
   <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-7c5cff?style=for-the-badge">
+  <a href="https://discord.gg/mWzP7ejTek"><img alt="Discord: join the server" src="https://img.shields.io/badge/Discord-join%20the%20server-5865f2?style=for-the-badge&logo=discord&logoColor=white"></a>
 </p>
 
 Runs Xbox Series X|S (GDK) games you own natively on Windows. There is no CPU
@@ -38,18 +39,18 @@ loads saves and gets into the world. The world is where the work is now.
 | 3 | Start screen, profile and saves | ✅ works | ██████████ |
 | 4 | Loading into the world | ✅ works | ██████████ |
 | 5 | The world renders | 🟡 0.6-4.9 fps, hundreds of draws a frame dropped | ████░░░░░░ |
-| 6 | The world keeps running | 🔴 the GPU device is lost 2-3 minutes in | ██░░░░░░░░ |
+| 6 | The world keeps running | 🟡 the loss 2-3 minutes in is fixed; a memory fault some 7 minutes in has a fix under test | █████░░░░░ |
 | 7 | Playable frame rate (30 fps) | 🔴 not yet | ░░░░░░░░░░ |
 | 8 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-25 12:29, game build Series 1.0.2.1
+**Latest test run:** 2026-11-25 12:47, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 31.1 fps |
-| Median frame time | 396 ms |
-| Last frame | 2.4 fps, 412 ms, 4985 draws, 330 dropped without a pipeline |
+| Best frame rate (menus included) | 30.5 fps |
+| Median frame time | 380 ms |
+| Last frame | 2.2 fps, 448 ms, 6986 draws, 326 dropped without a pipeline |
 | Shaders that failed to translate | compute 1 |
 | Host pipelines refused by the driver | 1 |
 <!-- status:end -->
@@ -58,11 +59,20 @@ Next up: the GPU device loss in the world, the draws dropped for lack of a
 host pipeline, and cutting frame time from hundreds of milliseconds to 33 ms.
 
 > [!WARNING]
-> Every run that has reached the world so far ended with the GPU device
-> removed after 2-3 minutes.
+> Runs used to end with the GPU device removed 2-3 minutes into the world.
+> Out-of-range group-shared memory accesses, which an NVIDIA card does not
+> survive, are now kept in range; the longest run since went past 7 minutes,
+> into the first room. Pipelines the driver's shader compiler crashes on are
+> remembered (`refused-pipelines.txt` beside the pipeline library) and not
+> asked for again.
 
 Tested on one machine so far: Windows 11 Pro, NVIDIA GeForce RTX 5080,
 AMD Ryzen 9 9950X3D, 64 GB RAM.
+
+## Community
+
+Progress updates, releases and help are on the
+[Vilocity Discord server](https://discord.gg/mWzP7ejTek).
 
 ## Requirements
 
