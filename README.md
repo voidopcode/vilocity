@@ -36,9 +36,9 @@ loads saves and gets into the world. The world is where the work is now.
 | 1 | Boot and first-boot screens (accessibility, language, settings, legal) | ✅ works, 30 fps | ██████████ |
 | 2 | Intro video with sound | ✅ works | ██████████ |
 | 3 | Start screen, profile and saves | ✅ works | ██████████ |
-| 4 | Loading into the world (about 50 s) | ✅ works | ██████████ |
-| 5 | First room of the first mission renders | 🟡 lit and drawn, 250-380 ms a frame (3-4 fps) | ██████░░░░ |
-| 6 | Full world scene (streets, traffic, ray tracing) | 🔴 most of the scene still missing | ██░░░░░░░░ |
+| 4 | Loading into the world | ✅ works | ██████████ |
+| 5 | The world renders | 🟡 0.6-4.9 fps, hundreds of draws a frame dropped | ████░░░░░░ |
+| 6 | The world keeps running | 🔴 the GPU device is lost 2-3 minutes in | ██░░░░░░░░ |
 | 7 | Playable frame rate (30 fps) | 🔴 not yet | ░░░░░░░░░░ |
 | 8 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
@@ -54,24 +54,15 @@ loads saves and gets into the world. The world is where the work is now.
 | Host pipelines refused by the driver | 1 |
 <!-- status:end -->
 
-Shaders the world uses, translated to DXIL so far:
-
-| Kind | Translated | |
-|------|-----------:|---|
-| Mesh | 8,191 / 8,506 (96 %) | ██████████░ |
-| Vertex / pixel | 10,617 / 12,346 (86 %) | █████████░░ |
-| Compute | 1,643 / 2,539 (65 %) | ███████░░░░ |
-
-Next up: the remaining world shaders (including the ray-tracing builder),
-cutting frame time from hundreds of milliseconds to 33 ms, and GPU hangs a few
-minutes into the world. The per-subsystem table is in
-[`native/README.md`](native/README.md#status-2026-11-23).
+Next up: the GPU device loss in the world, the draws dropped for lack of a
+host pipeline, and cutting frame time from hundreds of milliseconds to 33 ms.
 
 > [!WARNING]
-> Entering the world on a real GPU can still hang it, and Windows then resets
-> the display driver (every monitor goes black for a moment).
+> Every run that has reached the world so far ended with the GPU device
+> removed after 2-3 minutes.
 
-Tested on one machine so far: Windows 11, AMD RX 6700 XT.
+Tested on one machine so far: Windows 11 Pro, NVIDIA GeForce RTX 5080,
+AMD Ryzen 9 9950X3D, 64 GB RAM.
 
 ## Requirements
 
@@ -112,9 +103,8 @@ translator):
 target\release\vilocity.exe native translate --cache --pipelines <game folder>\shaders.rpf <game folder>\game_scarlett_master.exe <game folder>\XboxBvhBuilder.dll
 ```
 
-That fills the shader cache (about 1.3 GB) and the pipeline library (about
-27,000 pipelines, some 20 minutes on 16 threads). A second run skips what is
-already there. The library belongs to the GPU and driver it was built on.
+That fills the shader cache and the pipeline library. A second run skips what
+is already there. The library belongs to the GPU and driver it was built on.
 
 Then `scripts\play-gta6.ps1` starts the game with the frame-rate switches
 measured so far and opens `scripts\monitor-gta6.ps1`: frame rate, memory, CPU
