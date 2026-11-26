@@ -13,6 +13,10 @@ param(
     [switch]$SeriesX
 )
 if (-not $Game) { throw "Pass -Game <game folder> or set VILOCITY_GTA6_DIR" }
+# The switches below are set in this window's environment: kept here and put
+# back when the game exits, so a later run (with -Defaults, say) starts clean.
+$before = @{}
+Get-ChildItem Env: | Where-Object Name -like 'VILOCITY_*' | ForEach-Object { $before[$_.Name] = $_.Value }
 $root = Split-Path $PSScriptRoot
 # The title picks its renderer by console model. As a Series S it renders
 # fewer pixels and leaves out the ray-traced and hair-strand passes this
@@ -134,4 +138,7 @@ try {
 } finally {
     # The monitor goes with the game (also when this window is closed with Ctrl+C).
     if (-not $watch.HasExited) { Stop-Process -Id $watch.Id -Force -ErrorAction SilentlyContinue }
+    Get-ChildItem Env: | Where-Object { $_.Name -like 'VILOCITY_*' -and -not $before.ContainsKey($_.Name) } |
+        ForEach-Object { Remove-Item "Env:$($_.Name)" }
+    foreach ($name in $before.Keys) { Set-Item "Env:$name" $before[$name] }
 }
