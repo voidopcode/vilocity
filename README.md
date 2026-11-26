@@ -50,18 +50,25 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-26 10:10, game build Series 1.0.2.1
+**Latest test run:** 2026-11-26 11:34, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
 | Best frame rate (menus included) | 30.0 fps |
-| Median frame time | 89 ms |
-| Last frame | 11.2 fps, 89 ms, 4396 draws, 496 dropped without a pipeline |
+| Median frame time | 90 ms |
+| Last frame | 11.9 fps, 84 ms, 4286 draws, 491 dropped without a pipeline |
 | Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: running the light-list program `CS_PrescalarizeLightLoop` as two
+Latest: on NVIDIA, compute groups laid out in two dimensions (32x2, 64x4)
+gave half their threads the wrong id when a program read other lanes: the
+card fills such groups in 16x2 tiles. Each wave now takes its block of ids
+from a counter (fxceless/victory-fork PR #1261, ported; a GPU test checks five
+group shapes). The launch-to-launch dark faces and missing INMATE print are
+not fixed yet.
+
+Before that: running the light-list program `CS_PrescalarizeLightLoop` as two
 separate 32-thread halves (commit 3b62842) cut its card time from about 3 ms
 to under 0.2 ms, but blacked out faces and walls in 16-pixel tiles in the diner
 cutscene. Reverted; the faces are lit again with the old form.

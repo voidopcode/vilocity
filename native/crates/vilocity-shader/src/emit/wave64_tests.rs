@@ -768,3 +768,54 @@ fn a_parked_pair_another_save_or_restore_shares_stays_two_scalars() {
         assert!(!instructions(&p, "s_mov_b32").is_empty(), "{name}");
     }
 }
+
+/// A console wave32 program with console lanes (`v_mbcnt`) in 2-D groups: thread (x, y) stores
+/// its console lane plus 1 at dword `X * y + x`, which must be `(X * y + x) % 32 + 1`. A 32-lane
+/// host need not give a host wave a 32-aligned run of flat ids (NVIDIA fills 2-D groups from
+/// 16 x 2 tiles), so the first flat id of a wave rounded down can give two waves the same
+/// threads; the waves take their threads from a group counter (`ticket`). With
+/// `VILOCITY_THREAD_TICKET=0` (the old rounding) the dwords right are printed, not checked.
+#[test]
+fn the_console_threads_of_a_two_dimensional_group_are_each_given_once() {
+    let _one = super::valu_tests::ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    for [x, y] in [[32u32, 2], [8, 8], [16, 16], [64, 4], [16, 3]] {
+        let words = [
+            0xD765_0003, // v_mbcnt_lo_u32_b32 v3, exec_lo, 0
+            0x0001_007E,
+            0x3408_0280 | x.trailing_zeros(), // v_lshlrev_b32 v4, log2 X, v1
+            0x4A08_0104,                      // v_add_nc_u32 v4, v4, v0
+            0x3408_0882,                      // v_lshlrev_b32 v4, 2, v4
+            0x4A0A_0681,                      // v_add_nc_u32 v5, 1, v3
+            0x38 << 26 | 0x1C << 18 | 1 << 12,
+            0x80 << 24 | 2 << 16 | 5 << 8 | 4, // buffer_store_dword v5, v4, s[8:11], 0 offen
+        ];
+        let mut native = native_of(&words, false, 64);
+        native.io = StageIo::Cs(ComputeIo {
+            rsrc2: 5 << 1 | 1 << 11, // 5 user SGPRs, thread ids x and y in v0, v1
+            threads: [x, y, 1],
+        });
+        let p = ir::build(&native.code, native.wave64, native.vgprs).expect("ir::build");
+        let lower_with = |ticket: &str| {
+            // SAFETY: tests that read this switch hold ONE_AT_A_TIME
+            unsafe { std::env::set_var("VILOCITY_THREAD_TICKET", ticket) };
+            let shader = lowered_on(&native, &p, &HashSet::new(), 32);
+            unsafe { std::env::remove_var("VILOCITY_THREAD_TICKET") };
+            shader.expect("lower")
+        };
+        let (shader, old) = (lower_with("1"), lower_with("0"));
+        assert_ne!(shader.dxil, old.dxil, "{x}x{y}: the counter is used for a group of several host waves");
+        if let Ok(mut v) = validator::Validator::load(validator::Validator::default_path().as_deref()) {
+            let mut copy = shader.dxil.clone();
+            v.validate(&mut copy).expect("DXIL validation failed");
+        }
+        let n = x * y;
+        let right = |got: &[u32]| (0..n).filter(|&i| got[i as usize] == i % 32 + 1).count();
+        if let Some(before) = whole_uav(&old, [0, 0], n) {
+            eprintln!("{x}x{y}: the old rounding on this device: {} of {n} dwords right", right(&before));
+        }
+        let Some(got) = whole_uav(&shader, [0, 0], n) else { return };
+        let wrong: Vec<u32> = (0..n).filter(|&i| got[i as usize] != i % 32 + 1).collect();
+        assert!(wrong.is_empty(), "{x}x{y}: dwords not their console lane: {wrong:?}");
+        eprintln!("{x}x{y}: ran on the hardware device, {n} of {n} console threads each once");
+    }
+}
