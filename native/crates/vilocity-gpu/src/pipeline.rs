@@ -62,9 +62,9 @@ pub(crate) struct Shader {
     /// The first 8 bytes of its BLAKE3, as logged.
     pub(crate) hash: String,
     container: Vec<u8>,
-    /// The program that resolves the indirect light ([`crate::ambient`]).
+    /// Its part in the stand-in for the indirect light ([`crate::ambient`]).
     #[cfg(windows)]
-    pub(crate) resolves_light: bool,
+    pub(crate) ambient: Option<crate::ambient::Role>,
     /// It animates or draws hair strands ([`hair_strands`]).
     #[cfg(windows)]
     pub(crate) hair: bool,
@@ -137,9 +137,7 @@ impl Shader {
             hash: blake3::hash(bytes).to_hex()[..16].to_owned(),
             container: bytes.to_vec(),
             #[cfg(windows)]
-            resolves_light: bytes
-                .windows(crate::ambient::PROGRAM.len())
-                .any(|w| w == crate::ambient::PROGRAM),
+            ambient: (stage == "compute").then(|| crate::ambient::role(bytes)).flatten(),
             #[cfg(windows)]
             hair: hair_strands(bytes),
             #[cfg(windows)]
@@ -200,6 +198,7 @@ impl Shader {
                         ms,
                         user_ms,
                         kernel_ms,
+                        program = %String::from_utf8_lossy(program_name(&self.container).unwrap_or_default()),
                         "shader translated"
                     ),
                     Err(e) => tracing::warn!(

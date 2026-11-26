@@ -50,18 +50,30 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-26 21:01, game build Series 1.0.2.1
+**Latest test run:** 2026-11-26 22:00, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 717.2 fps |
-| Median frame time | 39 ms |
-| Last frame | 5.6 fps, 179 ms, 5252 draws, 267 dropped without a pipeline |
+| Best frame rate (menus included) | 709.5 fps |
+| Median frame time | 130 ms |
+| Last frame | 7.3 fps, 137 ms, 5173 draws, 254 dropped without a pipeline |
 | Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: the mouse is the game's after a click in its window (cursor held there
+Latest: daylight is no longer white. The title's average-luminance program
+(`ComputeAverageDepthWeightedLuminanceFromHistogramCS`) has thread 0 write the
+histogram's running counts to shared memory, then a barrier, then every bin reads
+them; the barrier was translated as a fence without a wait, so on 32-lane cards
+threads 32 and up read zeros, the scene's average came out 0 and the exposure sat
+at its upper clamp (2^5.98): every outdoor frame white. Its barriers now wait
+(`VILOCITY_GROUP_SYNC_FULL` list): mean brightness 254 -> 91-94, sea, sky and
+trees visible. Also in: cool_fox 30e54b4's frame-estimated stand-in for the
+ray-traced light (`ambient.rs`, after `CS_ScreenProbes_TemporalResolve`;
+`VILOCITY_AMBIENT=constant:<level>` the old constant), R9G9B9E5 targets as
+R11G11B10 (`VILOCITY_E5_TARGETS`), longer face bakes, helper lanes' own offsets.
+
+Before that: the mouse is the game's after a click in its window (cursor held there
 and hidden) and the desktop's again after Esc or another window in front; the
 clip is done outside the sandbox, which Windows refuses it. From avatarmanz:
 lane_uniform proven to a fixed point (the ray-tracing builder's last 3 programs

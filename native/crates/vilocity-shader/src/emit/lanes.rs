@@ -46,9 +46,11 @@ impl<'a> Lower<'a> {
     /// loop runs to [`LOOP_LIMIT`] in every such lane: draws of 0.3 to 1.3 s
     /// each, then DEVICE_HUNG. With its own value a helper lane matches in
     /// the first pass and leaves; what a helper lane computes only feeds
-    /// derivatives, and its stores are dropped.
+    /// derivatives, and its stores are dropped. `VILOCITY_HELPER_OWN=0`: the
+    /// first lane's (codec-d/cool_fox 30e54b4's switch).
     pub(super) fn helper_reads_own(&mut self, own: V, first: V) -> V {
-        if !self.s.pixel {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if !self.s.pixel || !*ON.get_or_init(|| std::env::var_os("VILOCITY_HELPER_OWN").is_none_or(|v| v != "0")) {
             return first;
         }
         let c = self.cur;

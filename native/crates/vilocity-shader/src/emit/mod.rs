@@ -392,10 +392,18 @@ thread_local! {
 /// subsurface tiles, `Blendshape` normals, `StickyLips`, `EyeCap`): fenced
 /// only, faces in the prologue cutscenes were black but for the eyes; waiting,
 /// lit in two runs of 6 cutscene frames each, frames 233 ms.
+///
+/// And the exposure's histogram average (`LuminanceFromHistogram`:
+/// `ComputeAverageDepthWeightedLuminanceFromHistogramCS`, 256 threads): thread 0
+/// sums the bins' counts into group-shared memory, then a barrier, then each
+/// bin reads the count before it. Fenced only, bins 32 and up read zeros: the
+/// darkest tenth of the picture came out empty (average [664, 0, 0]),
+/// `PS_CalculateExposure` divided by it and held the exposure at its top,
+/// 2^5.98, and every daylight frame was white (run of 2026-11-26 21:4x).
 fn sync_full(container: &[u8]) -> bool {
     static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     let names = NAMES.get_or_init(|| {
-        let set = std::env::var("VILOCITY_GROUP_SYNC_FULL").unwrap_or_else(|_| "CS_Shadow,RasterClassification,Skinning,BatchCull,CS_HairTile,CS_SSS,Blendshape,StickyLips,EyeCap".to_owned());
+        let set = std::env::var("VILOCITY_GROUP_SYNC_FULL").unwrap_or_else(|_| "CS_Shadow,RasterClassification,Skinning,BatchCull,CS_HairTile,CS_SSS,Blendshape,StickyLips,EyeCap,LuminanceFromHistogram".to_owned());
         set.split(',').map(str::trim).filter(|n| !n.is_empty() && *n != "none").map(str::to_owned).collect()
     });
     if names.is_empty() {
@@ -2272,6 +2280,7 @@ mod sync_full_tests {
         assert!(super::sync_full(b"x CS_HairTileClassify_0a1b2c3d_Wrapped"));
         assert!(super::sync_full(b"x CS_SSSTileClassification_0a1b2c3d_Wrapped"));
         assert!(super::sync_full(b"x CS_ReconstructBlendshapeNormals_0a1b2c3d_Wrapped"));
+        assert!(super::sync_full(b"x ComputeAverageDepthWeightedLuminanceFromHistogramCS_b3fd0161_Wrapped"));
         assert!(!super::sync_full(b"x CS_GenerateShadowMasks_Checkerboard_NoHair_5e982407_Wrapped"));
         assert!(!super::sync_full(b"\0CS_FinalGather_0_1_1_0_a1d0fa7d_Wrapped\0"));
         assert!(!super::sync_full(b"no name here"));

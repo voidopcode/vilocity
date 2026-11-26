@@ -928,7 +928,7 @@ impl HostPipeline {
             stage: "mesh",
             hash: format!("{}+{}", vs.hash, gs.hash),
             container: Vec::new(),
-            resolves_light: false,
+            ambient: None,
             hair: false,
             zeroed: false,
             injects_light: false,

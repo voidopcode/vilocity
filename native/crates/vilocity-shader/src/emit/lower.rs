@@ -6926,7 +6926,9 @@ impl<'a> Lower<'a> {
             if per_lane {
                 self.s.flags |= flags::WAVE_OPS;
                 let i32t = self.s.t.i32;
-                d = self.s.op(c, "waveReadLaneFirst.i32", Attr::NoUnwind, i32t, 118, &[d]);
+                let first = self.s.op(c, "waveReadLaneFirst.i32", Attr::NoUnwind, i32t, 118, &[d]);
+                // codec-d/cool_fox 30e54b4: a helper lane takes its own, as `v_readfirstlane_b32`.
+                d = self.helper_reads_own(d, first);
             }
             addr = self.s.m.bin(c, Bin::Add, addr, d);
         }

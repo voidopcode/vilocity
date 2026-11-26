@@ -74,9 +74,13 @@ thread_local! {
 
 /// The milliseconds of every frame the pass that uploads textures picked
 /// by index takes before a shader that picks by index has asked for it
-/// (`VILOCITY_EARLY_TEXTURES_MS`, 12; 0: never, as before), and the
+/// (`VILOCITY_EARLY_TEXTURES_MS`, 40; 0: never, as before), and the
 /// milliseconds it may take just before a draw of the title's decoration
-/// bake (`VILOCITY_BAKE_TEXTURES_MS`, 1500; 0: nothing special).
+/// bake (`VILOCITY_BAKE_TEXTURES_MS`, 10000; 0: nothing special).
+///
+/// codec-d/cool_fox 30e54b4: 12 and 1,500 left a face of coloured noise and
+/// one of blocks in the first cutscene; 40 and 10,000 baked both whole, with
+/// no slower frames (their runs). The old ones: `=12` and `=1500`.
 ///
 /// The pass ran only from the first world frame on, where it met some
 /// 24,000 slots at once and needed 60-80 frames for them. The title bakes
@@ -91,7 +95,7 @@ fn early_budgets() -> (u64, u64) {
         let ms = |name: &str, default: u64| {
             std::env::var(name).ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(default)
         };
-        (ms("VILOCITY_EARLY_TEXTURES_MS", 12), ms("VILOCITY_BAKE_TEXTURES_MS", 1500))
+        (ms("VILOCITY_EARLY_TEXTURES_MS", 40), ms("VILOCITY_BAKE_TEXTURES_MS", 10000))
     })
 }
 
@@ -2325,14 +2329,14 @@ impl State {
         for &(view, _) in &views {
             self.clear_unordered(list, view, [0; 4], false, &[]);
         }
-        // The probes' radiance gets the ambient light instead of nothing
-        // (`crate::ambient::INJECT`); without it rooms lit only by bounced
-        // light went dark.
+        // The probes' radiance gets the constant ambient light instead of
+        // nothing (`crate::ambient::INJECT`); without it rooms lit only by
+        // bounced light went dark. (The estimate needs the depth: not here.)
         if stage.shader.injects_light
             && let Some(&(view, _)) = views.iter().find(|v| v.1 == crate::ambient::INJECTED)
             && let Some(crate::descriptor::View::Unordered(r, ..)) = crate::descriptor::view(view)
             && r != 0
-            && crate::ambient::raise(list, r as This, None)
+            && crate::ambient::after(list, crate::ambient::Role::Resolve, r as This, None)
         {
             self.host_state_lost();
         }
@@ -2407,13 +2411,17 @@ impl State {
         }
     }
 
-    /// After a dispatch of `p`: the least indirect light, if it is the
-    /// program that resolves that ([`crate::ambient`]). Whether it recorded
-    /// (the list's bindings are then ours).
+    /// The stand-in for the indirect light after a dispatch of `p`, if it
+    /// has a part in it ([`crate::ambient`]). Whether it recorded (the
+    /// list's bindings are then ours).
     fn ambient(&self, list: &HostList, p: &crate::pipeline::host::HostPipeline) -> bool {
-        let Some(stage) = p.stages.first().filter(|s| s.shader.resolves_light) else {
+        use crate::ambient::{AIR, DEPTH, LIGHT, RADIANCE, Role};
+        let Some((stage, role)) = p.stages.first().and_then(|s| Some((s, s.shader.ambient?))) else {
             return false;
         };
+        if !crate::ambient::on() {
+            return false;
+        }
         let view = |kind: ResourceType, (slot, offset): (u8, u32)| {
             let u = stage.translated().used.iter().find(|u| {
                 u.kind == kind && u.root == RootType::Table && (u.slot, u.table_offset_dwords) == (slot, offset)
@@ -2423,14 +2431,21 @@ impl State {
                 _ => None,
             }
         };
-        let depth = match view(ResourceType::Srv, crate::ambient::DEPTH) {
-            Some(crate::descriptor::View::Shader(r, _)) if r != 0 => Some(r as This),
+        let depth = match view(ResourceType::Srv, DEPTH) {
+            Some(crate::descriptor::View::Shader(r, _)) if r != 0 && role == Role::Resolve => Some(r as This),
             _ => None,
         };
-        match view(ResourceType::Uav, crate::ambient::LIGHT) {
-            Some(crate::descriptor::View::Unordered(r, ..)) if r != 0 => crate::ambient::raise(list, r as This, depth),
+        let at = match role {
+            Role::Resolve => LIGHT,
+            Role::Radiance => RADIANCE,
+            Role::Air => AIR,
+        };
+        match view(ResourceType::Uav, at) {
+            Some(crate::descriptor::View::Unordered(r, ..)) if r != 0 => {
+                crate::ambient::after(list, role, r as This, depth)
+            }
             _ => {
-                once!("no ambient light: other tables");
+                once!(?role, "no stand-in for the indirect light: other tables");
                 false
             }
         }
@@ -3932,8 +3947,16 @@ fn describe(view: Option<&View>) -> String {
         Some(View::Constant(address, size))
             if *size >= 16 && crate::texture::committed(*address as *const u8, 16) =>
         {
-            // SAFETY: 16 committed bytes of title memory.
-            let v = unsafe { (*address as *const [f32; 4]).read_unaligned() };
+            // `VILOCITY_OPS_CONSTANTS_FULL`: every value, as floats.
+            let n = if std::env::var_os("VILOCITY_OPS_CONSTANTS_FULL").is_some()
+                && crate::texture::committed(*address as *const u8, *size as usize)
+            {
+                *size as usize / 4
+            } else {
+                4
+            };
+            // SAFETY: n committed dwords of title memory.
+            let v: Vec<f32> = (0..n).map(|i| unsafe { (*address as *const f32).add(i).read_unaligned() }).collect();
             format!("Constant({address:#x}, {size}) {v:?}")
         }
         Some(v) => format!("{v:?}").chars().take(60).collect(),
