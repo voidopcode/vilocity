@@ -739,8 +739,10 @@ pub(crate) static OBJECT_TEXTURE_SLOTS: std::sync::atomic::AtomicU64 = std::sync
 
 /// Bytes per element of a buffer view, as the console's descriptor holds
 /// them for indexed reads (structured: the stride; raw: 1, the index is the
-/// byte; typed: the format's); `None` if `view` is not a buffer view.
+/// byte; typed: the format's, with `VIEW_INTEGER` and `VIEW_SIGNED` for an
+/// integer format); `None` if `view` is not a buffer view.
 fn view_stride(view: &View) -> Option<u32> {
+    use vilocity_shader::emit::{VIEW_INTEGER, VIEW_SIGNED};
     const BUFFER: u32 = 1;
     let (words, unordered): (&[u32; 10], bool) = match view {
         View::Shader(_, Some(d)) if d[1] == BUFFER => (d, false),
@@ -767,7 +769,25 @@ fn view_stride(view: &View) -> Option<u32> {
     } else if raw {
         1
     } else {
-        crate::resource::element(format.0 as u32).map_or(0, |(bytes, _)| bytes as u32)
+        let signed = matches!(
+            format,
+            DXGI_FORMAT_R32G32B32A32_SINT
+                | DXGI_FORMAT_R32G32B32_SINT
+                | DXGI_FORMAT_R16G16B16A16_SINT
+                | DXGI_FORMAT_R32G32_SINT
+                | DXGI_FORMAT_R8G8B8A8_SINT
+                | DXGI_FORMAT_R16G16_SINT
+                | DXGI_FORMAT_R32_SINT
+                | DXGI_FORMAT_R8G8_SINT
+                | DXGI_FORMAT_R16_SINT
+                | DXGI_FORMAT_R8_SINT
+        );
+        let kind = match (crate::pipeline::host::integer_format(format), signed) {
+            (false, _) => 0,
+            (true, false) => VIEW_INTEGER,
+            (true, true) => VIEW_INTEGER | VIEW_SIGNED,
+        };
+        crate::resource::element(format.0 as u32).map_or(0, |(bytes, _)| bytes as u32) | kind
     })
 }
 

@@ -50,18 +50,23 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-26 11:34, game build Series 1.0.2.1
+**Latest test run:** 2026-11-26 11:46, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
 | Best frame rate (menus included) | 30.0 fps |
-| Median frame time | 90 ms |
-| Last frame | 11.9 fps, 84 ms, 4286 draws, 491 dropped without a pipeline |
+| Median frame time | 87 ms |
+| Last frame | 11.6 fps, 86 ms, 4353 draws, 495 dropped without a pipeline |
 | Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: on NVIDIA, compute groups laid out in two dimensions (32x2, 64x4)
+Latest: 16-bit typed buffer reads and writes through integer views
+(`buffer_load_format_d16_*` on R16_UINT) were converted as half floats: the
+face network that moves mouths read zeros. They now keep their bits (ported
+from fxceless/victory-fork PR #927; a GPU test checks loads and stores).
+
+Before that: on NVIDIA, compute groups laid out in two dimensions (32x2, 64x4)
 gave half their threads the wrong id when a program read other lanes: the
 card fills such groups in 16x2 tiles. Each wave now takes its block of ids
 from a counter (fxceless/victory-fork PR #1261, ported; a GPU test checks five

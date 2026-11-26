@@ -25,6 +25,12 @@ pub const ROOT_CBV_SPACE: u32 = 1;
 pub const SLOT_STRIDES: u8 = 255;
 /// Dwords of the [`SLOT_STRIDES`] buffer: heap indices are clamped to it.
 pub const SLOT_STRIDES_COUNT: u32 = 1 << 21;
+/// In a [`SLOT_STRIDES`] dword, beside the stride: the slot holds a typed
+/// buffer view of an integer format (`UINT`, `SINT`), whose 16-bit typed
+/// accesses (`_d16`) move the integers' bits, not halves.
+pub const VIEW_INTEGER: u32 = 1 << 31;
+/// With [`VIEW_INTEGER`]: a `SINT` format.
+pub const VIEW_SIGNED: u32 = 1 << 30;
 
 /// Title memory by address (`resource::MEMORY`): console code reads and
 /// writes through raw 40-bit addresses it takes from root constants,

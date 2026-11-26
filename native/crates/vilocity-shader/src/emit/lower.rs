@@ -263,7 +263,7 @@ struct Lower<'a> {
     exports: HashMap<Site, &'a Export>,
     interps: HashMap<Site, &'a Interp>,
     handles: HashMap<(usize, Site, u8, bool, (u32, u32)), V>,
-    /// Element strides read from the host's table by heap slot
+    /// Dwords read from the host's table by heap slot
     /// ([`super::shader::SLOT_STRIDES`]), by block and descriptor load.
     strides: HashMap<(usize, Site, u8), V>,
     /// Blocks splitting the edge from one IR block to another.
@@ -7248,12 +7248,40 @@ impl<'a> Lower<'a> {
         if !heap {
             return Ok(None);
         }
-        let key = (self.cur, *load, *first);
+        let word = self.slot_word(*load, *first)?;
+        let bits = self.s.m.i32(!(super::shader::VIEW_INTEGER | super::shader::VIEW_SIGNED));
+        Ok(Some(self.s.m.bin(self.cur, Bin::And, word, bits)))
+    }
+
+    /// Whether the buffer view `src` names has an integer format, and
+    /// whether a signed one (`i1`s, from the host's table by heap slot);
+    /// `None` for a descriptor not loaded from the view heap.
+    // shortcut: descriptors chosen by control flow or per lane are taken as
+    // float views; read their slot's word too if one moves 16-bit integers.
+    fn integer_view(&mut self, src: &Source) -> Result<Option<(V, V)>, Why> {
+        let Source::Loaded { load, first } = src else {
+            return Ok(None);
+        };
+        let word = self.slot_word(*load, *first)?;
+        let c = self.cur;
+        let zero = self.s.m.i32(0);
+        let [int, signed] = [super::shader::VIEW_INTEGER, super::shader::VIEW_SIGNED].map(|bit| {
+            let bit = self.s.m.i32(bit);
+            let x = self.s.m.bin(c, Bin::And, word, bit);
+            self.s.m.cmp(c, pred::NE, x, zero)
+        });
+        Ok(Some((int, signed)))
+    }
+
+    /// The host's table dword ([`super::shader::SLOT_STRIDES`]) for the heap
+    /// slot of the descriptor `load` reads, in the current block.
+    fn slot_word(&mut self, load: Site, first: u8) -> Result<V, Why> {
+        let key = (self.cur, load, first);
         if let Some(&v) = self.strides.get(&key) {
-            return Ok(Some(v));
+            return Ok(v);
         }
         let c = self.cur;
-        let slot = self.heap_index(*load, *first, false)?;
+        let slot = self.heap_index(load, first, false)?;
         // Inside the table whatever the index (lanes that do not run
         // compute one too): a root view has no bounds of its own.
         let last = self.s.m.i32(super::shader::SLOT_STRIDES_COUNT - 1);
@@ -7277,7 +7305,7 @@ impl<'a> Lower<'a> {
         let f = self.s.m.extract(c, r, 0);
         let v = self.as_int(f);
         self.strides.insert(key, v);
-        Ok(Some(v))
+        Ok(v)
     }
 
     /// The heap index of a descriptor that may differ between lanes,
