@@ -46,22 +46,29 @@ loads saves and gets into the world. The world is where the work is now.
 | 5 | The world renders | 🟡 prologue cutscenes and the first room play, 4-8 fps (about 130-280 ms a frame, 200 ms median); every shader translates; some draws still dropped | ██████░░░░ |
 | 6 | The picture | 🟡 no rainbow glitter, no orange dashes, faces and rooms lit, window light and shadows on heads, no holes in the jumpsuits, smooth edges (AMD's PC FSR); ray-traced light stands in as a constant; the jumpsuits are orange in some runs and red in others | ████████░░ |
 | 7 | The world keeps running | 🟡 the loss 2-3 minutes in is fixed; a driver timeout some 7 minutes in remains (a longer GPU timeout is being tested) | █████░░░░░ |
-| 8 | Playable frame rate (30 fps) | 🔴 not yet: the card's own work is 70-130 ms a frame and our submit thread's copies and copy-back 100-150 ms; the card no longer waits for the game's writes beside shader writes | ██░░░░░░░░ |
+| 8 | Playable frame rate (30 fps) | 🔴 not yet: about 11 fps (90 ms a frame) as a Series S, the launcher's default now, with the card no longer the limit; about 3 fps as a Series X | ███░░░░░░░ |
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-26 00:03, game build Series 1.0.2.1
+**Latest test run:** 2026-11-26 00:19, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 30.4 fps |
-| Median frame time | 325 ms |
-| Last frame | 3.1 fps, 321 ms, 4732 draws, 576 dropped without a pipeline |
+| Best frame rate (menus included) | 30.0 fps |
+| Median frame time | 127 ms |
+| Last frame | 3.3 fps, 307 ms, 4277 draws, 486 dropped without a pipeline |
 | Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: the last orange dashes are gone. They were 16-pixel tiles the
+Latest: the launcher shows the game a Series S by default
+(`VILOCITY_CONSOLE`, `-SeriesX` for the old one). The title then renders
+fewer pixels and leaves out the ray-traced and hair-strand passes this
+layer cannot run: about 11 fps instead of 3, rooms lit, the inmate with hair
+and an orange jumpsuit. The "INMATE" print on its back is missing on Series S.
+Also: textures the title fills late are looked at again for longer.
+
+Before that, the last orange dashes went. They were 16-pixel tiles the
 tiled shadow programs never shaded, so they kept the "lit" clear value:
 bright bars on heads and shirts by the cell window. A dump of the shadow
 tile lists showed only 64 tiles of every 1024: the two programs that build

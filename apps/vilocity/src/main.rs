@@ -129,7 +129,12 @@ fn play(args: &[OsString]) -> i32 {
             };
             println!("vilocity native run \"{}\" --execute", exe.display());
             let mut run: Vec<OsString> = ["native", "run"].map(OsString::from).to_vec();
-            run.extend([exe.clone().into_os_string(), "--execute".into(), "--".into()]);
+            run.extend([exe.clone().into_os_string(), "--execute".into()]);
+            // `VILOCITY_CONSOLE=series-s`: the console model the title sees.
+            if let Some(console) = std::env::var_os("VILOCITY_CONSOLE") {
+                run.extend(["--console".into(), console]);
+            }
+            run.push("--".into());
             run.extend(title_args.iter().cloned());
             #[cfg(windows)]
             if sandboxed {

@@ -1,17 +1,26 @@
 # Plays GTA VI with Vilocity (in its sandbox) and opens a live monitor window.
-#   scripts\play-gta6.ps1 [-Game <folder>] [-Defaults] [-Diag] [-NoSandbox]
+#   scripts\play-gta6.ps1 [-Game <folder>] [-Defaults] [-Diag] [-NoSandbox] [-SeriesX]
 # -Defaults leaves the frame-rate switches below off (the fork's defaults).
 # -Diag runs the diagnostics build (cargo build --profile diag -p vilocity
 # --features diagnostics), which logs where each frame's time goes.
 # -NoSandbox runs the game as you, outside its sandbox (for measuring).
+# -SeriesX shows the title a Series X instead of the default Series S.
 param(
     [string]$Game = $env:VILOCITY_GTA6_DIR,
     [switch]$Defaults,
     [switch]$Diag,
-    [switch]$NoSandbox
+    [switch]$NoSandbox,
+    [switch]$SeriesX
 )
 if (-not $Game) { throw "Pass -Game <game folder> or set VILOCITY_GTA6_DIR" }
 $root = Split-Path $PSScriptRoot
+# The title picks its renderer by console model. As a Series S it renders
+# fewer pixels and leaves out the ray-traced and hair-strand passes this
+# layer cannot run: 11 fps (90 ms a frame, the card no longer the limit)
+# against 3 fps as a Series X, with lit rooms, the inmate's hair and the
+# jumpsuits' orange (run gta6-20261126-001004). Still missing on Series S:
+# the "INMATE" print on the jumpsuit's back.
+if (-not $env:VILOCITY_CONSOLE) { $env:VILOCITY_CONSOLE = if ($SeriesX) { "series-x" } else { "series-s" } }
 $exe = Join-Path $root $(if ($Diag) { "target\diag\vilocity.exe" } else { "target\release\vilocity.exe" })
 $logs = Join-Path $env:LOCALAPPDATA "vilocity\logs"
 New-Item -ItemType Directory -Force $logs | Out-Null
@@ -31,7 +40,7 @@ if (-not $Defaults) {
     # VItoriaBr's preset (RTX 5060 Ti, 3.5-6 fps in the world, no driver
     # timeouts): a 1080p television instead of 4K, so the title renders
     # less; wider refreshes and merged copies; more card memory for buffers.
-    $env:VILOCITY_DISPLAY_MODE = "1920x1080"
+    if (-not $env:VILOCITY_DISPLAY_MODE) { $env:VILOCITY_DISPLAY_MODE = "1920x1080" }
     $env:VILOCITY_WIDE_REFRESH = "1"
     $env:VILOCITY_WIDE_MERGE = "1"
     $env:VILOCITY_JOIN_COPIES = "1"
