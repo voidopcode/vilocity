@@ -77,7 +77,7 @@ Before that: the launcher shows the game a Series S by default
 (`VILOCITY_CONSOLE`, `-SeriesX` for the old one). The title then renders
 fewer pixels and leaves out the ray-traced and hair-strand passes this
 layer cannot run: about 11 fps instead of 3, rooms lit, the inmate with hair
-and an orange jumpsuit. The "INMATE" print on its back is missing on Series S.
+and an orange jumpsuit.
 Also: textures the title fills late are looked at again for longer.
 
 Before that, the last orange dashes went. They were 16-pixel tiles the
