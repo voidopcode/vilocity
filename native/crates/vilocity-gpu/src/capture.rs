@@ -183,6 +183,8 @@ fn timed_capture(frame: u64) {
         && TIMED.compare_exchange(u64::MAX, frame + 2, Relaxed, Relaxed).is_ok()
     {
         tracing::info!(frame = frame + 2, secs, "frames captured at VILOCITY_CAPTURE_WORLD_SECONDS");
+        #[cfg(feature = "diagnostics")]
+        crate::draw::stale_textures(frame);
     }
 }
 

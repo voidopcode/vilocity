@@ -391,6 +391,38 @@ pub(crate) static HEAP_TEXTURES_FULL: AtomicU64 = AtomicU64::new(0);
 /// ljm-233/VIctory f11c370 moved its retries to the clock).
 const RECHECK_FRAMES: [u64; 7] = [4, 12, 40, 120, 400, 1200, 3600];
 
+/// Diagnostics: every slot's last whole upload, its memory and its fingerprint then
+/// ([`stale_textures`]).
+#[cfg(feature = "diagnostics")]
+static UPLOADED_WHOLE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u32, (u64, u64, u64, u64)>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Diagnostics: the slots whose title memory no longer holds what was uploaded from it
+/// (the host copy is stale, or the slot's texture was replaced), said in the log. Run at
+/// `VILOCITY_CAPTURE_WORLD_SECONDS`, to compare a launch with lit faces and hair with one
+/// without.
+#[cfg(feature = "diagnostics")]
+pub(crate) fn stale_textures(frame: u64) {
+    let all: Vec<(u32, (u64, u64, u64, u64))> =
+        UPLOADED_WHOLE.lock().unwrap_or_else(|e| e.into_inner()).iter().map(|(&k, &v)| (k, v)).collect();
+    let mut stale: Vec<(u32, u64, u64, u64)> = Vec::new();
+    for &(index, (at, len, print, uploaded)) in &all {
+        if crate::texture::fingerprint(at, len) != print {
+            stale.push((index, at, len, uploaded));
+        }
+    }
+    stale.sort_by_key(|s| s.3);
+    let bytes: u64 = stale.iter().map(|s| s.2).sum();
+    tracing::warn!(frame, uploaded = all.len(), stale = stale.len(), stale_mb = bytes >> 20, "textures whose title memory changed since their last whole upload");
+    // All of them, for matching with the slots the captured frame's draws read.
+    if let Some(dir) = crate::capture::folder() {
+        let lines: Vec<String> =
+            stale.iter().map(|(i, at, len, up)| format!("{i} {at:#x} {len} {up}")).collect();
+        let _ = std::fs::write(dir.join(format!("stale-textures-{frame}.txt")), lines.join("
+"));
+    }
+}
+
 /// Looks at uploaded textures picked by index that found the memory as it
 /// was, and that found it changed (uploaded again), since the start.
 pub(crate) static HEAP_TEXTURES_RECHECKED: [AtomicU64; 2] = [AtomicU64::new(0), AtomicU64::new(0)];
@@ -2013,6 +2045,8 @@ impl State {
                 // Whole and uploaded: looked at again (see above).
                 Some((at, len)) => {
                     let print = crate::texture::fingerprint(at, len);
+                    #[cfg(feature = "diagnostics")]
+                    UPLOADED_WHOLE.lock().unwrap_or_else(|e| e.into_inner()).insert(index, (at, len, print, frame));
                     host.texture_slot_recheck(index, write, frame + RECHECK_FRAMES[0], (at, len), print, 0, frame);
                 }
                 None => host.texture_slot_done(index, write, again),
