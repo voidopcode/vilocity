@@ -43,7 +43,7 @@ if (-not $Defaults) {
     # that met a remap read nothing and the texture kept zeros for the run: Lucia's
     # hair a flat dark cap, neck black, no "INMATE" print in about 2 launches of 3
     # (fxceless/victory-fork #923; hair in 4 of 4 cell captures with 0, same fps).
-    if (-not $env:VILOCITY_TEXTURE_NO_WAIT) { $env:VILOCITY_TEXTURE_NO_WAIT = "0" }
+    if (-not $env:VILOCITY_TEXTURE_NO_WAIT) { $env:VILOCITY_TEXTURE_NO_WAIT = "2" }
     $env:VILOCITY_COPY_PLAIN = "1"       # title memory copied in place (fork 0b0074e: 145 -> 124 ms at 4,500 draws)
     # 4.7 GB of the card's copies spilled into PC memory; levels the title
     # does not hold take no card memory with this (the fork: 2-3 GB saved).

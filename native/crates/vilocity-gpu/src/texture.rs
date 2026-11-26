@@ -370,9 +370,18 @@ pub(crate) fn alias(list: &HostList, placed: This, source: This) -> bool {
 ///
 /// What changes for the picture: a texture that arrives while the runtime
 /// is remapping may show a frame later. It never shows partly read.
-fn no_wait() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("VILOCITY_TEXTURE_NO_WAIT").is_some_and(|v| v == "1"))
+///
+/// `VILOCITY_TEXTURE_NO_WAIT=2` reads through the kernel first too, but a
+/// texture that read cannot take whole (a page not there, like Lucia's hair
+/// while it streams in) then waits for the lock as with 0, so none is left
+/// with zeros: loading frames lost 140-700 ms to the wait with 0.
+fn no_wait() -> u8 {
+    static ON: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| match std::env::var("VILOCITY_TEXTURE_NO_WAIT").as_deref() {
+        Ok("1") => 1,
+        Ok("2") => 2,
+        _ => 0,
+    })
 }
 
 /// Since the last frame-rate line, with [`no_wait`]: refreshes that read
@@ -1033,16 +1042,25 @@ impl Staging {
         // stays mapped (see `crate::watch::title_memory_reading`; without
         // it a page went between the asking and the read in runs 71 and
         // 74).
-        let _mapped = if no_wait() {
+        let _mapped = match no_wait() {
             // Not waited for: while the runtime remaps title memory the
             // texture is read through the kernel instead, whole or not at
             // all (`no_wait`).
-            let Some(mapped) = crate::watch::title_memory_reading_now() else {
-                return self.refresh_unlocked(last, size);
-            };
-            mapped
-        } else {
-            waited(2, crate::watch::title_memory_reading)
+            1 => {
+                let Some(mapped) = crate::watch::title_memory_reading_now() else {
+                    return self.refresh_unlocked(last, size);
+                };
+                mapped
+            }
+            // Through the kernel if it can be read whole, else waited for.
+            2 => match crate::watch::title_memory_reading_now() {
+                Some(mapped) => mapped,
+                None => match self.refresh_unlocked(last, size) {
+                    0 => waited(2, crate::watch::title_memory_reading),
+                    read => return read,
+                },
+            },
+            _ => waited(2, crate::watch::title_memory_reading),
         };
         if !committed(self.memory, size) {
             // Partly mapped: a streamed texture with only some mips' pages

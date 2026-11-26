@@ -50,18 +50,25 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-26 19:10, game build Series 1.0.2.1
+**Latest test run:** 2026-11-26 19:35, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 31.0 fps |
-| Median frame time | 33 ms |
-| Last frame | 2.8 fps, 363 ms, 3700 draws, 3087 dropped without a pipeline |
+| Best frame rate (menus included) | 30.0 fps |
+| Median frame time | 287 ms |
+| Last frame | 2.5 fps, 397 ms, 4674 draws, 394 dropped without a pipeline |
 | Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: the start-up screens, menus and loading screens show again. On the
+Latest: loading into the world no longer stalls on texture reads. While the
+title remaps its memory a texture is now read through the kernel, and only one
+whose pages are not all there yet waits as before (`VILOCITY_TEXTURE_NO_WAIT=2`,
+the launcher's default): the wait went from 140-700 to 3-19 ms a frame, and the
+start screen, loading art, logo, prison cutscene and Lucia's hair all show
+(run 2026-11-26 19:3x). The monitor window's title line no longer errors.
+
+Before that: the start-up screens, menus and loading screens show again. On the
 Series S profile the title presents two planes and puts its interface on the
 second, which we never showed: everything before the world was black. The
 second plane (read at the console's 72-byte stride, codec-d/cool_fox 1ad6e67)

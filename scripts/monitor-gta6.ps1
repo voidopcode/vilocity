@@ -69,7 +69,7 @@ while ($true) {
             $vShared = "{0:N0} MB" -f (($vm | Measure-Object SharedUsage -Sum).Sum / $mb)
         }
     }
-    $hud += , @("VILOCITY HUD ($gpuName)  {0:N0}s" -f ((Get-Date) - $started).TotalSeconds, 'Cyan')
+    $hud += , @(("VILOCITY HUD ($gpuName)  {0:N0}s" -f ((Get-Date) - $started).TotalSeconds), 'Cyan')
     $hud += , @("FPS:        $fps", 'Green')
     $hud += , @("CPU:        Game $gameCpu | PC $pcCpu%", 'Cyan')
     if ($gpu.Count -ge 5) { $hud += , @(("VRAM GPU:   {0}/{1} MB ({2:N1}%)" -f $gpu[1], $gpu[2], ($gpu[1] / $gpu[2] * 100)), 'Yellow') }
