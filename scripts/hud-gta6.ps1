@@ -11,6 +11,7 @@ public class HudWin {
   [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr h, int i, int v);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   public struct RECT { public int L, T, R, B; }
 }
 '@
@@ -89,6 +90,10 @@ $timer.Add_Tick({
         if (-not [HudWin]::IsIconic($g.MainWindowHandle) -and [HudWin]::GetWindowRect($g.MainWindowHandle, [ref]$r)) {
             $form.Location = New-Object Drawing.Point(($r.R - $form.Width - 10), ($r.T + 36))
         }
+        # Only over the game: hidden while another window is in front.
+        $form.Visible = ([HudWin]::GetForegroundWindow() -eq $g.MainWindowHandle) -and -not [HudWin]::IsIconic($g.MainWindowHandle)
+    } else {
+        $form.Visible = $false
     }
     $text += Try-Get {
         $os = Get-CimInstance Win32_OperatingSystem

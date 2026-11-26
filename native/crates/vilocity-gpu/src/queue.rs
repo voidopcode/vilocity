@@ -60,8 +60,14 @@ enum Held {
     Running,
     /// With [`present_behind`]: the title's present of a frame, due after
     /// what the queue holds before it: the host texture shown, the state
-    /// the title's lists leave it in, and the frame's number.
-    Present(windows::Win32::Graphics::Direct3D12::ID3D12Resource, u32, u64),
+    /// the title's lists leave it in, the plane shown over it and its
+    /// state ([`shown_planes`]), and the frame's number.
+    Present(
+        windows::Win32::Graphics::Direct3D12::ID3D12Resource,
+        u32,
+        Option<(windows::Win32::Graphics::Direct3D12::ID3D12Resource, u32)>,
+        u64,
+    ),
 }
 
 /// Presents that are in a queue's line and have not run ([`Held::Present`]).
@@ -122,27 +128,25 @@ fn send_behind(this: This, planes: u32, plane_parameters: *const Plane) -> bool 
     if crate::capture::wanted(frame) || crate::capture::listed(frame) {
         return false;
     }
-    // SAFETY: the title passes `planes` plane descriptions.
-    let Some(plane) = (unsafe { plane_parameters.as_ref() }) else {
+    let Some((resource, over)) = shown_planes(planes, plane_parameters) else {
         return false;
     };
-    if plane.count == 0 || plane.resources.is_null() {
-        return false;
-    }
-    // SAFETY: the plane lists `count` resources.
-    let resource = unsafe { *plane.resources };
-    let Some(texture) = crate::resource::host_resource(resource) else {
-        return false;
-    };
-    // The state the lists recorded so far leave the texture in: what our
+    // The state the lists recorded so far leave a texture in: what our
     // copy finds it in when it runs behind them (looked at, not changed).
-    const COPY_SOURCE: u32 = 0x800;
-    let state = crate::resource::host_transition(resource, COPY_SOURCE).map_or(COPY_SOURCE, |(_, before)| before);
-    crate::resource::host_transition(resource, state);
-    let texture = texture.clone();
+    let taken = |resource: This| {
+        const COPY_SOURCE: u32 = 0x800;
+        let texture = crate::resource::host_resource(resource)?.clone();
+        let state = crate::resource::host_transition(resource, COPY_SOURCE).map_or(COPY_SOURCE, |(_, before)| before);
+        crate::resource::host_transition(resource, state);
+        Some((texture, state))
+    };
+    let Some((texture, state)) = taken(resource) else {
+        return false;
+    };
+    let over = over.and_then(taken);
     let sent = hold(this, || {
         PRESENTS_HELD.fetch_add(1, Ordering::Relaxed);
-        Held::Present(texture, state, frame)
+        Held::Present(texture, state, over, frame)
     });
     if sent {
         PRESENTS_BEHIND.fetch_add(1, Ordering::Relaxed);
@@ -629,10 +633,11 @@ fn release_held_now(all: bool) {
                             }
                         }
                     }
-                    Held::Present(texture, state, frame) => {
+                    Held::Present(texture, state, over, frame) => {
                         let show = || {
                             if let Some(host) = crate::host::host() {
-                                let _ = host.present(&texture, state, frame);
+                                let over = over.as_ref().map(|(t, s)| (t, *s));
+                                let _ = host.present(&texture, state, over, frame);
                             }
                         };
                         if all {
@@ -851,6 +856,80 @@ pub(crate) struct Plane {
     count: u32,
     resources: *const This,
 }
+
+/// A present plane as retail titles pass it: the start above, then
+/// source-rectangle and destination pointers, a color space and seven
+/// option words; plane descriptions follow each other at this stride.
+#[repr(C)]
+#[allow(dead_code)] // its size is the stride; only the start is read
+struct RetailPlane {
+    prefix: Plane,
+    source_rects: *const (),
+    destination: *const (),
+    color_space: u32,
+    options: [u32; 7],
+}
+const _: () = assert!(size_of::<RetailPlane>() == 72);
+
+/// Whether a present shows plane 1 over plane 0. `VILOCITY_PLANES=1`:
+/// plane 0 only, as before.
+#[cfg(windows)]
+fn planes_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VILOCITY_PLANES").is_none_or(|v| v != "1"))
+}
+
+/// The first resource of plane 1, read at the retail stride; `None` if
+/// its memory is not readable. Read by copy: a title passing only plane
+/// starts (24 bytes apart) still has its plane 0 shown.
+#[cfg(windows)]
+fn second_plane_resource(plane_parameters: *const Plane) -> Option<This> {
+    let second = plane_parameters.cast::<RetailPlane>().wrapping_add(1).cast::<u8>();
+    let mut prefix = [0; size_of::<Plane>()];
+    if !crate::host::read_into(second, &mut prefix) {
+        return None;
+    }
+    // SAFETY: the bytes of a `Plane`, copied.
+    let plane = unsafe { prefix.as_ptr().cast::<Plane>().read_unaligned() };
+    let mut pointer = [0; size_of::<This>()];
+    if plane.count == 0 || plane.resources.is_null() || !crate::host::read_into(plane.resources.cast(), &mut pointer) {
+        return None;
+    }
+    Some(usize::from_ne_bytes(pointer) as This)
+}
+
+/// The title resources a present shows: plane 0's first, and plane 1's
+/// shown over it (on Series S the title draws its menus, loading screens
+/// and interface there); plane 1's alone if plane 0 has nothing to show.
+#[cfg(windows)]
+fn shown_planes(planes: u32, plane_parameters: *const Plane) -> Option<(This, Option<This>)> {
+    if planes == 0 {
+        return None;
+    }
+    // SAFETY: the title passes `planes` plane descriptions.
+    let base = unsafe { plane_parameters.as_ref() }
+        .filter(|plane| plane.count > 0 && !plane.resources.is_null())
+        // SAFETY: the plane lists `count` resources.
+        .map(|plane| unsafe { *plane.resources })
+        .filter(|&resource| crate::resource::host_resource(resource).is_some());
+    let over = (planes > 1 && planes_on())
+        .then(|| second_plane_resource(plane_parameters))
+        .flatten()
+        .filter(|&resource| crate::resource::is_resource(resource) && crate::resource::host_resource(resource).is_some());
+    pick_planes(base, over)
+}
+
+/// Plane 0 with plane 1 over it if that is another resource; plane 1
+/// alone if there is no plane 0.
+fn pick_planes<T: PartialEq>(base: Option<T>, over: Option<T>) -> Option<(T, Option<T>)> {
+    match base {
+        Some(base) => {
+            let over = over.filter(|over| *over != base);
+            Some((base, over))
+        }
+        None => over.map(|over| (over, None)),
+    }
+}
 /// Submission tagged with the frame it belongs to `(count, lists, frame
 /// token, flags)`; frames are paced elsewhere, so it runs as a plain one.
 extern "system" fn execute_x(this: This, count: u32, lists: *const This, _token: u64, _flags: u32) {
@@ -1009,10 +1088,11 @@ pub(crate) fn presented() -> u64 {
     FRAMES.load(Ordering::Relaxed)
 }
 
-/// Shows the first plane's first resource in our window.
+/// Shows plane 0's first resource in our window, with plane 1's drawn
+/// over it ([`shown_planes`]).
 ///
-/// shortcut: one plane, no scaling or placement, the source expected in
-/// the common state.
+/// shortcut: two planes at most, each stretched over the whole window
+/// (their rectangles not read), the source expected in the common state.
 extern "system" fn present(
     this: This,
     planes: u32,
@@ -1115,21 +1195,23 @@ fn present_now(this: This, planes: u32, plane_parameters: *const Plane) -> HRESU
     }
     #[cfg(windows)]
     if !sent_behind
-        && planes > 0
-        // SAFETY: the title passes `planes` plane descriptions.
-        && let Some(plane) = unsafe { plane_parameters.as_ref() }
-        && plane.count > 0
-        && !plane.resources.is_null()
-        // SAFETY: the plane lists `count` resources.
-        && let resource = unsafe { *plane.resources }
+        && let Some((resource, over)) = shown_planes(planes, plane_parameters)
         && let Some(texture) = crate::resource::host_resource(resource)
         && let Some(host) = crate::host::host()
     {
         const COPY_SOURCE: u32 = 0x800;
         let state = crate::resource::host_transition(resource, COPY_SOURCE)
             .map_or(COPY_SOURCE, |(_, before)| before);
-        let shown = host.present(texture, state, frame);
+        let over = over.and_then(|over| {
+            let texture = crate::resource::host_resource(over)?;
+            let state = crate::resource::host_transition(over, COPY_SOURCE).map_or(COPY_SOURCE, |(_, before)| before);
+            Some((over, texture, state))
+        });
+        let shown = host.present(texture, state, over.map(|(_, texture, state)| (texture, state)), frame);
         crate::resource::host_transition(resource, state);
+        if let Some((over, _, state)) = over {
+            crate::resource::host_transition(over, state);
+        }
         #[cfg(feature = "diagnostics")]
         blinks(frame, resource, state, shown);
         #[cfg(not(feature = "diagnostics"))]
@@ -1304,6 +1386,38 @@ static NEWER_FUNCTIONS: Table<36> = Table(queue_table(true));
 mod tests {
     use super::*;
     use crate::object::slot;
+
+    /// Plane 1 is read at the retail stride, 72 bytes on, not 24.
+    #[cfg(windows)]
+    #[test]
+    fn second_plane_read_at_retail_stride() {
+        assert_eq!(std::mem::offset_of!(RetailPlane, prefix), 0);
+        assert_eq!(size_of::<Plane>(), 24);
+        let (first, second) = (0x1000usize as This, 0x2000usize as This);
+        let plane = |resources: &This, count| RetailPlane {
+            prefix: Plane { token: 7, count, resources },
+            source_rects: std::ptr::null(),
+            destination: std::ptr::null(),
+            color_space: 0,
+            options: [0; 7],
+        };
+        let planes = [plane(&first, 1), plane(&second, 1)];
+        let at = planes.as_ptr().cast::<Plane>();
+        assert_eq!(second_plane_resource(at), Some(second));
+        let planes = [plane(&first, 1), plane(&second, 0)];
+        assert_eq!(second_plane_resource(planes.as_ptr().cast()), None);
+        // Not a resource of ours: not shown.
+        assert!(!crate::resource::is_resource(second));
+    }
+
+    #[test]
+    fn plane_one_over_plane_zero_or_alone() {
+        assert_eq!(pick_planes(Some(1), Some(2)), Some((1, Some(2))));
+        assert_eq!(pick_planes(Some(1), Some(1)), Some((1, None)));
+        assert_eq!(pick_planes(Some(1), None), Some((1, None)));
+        assert_eq!(pick_planes(None, Some(2)), Some((2, None)));
+        assert_eq!(pick_planes::<u8>(None, None), None);
+    }
 
     /// Where a queue's signal is: newer layouts have it two slots later.
     /// Another test may switch layouts while this one runs, so the queue's

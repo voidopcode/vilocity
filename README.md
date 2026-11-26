@@ -50,18 +50,25 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-26 18:56, game build Series 1.0.2.1
+**Latest test run:** 2026-11-26 19:10, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 30.0 fps |
-| Median frame time | 54 ms |
-| Last frame | 5.8 fps, 171 ms, 4584 draws, 263 dropped without a pipeline |
+| Best frame rate (menus included) | 31.0 fps |
+| Median frame time | 33 ms |
+| Last frame | 2.8 fps, 363 ms, 3700 draws, 3087 dropped without a pipeline |
 | Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: Lucia's hair shows, a long ponytail: the hair strand programs, left
+Latest: the start-up screens, menus and loading screens show again. On the
+Series S profile the title presents two planes and puts its interface on the
+second, which we never showed: everything before the world was black. The
+second plane (read at the console's 72-byte stride, codec-d/cool_fox 1ad6e67)
+is now blended over the first (`VILOCITY_PLANES=1`: the first alone). The HUD
+shows only while the game's window is in front.
+
+Before that: Lucia's hair shows, a long ponytail: the hair strand programs, left
 out until now because they did not translate or drew streaks, run by default
 (`VILOCITY_HAIR=0` leaves them out). The title's ray passes that still run walk
 no structure: every node test answers "no hit" (`VILOCITY_BVH_NO_HIT`, from

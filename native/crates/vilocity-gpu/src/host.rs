@@ -771,6 +771,37 @@ pub(crate) fn warp_adapter() -> windows::core::Result<IDXGIAdapter> {
 
 #[cfg(test)]
 mod tests {
+    /// The pass drawing plane 1 over plane 0 is made for the swap chain's
+    /// formats, and the planes' typeless formats get a display view.
+    #[test]
+    fn planes_can_be_drawn_over_each_other() {
+        use super::*;
+        let desc = |format| D3D12_RESOURCE_DESC {
+            Dimension: D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+            DepthOrArraySize: 1,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Format: format,
+            ..Default::default()
+        };
+        assert_eq!(view_format(&desc(DXGI_FORMAT(27))), Some(DXGI_FORMAT_R8G8B8A8_UNORM));
+        assert_eq!(view_format(&desc(DXGI_FORMAT_B8G8R8A8_UNORM)), Some(DXGI_FORMAT_B8G8R8A8_UNORM));
+        assert_eq!(view_format(&desc(DXGI_FORMAT_R32_UINT)), None);
+        let Some(host) = host() else {
+            eprintln!("SKIPPED planes_can_be_drawn_over_each_other: no host GPU");
+            return;
+        };
+        for format in [
+            DXGI_FORMAT_R8G8B8A8_UNORM,
+            DXGI_FORMAT_B8G8R8A8_UNORM,
+            DXGI_FORMAT_R10G10B10A2_UNORM,
+            DXGI_FORMAT_R16G16B16A16_FLOAT,
+        ] {
+            if let Err(e) = compose_pipeline(&host.device, format) {
+                panic!("format {}: {e}", format.0);
+            }
+        }
+    }
+
     #[test]
     fn sparse_copies_preserve_islands_and_observe_remaps() {
         use windows_sys::Win32::System::Memory::*;
@@ -7710,6 +7741,91 @@ fn swap_format(format: DXGI_FORMAT) -> Option<DXGI_FORMAT> {
     })
 }
 
+/// The view a presented plane is read through when drawn over another
+/// ([`compose_pipeline`]): its own format, a typeless one's display type.
+fn view_format(desc: &D3D12_RESOURCE_DESC) -> Option<DXGI_FORMAT> {
+    if desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D
+        || desc.DepthOrArraySize != 1
+        || desc.SampleDesc.Count != 1
+        || desc.Flags.contains(D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE)
+    {
+        return None;
+    }
+    Some(match desc.Format.0 {
+        9 => DXGI_FORMAT_R16G16B16A16_FLOAT,
+        23 => DXGI_FORMAT_R10G10B10A2_UNORM,
+        27 => DXGI_FORMAT_R8G8B8A8_UNORM,
+        90 => DXGI_FORMAT_B8G8R8A8_UNORM,
+        10 | 11 | 13 | 24 | 26 | 28 | 29 | 31 | 67 | 87 | 91 => desc.Format,
+        _ => return None,
+    })
+}
+
+/// Plane 1 over plane 0, each stretched over the target, plane 1's colour
+/// taken as premultiplied by its alpha (as the console's display does).
+const COMPOSE: &str = r#"
+#define RS "DescriptorTable(SRV(t0, numDescriptors=2), visibility=SHADER_VISIBILITY_PIXEL), StaticSampler(s0, filter=FILTER_MIN_MAG_MIP_LINEAR, addressU=TEXTURE_ADDRESS_CLAMP, addressV=TEXTURE_ADDRESS_CLAMP, visibility=SHADER_VISIBILITY_PIXEL)"
+Texture2D<float4> base : register(t0);
+Texture2D<float4> over : register(t1);
+SamplerState smooth : register(s0);
+struct V { float4 at : SV_Position; float2 uv : TEXCOORD0; };
+[RootSignature(RS)]
+V corner(uint id : SV_VertexID) {
+    V v;
+    v.uv = float2((id << 1) & 2, id & 2);
+    v.at = float4(v.uv * float2(2, -2) + float2(-1, 1), 0, 1);
+    return v;
+}
+[RootSignature(RS)]
+float4 compose(V v) : SV_Target {
+    float4 b = base.SampleLevel(smooth, v.uv, 0);
+    float4 o = over.SampleLevel(smooth, v.uv, 0);
+    return float4(saturate(o.rgb + b.rgb * (1 - saturate(o.a))), 1);
+}
+"#;
+
+/// The root signature and pipeline that draw plane 1 over plane 0 into a
+/// target of `format`.
+fn compose_pipeline(
+    device: &ID3D12Device,
+    format: DXGI_FORMAT,
+) -> windows::core::Result<(ID3D12RootSignature, ID3D12PipelineState)> {
+    use windows::core::s;
+    let vs = compile(COMPOSE, s!("corner"), s!("vs_5_1"))?;
+    let ps = compile(COMPOSE, s!("compose"), s!("ps_5_1"))?;
+    let code = |bytes: &[u8]| D3D12_SHADER_BYTECODE {
+        pShaderBytecode: bytes.as_ptr().cast(),
+        BytecodeLength: bytes.len(),
+    };
+    // SAFETY: the root signature is inside the pixel shader; the
+    // description points at live data and never releases its pointer.
+    unsafe {
+        let root: ID3D12RootSignature = device.CreateRootSignature(0, &ps[..])?;
+        let mut desc = D3D12_GRAPHICS_PIPELINE_STATE_DESC {
+            pRootSignature: std::mem::transmute_copy(&root),
+            VS: code(&vs[..]),
+            PS: code(&ps[..]),
+            SampleMask: u32::MAX,
+            RasterizerState: D3D12_RASTERIZER_DESC {
+                FillMode: D3D12_FILL_MODE_SOLID,
+                CullMode: D3D12_CULL_MODE_NONE,
+                ..Default::default()
+            },
+            PrimitiveTopologyType: D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE,
+            NumRenderTargets: 1,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            ..Default::default()
+        };
+        desc.RTVFormats[0] = format;
+        desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL.0 as u8;
+        let pipeline: ID3D12PipelineState = device.CreateGraphicsPipelineState(&desc)?;
+        Ok((root, pipeline))
+    }
+}
+
 const BUFFERS: u32 = 2;
 
 struct Presenter {
@@ -7722,6 +7838,12 @@ struct Presenter {
     /// present in the air, and the submission it last flew as (it is used
     /// again once that one has finished).
     ahead: Vec<(HostList, u64)>,
+    /// The pipeline drawing plane 1 over plane 0 for the format it was
+    /// made for (none if it could not be made), once asked for.
+    compose: Option<(DXGI_FORMAT, Option<(ID3D12RootSignature, ID3D12PipelineState)>)>,
+    /// The two plane views of each list above (`copy` first, then
+    /// `ahead`'s), made as needed.
+    views: Vec<ID3D12DescriptorHeap>,
     hwnd: HWND,
     meter: Meter,
 }
@@ -8033,16 +8155,29 @@ impl Meter {
 
 impl Host {
     /// Shows `texture`, which is in `state` (a host state) and stays in it,
-    /// as frame `frame` (saved if captures are on). `None` if nothing was
-    /// shown; else, in diagnostics builds, whether the frame was black.
-    pub(crate) fn present(&self, texture: &ID3D12Resource, state: u32, frame: u64) -> Option<bool> {
+    /// with `over` (a texture and its state, which it stays in) drawn over
+    /// it, as frame `frame` (saved if captures are on). `None` if nothing
+    /// was shown; else, in diagnostics builds, whether the frame was black.
+    pub(crate) fn present(
+        &self,
+        texture: &ID3D12Resource,
+        state: u32,
+        over: Option<(&ID3D12Resource, u32)>,
+        frame: u64,
+    ) -> Option<bool> {
         let showing = std::time::Instant::now();
-        let shown = self.present_now(texture, state, frame);
+        let shown = self.present_now(texture, state, over, frame);
         crate::framelog::add(crate::framelog::T::PresentShowUs, showing.elapsed().as_micros() as u64);
         shown
     }
 
-    fn present_now(&self, texture: &ID3D12Resource, state: u32, frame: u64) -> Option<bool> {
+    fn present_now(
+        &self,
+        texture: &ID3D12Resource,
+        state: u32,
+        over: Option<(&ID3D12Resource, u32)>,
+        frame: u64,
+    ) -> Option<bool> {
         // SAFETY: a live resource.
         let desc = unsafe { texture.GetDesc() };
         let Some(format) = swap_format(desc.Format) else {
@@ -8050,6 +8185,13 @@ impl Host {
             return None;
         };
         let (width, height) = (desc.Width as u32, desc.Height);
+        // A plane drawn over this one, and the views both are read through.
+        let over = over.and_then(|(over, over_state)| {
+            // SAFETY: a live resource.
+            let over_desc = unsafe { over.GetDesc() };
+            let views = [view_format(&desc)?, view_format(&over_desc)?];
+            Some((over, D3D12_RESOURCE_STATES(over_state as i32), views, over_desc))
+        });
         let mut presenter = self.presenter.lock().unwrap_or_else(|e| e.into_inner());
         if presenter.is_none() {
             *presenter = match self.presenter(width, height, format) {
@@ -8061,6 +8203,17 @@ impl Host {
             };
         }
         let p = presenter.as_mut()?;
+        if over.is_some() && p.compose.as_ref().is_none_or(|(made_for, _)| *made_for != format) {
+            let made = compose_pipeline(&self.device, format)
+                .inspect_err(|e| tracing::warn!(error = %e, "no pipeline to draw plane 1 over plane 0: plane 0 is shown alone"))
+                .ok();
+            p.compose = Some((format, made));
+        }
+        let over = over.filter(|_| matches!(p.compose, Some((_, Some(_)))));
+        // Both planes are stretched over a target as large as the larger.
+        let (width, height) = over.as_ref().map_or((width, height), |(.., o)| {
+            (width.max(o.Width as u32), height.max(o.Height))
+        });
         if (p.width, p.height, p.format) != (width, height, format) {
             // Presents sent ahead hold back buffers until they have run.
             settle_now(WHY_SYNC);
@@ -8112,21 +8265,111 @@ impl Host {
             } else {
                 None
             };
+            // The list's own plane views: one in flight is not written.
+            let views = if over.is_some() {
+                let n = slot.map_or(0, |i| i + 1);
+                while p.views.len() <= n {
+                    let heap = self.device.CreateDescriptorHeap(&D3D12_DESCRIPTOR_HEAP_DESC {
+                        Type: D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+                        NumDescriptors: 2,
+                        Flags: D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
+                        NodeMask: 0,
+                    });
+                    match heap {
+                        Ok(heap) => p.views.push(heap),
+                        Err(e) => {
+                            tracing::warn!(error = %e, "no views for the planes: frame not shown");
+                            return None;
+                        }
+                    }
+                }
+                Some(p.views[n].clone())
+            } else {
+                None
+            };
             let copy = match slot {
                 Some(i) => &p.ahead[i].0,
                 None => &p.copy,
             };
             copy.reset();
             let list = &copy.list;
-            list.ResourceBarrier(&[
-                transition(texture, state, D3D12_RESOURCE_STATE_COPY_SOURCE),
-                transition(
-                    &back,
-                    D3D12_RESOURCE_STATE_PRESENT,
-                    D3D12_RESOURCE_STATE_COPY_DEST,
-                ),
-            ]);
-            list.CopyResource(&back, texture);
+            let composed = if let (Some((over, over_state, formats, _)), Some(views), Some((_, Some((root, pipeline))))) =
+                (&over, &views, &p.compose)
+            {
+                let (over, over_state) = (*over, *over_state);
+                let read = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+                let change = |r: &ID3D12Resource, from, to| (from != to).then(|| transition(r, from, to));
+                let pre: Vec<_> = [
+                    change(texture, state, read),
+                    change(over, over_state, read),
+                    Some(transition(&back, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET)),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                list.ResourceBarrier(&pre);
+                let step = self.device.GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) as usize;
+                let start = views.GetCPUDescriptorHandleForHeapStart();
+                for (i, (plane, format)) in [(texture, formats[0]), (over, formats[1])].into_iter().enumerate() {
+                    let view = D3D12_SHADER_RESOURCE_VIEW_DESC {
+                        Format: format,
+                        ViewDimension: D3D12_SRV_DIMENSION_TEXTURE2D,
+                        Shader4ComponentMapping: D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+                        Anonymous: D3D12_SHADER_RESOURCE_VIEW_DESC_0 {
+                            Texture2D: D3D12_TEX2D_SRV {
+                                MipLevels: 1,
+                                ..Default::default()
+                            },
+                        },
+                    };
+                    let at = D3D12_CPU_DESCRIPTOR_HANDLE { ptr: start.ptr + i * step };
+                    self.device.CreateShaderResourceView(plane, Some(&view), at);
+                }
+                let rtv = self.rtv(Some(&back), None);
+                list.OMSetRenderTargets(1, Some(&rtv), false, None);
+                list.SetDescriptorHeaps(&[Some(views.clone())]);
+                list.SetGraphicsRootSignature(root);
+                list.SetPipelineState(pipeline);
+                list.SetGraphicsRootDescriptorTable(0, views.GetGPUDescriptorHandleForHeapStart());
+                list.IASetPrimitiveTopology(windows::Win32::Graphics::Direct3D::D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                list.RSSetViewports(&[D3D12_VIEWPORT {
+                    Width: width as f32,
+                    Height: height as f32,
+                    MaxDepth: 1.0,
+                    ..Default::default()
+                }]);
+                list.RSSetScissorRects(&[RECT {
+                    left: 0,
+                    top: 0,
+                    right: width as i32,
+                    bottom: height as i32,
+                }]);
+                list.DrawInstanced(3, 1, 0, 0);
+                // Plane 0 left as a copy leaves it, for what reads it below.
+                let post: Vec<_> = [
+                    change(texture, read, D3D12_RESOURCE_STATE_COPY_SOURCE),
+                    change(over, read, over_state),
+                    Some(transition(&back, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT)),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                list.ResourceBarrier(&post);
+                true
+            } else {
+                false
+            };
+            if !composed {
+                list.ResourceBarrier(&[
+                    transition(texture, state, D3D12_RESOURCE_STATE_COPY_SOURCE),
+                    transition(
+                        &back,
+                        D3D12_RESOURCE_STATE_PRESENT,
+                        D3D12_RESOURCE_STATE_COPY_DEST,
+                    ),
+                ]);
+                list.CopyResource(&back, texture);
+            }
             #[cfg(feature = "diagnostics")]
             let capture = crate::capture::wanted(frame)
                 .then(|| crate::capture::read_back(&self.device, list, texture))
@@ -8135,14 +8378,18 @@ impl Host {
             let probe = if slot.is_some() { None } else { crate::capture::probe(&self.device, list, texture) };
             #[cfg(not(feature = "diagnostics"))]
             let _ = frame;
-            list.ResourceBarrier(&[
-                transition(texture, D3D12_RESOURCE_STATE_COPY_SOURCE, state),
-                transition(
-                    &back,
-                    D3D12_RESOURCE_STATE_COPY_DEST,
-                    D3D12_RESOURCE_STATE_PRESENT,
-                ),
-            ]);
+            if composed {
+                list.ResourceBarrier(&[transition(texture, D3D12_RESOURCE_STATE_COPY_SOURCE, state)]);
+            } else {
+                list.ResourceBarrier(&[
+                    transition(texture, D3D12_RESOURCE_STATE_COPY_SOURCE, state),
+                    transition(
+                        &back,
+                        D3D12_RESOURCE_STATE_COPY_DEST,
+                        D3D12_RESOURCE_STATE_PRESENT,
+                    ),
+                ]);
+            }
             copy.close();
             match slot {
                 Some(i) => {
@@ -8205,6 +8452,8 @@ impl Host {
                 format,
                 copy,
                 ahead: Vec::new(),
+                compose: None,
+                views: Vec::new(),
                 hwnd,
                 meter: Meter::new(),
             })
