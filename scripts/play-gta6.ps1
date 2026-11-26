@@ -70,7 +70,12 @@ if (-not $Defaults) {
     # turned into rainbow glitter on faces and jackets and a red tint on the
     # orange jumpsuits (target dump, run gta6-20261125-173003): cleared, and
     # its radiance given the ambient light (crate::ambient::INJECT).
-    if (-not $env:VILOCITY_ZERO_OUT) { $env:VILOCITY_ZERO_OUT = "CS_CombinedReflections,CS_ScreenProbes_Inject" }
+    # CS_DefragHeap_ComputeRelocations, the title's defragmenter of card
+    # memory, took 230 ms of card time a frame in some launches (timing run
+    # gta6-20261126-011801, against 0 in the others): those launches ran at
+    # 3-5 fps with black faces, a bald dark head and red jumpsuits. Cleared,
+    # it plans no moves; four launches in a row were all fast (7-12 fps).
+    if (-not $env:VILOCITY_ZERO_OUT) { $env:VILOCITY_ZERO_OUT = "CS_CombinedReflections,CS_ScreenProbes_Inject,CS_DefragHeap_ComputeRelocations" }
 }
 
 # One quoted string: the paths hold spaces ("Vilocity project").

@@ -50,18 +50,24 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-26 00:19, game build Series 1.0.2.1
+**Latest test run:** 2026-11-26 01:46, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 30.0 fps |
-| Median frame time | 127 ms |
-| Last frame | 3.3 fps, 307 ms, 4277 draws, 486 dropped without a pipeline |
+| Best frame rate (menus included) | 31.0 fps |
+| Median frame time | 86 ms |
+| Last frame | 11.5 fps, 87 ms, 4291 draws, 462 dropped without a pipeline |
 | Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: the launcher shows the game a Series S by default
+Latest: about half the launches used to fall into a slow mode (3-5 fps,
+black faces, a bald dark head, red jumpsuits): there the title's card
+memory defragmenter, `CS_DefragHeap_ComputeRelocations`, took 230 ms of card
+time a frame. It is cleared now (`VILOCITY_ZERO_OUT`); four launches in a
+row ran fast.
+
+Before that: the launcher shows the game a Series S by default
 (`VILOCITY_CONSOLE`, `-SeriesX` for the old one). The title then renders
 fewer pixels and leaves out the ray-traced and hair-strand passes this
 layer cannot run: about 11 fps instead of 3, rooms lit, the inmate with hair
