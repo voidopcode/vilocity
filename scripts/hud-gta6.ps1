@@ -12,12 +12,13 @@ public class HudWin {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
   public struct RECT { public int L, T, R, B; }
 }
 '@
 $logs = Join-Path $env:LOCALAPPDATA "vilocity\logs"
 $cores = [Environment]::ProcessorCount
-$state = @{ pos = 0L; frame = ""; lastCpu = $null; lastAt = $null; started = Get-Date; seen = $false; log = $Log }
+$state = @{ pos = 0L; frame = ""; lastCpu = $null; lastAt = $null; started = Get-Date; seen = $false; log = $Log; hidden = $false; f8 = $false; front = $false }
 
 function Read-Frame {
     if (-not $state.log) {
@@ -90,8 +91,9 @@ $timer.Add_Tick({
         if (-not [HudWin]::IsIconic($g.MainWindowHandle) -and [HudWin]::GetWindowRect($g.MainWindowHandle, [ref]$r)) {
             $form.Location = New-Object Drawing.Point(($r.R - $form.Width - 10), ($r.T + 36))
         }
-        # Only over the game: hidden while another window is in front.
-        $form.Visible = ([HudWin]::GetForegroundWindow() -eq $g.MainWindowHandle) -and -not [HudWin]::IsIconic($g.MainWindowHandle)
+        # Only over the game: hidden while another window is in front, or after F8.
+        $state.front = ([HudWin]::GetForegroundWindow() -eq $g.MainWindowHandle) -and -not [HudWin]::IsIconic($g.MainWindowHandle)
+        $form.Visible = $state.front -and -not $state.hidden
     } else {
         $form.Visible = $false
     }
@@ -103,4 +105,16 @@ $timer.Add_Tick({
     $label.Text = $text -join "`n"
 })
 $timer.Start()
+# F8 (while the game is in front) hides or shows the panel; read often so a short press counts.
+$keys = New-Object Windows.Forms.Timer
+$keys.Interval = 50
+$keys.Add_Tick({
+    $down = [HudWin]::GetAsyncKeyState(0x77) -lt 0
+    if ($down -and -not $state.f8 -and $state.front) {
+        $state.hidden = -not $state.hidden
+        $form.Visible = -not $state.hidden
+    }
+    $state.f8 = $down
+})
+$keys.Start()
 [Windows.Forms.Application]::Run($form)
