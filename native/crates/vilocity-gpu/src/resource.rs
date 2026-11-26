@@ -1276,6 +1276,14 @@ pub(crate) fn title_fills(this: This) -> bool {
     !this.is_null() && fills(&resource(this).desc)
 }
 
+/// Width and height of 2D texture `this` (`None` for anything else).
+#[cfg(windows)]
+pub(crate) fn texture_side(this: This) -> Option<(u64, u32)> {
+    const TEXTURE_2D: u32 = 3;
+    let r = (!this.is_null()).then(|| resource(this))?;
+    (r.desc.dimension == TEXTURE_2D).then_some((r.desc.width, r.desc.height))
+}
+
 /// Whether `this` is a texture whose host copy is not made yet (and may
 /// still be): a descriptor slot written with a view of it waits
 /// (`crate::descriptor::make_waiting`).

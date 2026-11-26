@@ -21,6 +21,13 @@ $root = Split-Path $PSScriptRoot
 # jumpsuits' orange (run gta6-20261126-001004). Still missing on Series S:
 # the "INMATE" print on the jumpsuit's back.
 if (-not $env:VILOCITY_CONSOLE) { $env:VILOCITY_CONSOLE = if ($SeriesX) { "series-x" } else { "series-s" } }
+# Series S at half internal resolution, upscaled by the title's own upscaler
+# (trustno1-coder/VIctory-NVIDIA, how the 25-32 fps NVIDIA reports run):
+# 84-90 ms against 95-117 ms a frame, picture good (2026-11-26).
+if ($env:VILOCITY_CONSOLE -eq "series-s") {
+    if (-not $env:VILOCITY_RENDER_SCALE) { $env:VILOCITY_RENDER_SCALE = "0.5" }
+    if (-not $env:VILOCITY_OWN_UPSCALER) { $env:VILOCITY_OWN_UPSCALER = "1" }
+}
 $exe = Join-Path $root $(if ($Diag) { "target\diag\vilocity.exe" } else { "target\release\vilocity.exe" })
 $logs = Join-Path $env:LOCALAPPDATA "vilocity\logs"
 New-Item -ItemType Directory -Force $logs | Out-Null

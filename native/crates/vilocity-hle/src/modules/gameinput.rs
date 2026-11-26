@@ -62,7 +62,8 @@ const HISTORY: usize = 256;
 const POLL: Duration = Duration::from_millis(8);
 
 /// The keyboard's stand-in gamepad (virtual key, button); README lists it.
-/// Sticks: W/A/S/D left, I/J/K/L right; triggers Z and C.
+/// Sticks: W/A/S/D left, I/J/K/L right (and the mouse); triggers Z and C (and
+/// the right and left mouse buttons).
 const FALLBACK_BUTTONS: [(u8, u32); 14] = [
     (0x1B, MENU), // Esc
     (0x09, VIEW), // Tab
@@ -113,10 +114,24 @@ trait Source: Send {
     fn keys(&mut self) -> Vec<KeyState>;
     /// Motor speeds: low frequency (left), high frequency (right).
     fn rumble(&mut self, slot: usize, low: u16, high: u16);
+    /// The mouse since the last poll, for the stand-in pad; none by default.
+    fn mouse(&mut self) -> Mouse {
+        Mouse::default()
+    }
 }
 
-fn fallback(keys: &[KeyState]) -> PadState {
-    let on = |vk: u8| {
+/// The mouse as the stand-in pad takes it: a right stick (-1 to 1, up
+/// positive) and its two buttons.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Mouse {
+    look_x: f32,
+    look_y: f32,
+    left: bool,
+    right: bool,
+}
+
+fn fallback(keys: &[KeyState], mouse: Mouse) -> PadState {
+    let on = |vk: u8| -> f32 {
         if keys.iter().any(|k| k.virtual_key == vk) {
             1.0
         } else {
@@ -128,12 +143,13 @@ fn fallback(keys: &[KeyState]) -> PadState {
             .iter()
             .filter(|(vk, _)| on(*vk) != 0.0)
             .fold(0, |all, (_, bit)| all | bit),
-        left_trigger: on(b'Z'),
-        right_trigger: on(b'C'),
+        // The right button aims (left trigger), the left one fires.
+        left_trigger: on(b'Z').max(f32::from(u8::from(mouse.right))),
+        right_trigger: on(b'C').max(f32::from(u8::from(mouse.left))),
         left_x: on(b'D') - on(b'A'),
         left_y: on(b'W') - on(b'S'),
-        right_x: on(b'L') - on(b'J'),
-        right_y: on(b'I') - on(b'K'),
+        right_x: (on(b'L') - on(b'J') + mouse.look_x).clamp(-1.0, 1.0),
+        right_y: (on(b'I') - on(b'K') + mouse.look_y).clamp(-1.0, 1.0),
     }
 }
 
@@ -401,12 +417,12 @@ impl Hub {
 
     /// Reads the host once; device callbacks run on the calling thread.
     fn poll(&self) {
-        let (pads, keys) = {
+        let (pads, keys, mouse) = {
             let mut source = lock(&self.source);
             let pads: [_; PADS] = std::array::from_fn(|slot| source.pad(slot));
-            (pads, source.keys())
+            (pads, source.keys(), source.mouse())
         };
-        let events = self.state().poll(&self.devices, pads, keys);
+        let events = self.state().poll(&self.devices, pads, keys, mouse);
         self.deliver(events);
     }
 
@@ -451,6 +467,7 @@ impl State {
         devices: &[Device; DEVICES],
         pads: [Option<PadState>; PADS],
         keys: Vec<KeyState>,
+        mouse: Mouse,
     ) -> Vec<Event> {
         let now = now();
         let mut events = std::mem::take(&mut self.pending);
@@ -458,7 +475,7 @@ impl State {
         for (slot, pad) in pads.into_iter().enumerate() {
             self.update(devices, slot, pad.map(Value::Pad), now, &mut events);
         }
-        let fallback = (!any_pad).then(|| Value::Pad(fallback(&keys)));
+        let fallback = (!any_pad).then(|| Value::Pad(fallback(&keys, mouse)));
         self.update(devices, FALLBACK, fallback, now, &mut events);
         self.update(devices, KEYBOARD, Some(Value::Keys(keys)), now, &mut events);
         events
@@ -1084,8 +1101,9 @@ mod host {
         XINPUT_GAMEPAD_X, XINPUT_GAMEPAD_Y, XINPUT_STATE, XINPUT_VIBRATION, XInputGetState,
         XInputSetState,
     };
+    use windows_sys::Win32::Foundation::{POINT, RECT};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowThreadProcessId,
+        GetCursorPos, GetForegroundWindow, GetWindowRect, GetWindowThreadProcessId, SetCursorPos,
     };
 
     use super::*;
@@ -1186,6 +1204,44 @@ mod host {
                     ..Default::default()
                 })
                 .collect()
+        }
+
+        /// While the title's window has focus: how far the cursor moved
+        /// since the last poll, as a right stick, after which it is put
+        /// back in the middle of the window (as PC games hold the mouse),
+        /// and the two buttons. `VILOCITY_MOUSE=0`: no mouse;
+        /// `VILOCITY_MOUSE_SENS=<pixels>` a poll's movement that turns the
+        /// stick fully (8 by default; a poll is 8 ms).
+        fn mouse(&mut self) -> Mouse {
+            static SETTINGS: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+            let Some(full) = *SETTINGS.get_or_init(|| {
+                if std::env::var_os("VILOCITY_MOUSE").is_some_and(|v| v == "0") {
+                    return None;
+                }
+                let sens = std::env::var("VILOCITY_MOUSE_SENS").ok().and_then(|v| v.trim().parse::<f32>().ok());
+                Some(sens.filter(|s| *s > 0.0).unwrap_or(8.0))
+            }) else {
+                return Mouse::default();
+            };
+            if !focused() {
+                return Mouse::default();
+            }
+            let (mut at, mut window) = (POINT { x: 0, y: 0 }, RECT { left: 0, top: 0, right: 0, bottom: 0 });
+            // SAFETY: plain queries and a cursor move, on valid out-structs.
+            unsafe {
+                if GetCursorPos(&mut at) == 0 || GetWindowRect(GetForegroundWindow(), &mut window) == 0 {
+                    return Mouse::default();
+                }
+                let (cx, cy) = ((window.left + window.right) / 2, (window.top + window.bottom) / 2);
+                SetCursorPos(cx, cy);
+                Mouse {
+                    look_x: ((at.x - cx) as f32 / full).clamp(-1.0, 1.0),
+                    // screen y grows down, the stick's up
+                    look_y: ((cy - at.y) as f32 / full).clamp(-1.0, 1.0),
+                    left: GetAsyncKeyState(0x01) < 0,
+                    right: GetAsyncKeyState(0x02) < 0,
+                }
+            }
         }
 
         fn rumble(&mut self, slot: usize, low: u16, high: u16) {
@@ -1485,6 +1541,20 @@ mod tests {
         let rest = current(hub, GAMEPAD_KIND, FALLBACK).unwrap();
         assert_eq!(pad(rest), PadState::default());
         release(rest);
+    }
+
+    /// The mouse turns the stand-in pad's right stick (with I/J/K/L, kept
+    /// within -1..1) and its buttons pull the triggers: right aims, left fires.
+    #[test]
+    fn the_mouse_looks_and_fires_through_the_stand_in_pad() {
+        let still = fallback(&[], Mouse::default());
+        assert_eq!((still.right_x, still.right_y, still.left_trigger, still.right_trigger), (0.0, 0.0, 0.0, 0.0));
+        let mouse = Mouse { look_x: 0.5, look_y: -0.25, left: true, right: false };
+        let pad = fallback(&[], mouse);
+        assert_eq!((pad.right_x, pad.right_y, pad.left_trigger, pad.right_trigger), (0.5, -0.25, 0.0, 1.0));
+        // with L held the sum is clamped; the right button aims
+        let both = fallback(&[key(b'L')], Mouse { look_x: 0.75, right: true, ..mouse });
+        assert_eq!((both.right_x, both.left_trigger), (1.0, 1.0));
     }
 
     #[test]

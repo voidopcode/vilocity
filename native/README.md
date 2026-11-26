@@ -73,7 +73,7 @@ The window caption shows the framerate. Saves, settings and `crashes.log`
 are kept under the data folder (default `%LOCALAPPDATA%\vilocity\data`), derived
 data under the cache folder.
 
-Input: XInput pads. With none connected the keyboard is a pad while the
+Input: XInput pads. With none connected the keyboard and mouse are a pad while the
 title's window has focus:
 
 | Keys | Pad |
@@ -84,6 +84,8 @@ title's window has focus:
 | Q / E, Z / C | shoulders, triggers |
 | F / H | stick clicks |
 | Esc, Tab | Menu, View |
+| mouse | right stick (the cursor is held in the window's middle) |
+| left / right mouse button | right / left trigger |
 
 ## Commands
 

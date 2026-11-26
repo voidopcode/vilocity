@@ -68,8 +68,8 @@ thread_local! {
     static STORES: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
     /// While `State::early_textures` runs the texture pass: the
     /// milliseconds and the bytes that run may take, in place of the
-    /// pass's own per frame.
-    static PASS_BUDGET: std::cell::Cell<Option<(u64, u64)>> = const { std::cell::Cell::new(None) };
+    /// pass's own per frame, and whether it is the pass before a bake.
+    static PASS_BUDGET: std::cell::Cell<Option<(u64, u64, bool)>> = const { std::cell::Cell::new(None) };
 }
 
 /// The milliseconds of every frame the pass that uploads textures picked
@@ -99,8 +99,52 @@ fn early_budgets() -> (u64, u64) {
 /// `PS_BakeDecorations_*`), by the first 16 hex digits of their hash as the
 /// frame listings print it. They draw into a 256x256 corner of 2048x2048
 /// targets and name no texture in a table.
-const BAKE_PIXEL_SHADERS: [&str; 4] =
-    ["c0a7fe77b1862e10", "0d1575a396dfe513", "b7cfd8dda91ebb6b", "280967ad158cee0b"];
+/// The last three are further permutations (cool_fox f4b48ad).
+const BAKE_PIXEL_SHADERS: [&str; 7] = [
+    "c0a7fe77b1862e10",
+    "0d1575a396dfe513",
+    "b7cfd8dda91ebb6b",
+    "280967ad158cee0b",
+    "fa455c8a3c32577b",
+    "d126bcae5d5d8d26",
+    "fcee612943c008e0",
+];
+
+/// Geometry stages shared by every ped texture compositor / decoration bake
+/// permutation (`vertex 089d6271be6650ef` fullscreen-triangle ped baker and
+/// `mesh d4111a6e6ea49d91` decoration projection mesh), catching pixel-shader
+/// permutations beyond `BAKE_PIXEL_SHADERS` (cool_fox f4b48ad).
+const BAKE_GEOMETRY_SHADERS: [&str; 2] = ["089d6271be6650ef", "d4111a6e6ea49d91"];
+
+/// Whether a draw is one of the title's one-shot texture bakes: one of its
+/// bake shaders, or a depth-less draw into 4+ targets whose first is a
+/// square of 512 or more (unseen permutations of the same bakes). What such
+/// a draw samples must be on the card before it, or it bakes nothing, once,
+/// for the run (cool_fox f4b48ad `is_bake_draw`).
+fn bake_draw<'a>(
+    mut hashes: impl Iterator<Item = &'a str>,
+    depth: usize,
+    targets: usize,
+    first: Option<(u64, u32)>,
+) -> bool {
+    hashes.any(|h| BAKE_PIXEL_SHADERS.contains(&h) || BAKE_GEOMETRY_SHADERS.contains(&h))
+        || depth == 0 && targets >= 4 && first.is_some_and(|(w, h)| w >= 512 && w == u64::from(h))
+}
+
+/// Whether the pass before a bake also takes the slots due only in the next
+/// few frames ([`BAKE_AHEAD`]: written or mapped a frame or two ago, or
+/// uploaded whole and due for another look), and all that are due, not the
+/// first 4,096 (`VILOCITY_BAKE_EXACT=0`: as the frame's pass, as before).
+/// A bake in between took what the slot held before, and what it bakes
+/// stays for the run (cool_fox / VIctory `VICTORY_BAKE_EXACT`).
+fn bake_exact() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VILOCITY_BAKE_EXACT").is_none_or(|v| v != "0"))
+}
+
+/// Frames ahead the pass before a bake takes slots from ([`bake_exact`]):
+/// at the frame's first bake, and at its later ones.
+const BAKE_AHEAD: [u64; 2] = [12, 2];
 
 /// Since the start: early runs of the texture pass, and those of them
 /// made for a bake draw.
@@ -1593,7 +1637,12 @@ impl State {
             return;
         }
         let bake = bake_ms > 0
-            && p.stages.iter().any(|s| BAKE_PIXEL_SHADERS.contains(&s.shader.hash.as_str()));
+            && bake_draw(
+                p.stages.iter().map(|s| s.shader.hash.as_str()),
+                self.depth,
+                self.targets.len(),
+                self.targets.first().and_then(|&t| crate::resource::texture_side(t as This)),
+            );
         static FRAME: AtomicU64 = AtomicU64::new(u64::MAX);
         // The milliseconds this frame's bake draws have taken so far: a
         // frame has several, and together they get `bake_ms`.
@@ -1638,7 +1687,7 @@ impl State {
             );
         }
         let began = std::time::Instant::now();
-        PASS_BUDGET.set(Some(budget));
+        PASS_BUDGET.set(Some((budget.0, budget.1, bake)));
         self.heap_textures(list, heap, host);
         PASS_BUDGET.set(None);
         if bake {
@@ -1792,7 +1841,17 @@ impl State {
         if room {
             host.texture_slots_waiting(frame);
         }
-        let (due, census) = host.texture_slots_due(frame, 4096);
+        // Before a bake ([`bake_exact`]): all that is due, then what is due
+        // in the next few frames.
+        let baking = bake_exact() && PASS_BUDGET.get().is_some_and(|(_, _, bake)| bake);
+        let (mut due, census) = host.texture_slots_due(frame, if baking { 1 << 16 } else { 4096 });
+        if baking {
+            let known: std::collections::HashSet<u32> = due.iter().map(|&(index, _)| index).collect();
+            static AHEAD: AtomicU64 = AtomicU64::new(u64::MAX);
+            let again = AHEAD.swap(frame, Ordering::Relaxed) == frame;
+            let (ahead, _) = host.texture_slots_due(frame + BAKE_AHEAD[usize::from(again)], 1 << 16);
+            due.extend(ahead.into_iter().filter(|(index, _)| !known.contains(index)));
+        }
         HEAP_TEXTURES_WAITING.store(census[0], Ordering::Relaxed);
         for (count, now) in HEAP_TEXTURES_QUEUE.iter().zip(census) {
             count.store(now, Ordering::Relaxed);
@@ -1840,7 +1899,7 @@ impl State {
         // own: its bytes on top of what the frame has spent so far.
         // (Not `most`: that is the longest wait between looks, used below.)
         let (span, bytes_at_most) = match PASS_BUDGET.get() {
-            Some((ms, bytes)) => {
+            Some((ms, bytes, _)) => {
                 (std::time::Duration::from_millis(ms), SPENT.load(Ordering::Relaxed).saturating_add(bytes))
             }
             None => (span, per_frame),
@@ -3811,6 +3870,29 @@ pub(crate) fn depth_bounds(list: &HostList, min: f32, max: f32) {
     {
         // SAFETY: an open list on a device that supports depth bounds.
         unsafe { l1.OMSetDepthBounds(min, max) };
+    }
+}
+
+#[cfg(test)]
+mod bake_draw_tests {
+    use super::bake_draw;
+
+    #[test]
+    fn bakes_are_known_by_any_stage_or_by_their_targets() {
+        let none = || std::iter::empty::<&str>();
+        // A decoration permutation known by its pixel shader alone (the
+        // one-time bake the pass ran before only for four of them).
+        assert!(bake_draw(["0000000000000000", "fcee612943c008e0"].into_iter(), 1, 1, None));
+        // One known by its shared vertex or mesh stage.
+        assert!(bake_draw(["089d6271be6650ef", "ffffffffffffffff"].into_iter(), 1, 1, None));
+        assert!(bake_draw(["d4111a6e6ea49d91"].into_iter(), 1, 1, None));
+        // Unknown shaders: a depth-less draw into 4+ square targets of 512+.
+        assert!(bake_draw(none(), 0, 4, Some((2048, 2048))));
+        assert!(!bake_draw(none(), 0, 4, Some((2048, 1024))), "not square");
+        assert!(!bake_draw(none(), 0, 4, Some((256, 256))), "too small");
+        assert!(!bake_draw(none(), 0, 3, Some((2048, 2048))), "too few targets");
+        assert!(!bake_draw(none(), 7, 4, Some((2048, 2048))), "has depth: a scene pass");
+        assert!(!bake_draw(none(), 0, 4, None), "first target is no 2D texture");
     }
 }
 
