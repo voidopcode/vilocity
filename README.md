@@ -50,18 +50,23 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-26 19:47, game build Series 1.0.2.1
+**Latest test run:** 2026-11-26 20:04, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 31.5 fps |
-| Median frame time | 34 ms |
-| Last frame | 2.1 fps, 484 ms, 735 draws, 991 dropped without a pipeline |
+| Best frame rate (menus included) | 713.0 fps |
+| Median frame time | 33 ms |
+| Last frame | 2.5 fps, 402 ms, 3639 draws, 2250 dropped without a pipeline |
 | Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: the intro movie plays (the animated title sequence and the Rockstar
+Latest: menus, the start screen and the intro are no longer held to the title's
+30 frames a second (`VILOCITY_MAX_FPS`, the launcher's default 0: no limit; n: at
+most n): the start screen runs at about 700 fps, the intro animation at 95-100,
+and the movie keeps its own pace.
+
+Before that: the intro movie plays (the animated title sequence and the Rockstar
 logo were black): movie frames the title writes with the processor get an upload
 buffer of their own per command list (RyanLockwoood/VIctory-cool_fox-LockWood
 8cc31ab3). From the same fork, the XMA audio fixes (rings that wrap instead of

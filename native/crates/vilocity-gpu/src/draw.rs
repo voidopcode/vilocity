@@ -493,7 +493,12 @@ fn make_picked(
 /// the frame, while the table of strides already called it a buffer. The
 /// ped skinning dispatches pick their vertex buffers so, by an index from
 /// constant data, and drew faces and arms black (VIctory issue 1567).
+/// `VILOCITY_SLOTS_AT_SUBMIT=0`: not done (for measuring its cost).
 pub(crate) fn heap_buffers_written(runs: &[&HostList]) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("VILOCITY_SLOTS_AT_SUBMIT").is_none_or(|v| v != "0")) {
+        return;
+    }
     let Some(list) = runs.iter().find(|l| l.used(PICKS)) else {
         return;
     };

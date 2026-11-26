@@ -104,6 +104,9 @@ if (-not $Defaults) {
     # drew streaks); with today's translator fixes Lucia's hair shows, a long
     # ponytail, no streaks (2026-11-26). VILOCITY_HAIR=0: left out again.
     if (-not $env:VILOCITY_HAIR) { $env:VILOCITY_HAIR = "1" }
+    # Menus, intro and cutscenes are not held to the title's 30 frames a second
+    # (VILOCITY_MAX_FPS=<n>: at most n; unset it for the title's own pace).
+    if ($null -eq $env:VILOCITY_MAX_FPS) { $env:VILOCITY_MAX_FPS = "0" }
     if (-not $env:VILOCITY_ZERO_OUT) { $env:VILOCITY_ZERO_OUT = "CS_CombinedReflections,CS_ScreenProbes_Inject,CS_DefragHeap_ComputeRelocations" }
 }
 

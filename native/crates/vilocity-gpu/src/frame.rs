@@ -49,11 +49,12 @@ pub(crate) extern "system" fn set_interval(
     _period: u32,
     _flags: u32,
 ) -> HRESULT {
-    let interval = match length {
+    let asked = match length {
         0 => SIXTIETH,
         us => Duration::from_micros(u64::from(us)),
     };
-    tracing::info!(?interval, "frame interval");
+    let interval = capped(asked, max_fps());
+    tracing::info!(?asked, ?interval, "frame interval");
     // A new interval starts from now, after the last tick handed out.
     let first = LAST
         .iter()
@@ -66,6 +67,23 @@ pub(crate) extern "system" fn set_interval(
         first,
     });
     S_OK
+}
+
+/// `VILOCITY_MAX_FPS=<n>`: frames come at most `n` times a second instead of
+/// at the title's own interval (30 a second in its menus, intro and
+/// cutscenes); `0`: as fast as they are made. Unset: the title's interval.
+fn max_fps() -> Option<u32> {
+    static FPS: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *FPS.get_or_init(|| std::env::var("VILOCITY_MAX_FPS").ok()?.trim().parse().ok())
+}
+
+/// The interval the clock ticks at: the title's, shortened to `1/fps` s.
+fn capped(asked: Duration, fps: Option<u32>) -> Duration {
+    match fps {
+        None => asked,
+        Some(0) => Duration::from_micros(1),
+        Some(n) => asked.min(Duration::from_secs(1) / n),
+    }
 }
 
 /// Device method: events are scheduled at every tick.
@@ -250,5 +268,19 @@ mod tests {
         // Even when a flip wait begins on the tick another just ended on.
         let (tick, _) = next_tick(FLIP);
         assert!(tick > flips[3]);
+    }
+}
+
+#[cfg(test)]
+mod cap_tests {
+    use super::*;
+
+    #[test]
+    fn max_fps_shortens_the_titles_interval_only() {
+        let thirty = Duration::from_micros(33_333);
+        assert_eq!(capped(thirty, None), thirty);
+        assert_eq!(capped(thirty, Some(0)), Duration::from_micros(1));
+        assert_eq!(capped(thirty, Some(60)), Duration::from_secs(1) / 60);
+        assert_eq!(capped(thirty, Some(20)), thirty);
     }
 }
