@@ -50,18 +50,27 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-26 16:45, game build Series 1.0.2.1
+**Latest test run:** 2026-11-26 17:16, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 30.0 fps |
-| Median frame time | 88 ms |
-| Last frame | 11.5 fps, 87 ms, 4178 draws, 460 dropped without a pipeline |
+| Best frame rate (menus included) | 30.7 fps |
+| Median frame time | 33 ms |
+| Last frame | 1.8 fps, 557 ms, 4280 draws, 673 dropped without a pipeline |
 | Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: in about two launches of three Lucia's hair showed as a flat dark cap,
+Latest: title buffers from 64 KiB up now get copies in the card's memory, compared
+there (`VILOCITY_CARD_BUFFERS_MIN_KB=64`, `VILOCITY_CARD_BUFFERS_MB=2048`, the
+launcher's default; from fxceless/victory-fork c36971b, the setting
+trustno1-coder/VIctory-NVIDIA reports 27-32 fps with): copying back 20-29 ms to
+14-18 ms a frame, picture unchanged. The frame stays at about 86-93 ms: the card
+is now the limit. Ported too, off for now: `VILOCITY_PARALLEL_REFRESH` and
+`VILOCITY_SETTLE_ROOM` (fork ceb9e1f, 06702fe), 8-13 ms less preparing, but one of
+two launches lost the window's frosting and the print, so they wait for more runs.
+
+Before that: in about two launches of three Lucia's hair showed as a flat dark cap,
 her neck black, and the jumpsuit had no "INMATE" print, already wrong in the
 G-buffer's colour. The launcher let texture refreshes run while title memory
 was being remapped (`VILOCITY_TEXTURE_NO_WAIT=1`); a refresh that met a remap

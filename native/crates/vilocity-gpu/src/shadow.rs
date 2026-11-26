@@ -155,8 +155,26 @@ fn card_limits() -> (u64, u64) {
         // the shader writes of the smaller buffers are then found by the
         // card's hashes too, and with that the first room's walls were
         // drawn in every run.
-        (mb("VILOCITY_CARD_BUFFERS_MIN_MB", 1).max(1 << 20), mb("VILOCITY_CARD_BUFFERS_MB", 1024))
+        let least = card_least(
+            std::env::var("VILOCITY_CARD_BUFFERS_MIN_KB").ok().as_deref(),
+            mb("VILOCITY_CARD_BUFFERS_MIN_MB", 1),
+        );
+        (least, mb("VILOCITY_CARD_BUFFERS_MB", 1024))
     })
+}
+
+/// The least size of a card copy, in bytes: `VILOCITY_CARD_BUFFERS_MIN_KB`
+/// (not set by default; port of fxceless c36971b) when it is a number above
+/// 0, so it can go under 1 MiB (64: every title buffer, a copy being rounded
+/// up to 64 KiB); else `min_mb` (bytes), at least 1 MiB. Copies under 1 MiB
+/// are most of the copies but few bytes; in the PC's memory every shader
+/// access to them crosses the bus. Each costs 64 KiB of the card's memory
+/// (twice if shaders write it) and hash/compare passes per submission.
+fn card_least(min_kb: Option<&str>, min_mb: u64) -> u64 {
+    match min_kb.and_then(|v| v.trim().parse::<u64>().ok()) {
+        Some(kib) if kib > 0 => kib << 10,
+        _ => min_mb.max(1 << 20),
+    }
 }
 
 /// Bytes alive of copies' card sides, and of their "before" twins.
@@ -466,7 +484,18 @@ fn card_piece_of(start: usize, len: usize, span: &CardSpan, i: u32) -> (usize, u
 
 #[cfg(test)]
 mod card_tests {
-    use super::{CardSpan, PIECE, card_piece_of, card_span_of, joined, joined_piece_runs};
+    use super::{CardSpan, PIECE, card_least, card_piece_of, card_span_of, joined, joined_piece_runs};
+
+    /// `VILOCITY_CARD_BUFFERS_MIN_KB` goes under 1 MiB; unset, 0 or junk
+    /// leaves the MiB switch, which stays at 1 MiB or more.
+    #[test]
+    fn card_least_takes_kib_under_a_mib() {
+        assert_eq!(card_least(Some("64"), 1 << 20), 64 << 10);
+        assert_eq!(card_least(Some(" 256 "), 16 << 20), 256 << 10);
+        assert_eq!(card_least(None, 16 << 20), 16 << 20);
+        assert_eq!(card_least(Some("0"), 0), 1 << 20);
+        assert_eq!(card_least(Some("x"), 0), 1 << 20);
+    }
 
     /// Joined runs hold every piece of the runs given, once, and no other.
     #[test]

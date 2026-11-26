@@ -53,7 +53,11 @@ if (-not $Defaults) {
     # which some 660 MB are ever made, held 16,000 textures back while the
     # card was half empty (the "INMATE" print, faces in the cutscenes).
     # 1,536 MB: all of them shown, 11 fps (run gta6-20261126-015721).
-    if (-not $env:VILOCITY_CARD_BUFFERS_MB) { $env:VILOCITY_CARD_BUFFERS_MB = "1536" }
+    if (-not $env:VILOCITY_CARD_BUFFERS_MB) { $env:VILOCITY_CARD_BUFFERS_MB = "2048" }
+    # Title buffers from 64 KiB up get card copies too, compared on the card
+    # (fxceless/victory-fork c36971b; trustno1-coder/VIctory-NVIDIA uses 64 / 2048):
+    # copying back 20-29 -> 14-18 ms a frame, picture unchanged (2026-11-26).
+    if (-not $env:VILOCITY_CARD_BUFFERS_MIN_KB) { $env:VILOCITY_CARD_BUFFERS_MIN_KB = "64" }
     # Ray passes trace a structure that is never built and write garbage:
     # rainbow speckles, black walls (list from puffnfresh/rebox's fast.c;
     # 2026-11-25 runs s15/s16: walls lit, fewer speckles without them).

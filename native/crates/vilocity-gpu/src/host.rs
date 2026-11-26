@@ -2494,9 +2494,43 @@ mod relay_tests {
 /// all at once ran the slots out before (run 45).
 fn late_most() -> usize {
     static MOST: OnceLock<usize> = OnceLock::new();
-    *MOST.get_or_init(|| {
+    let most = *MOST.get_or_init(|| {
         std::env::var("VILOCITY_LATE_WAIT_LISTS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(256).max(1)
-    })
+    });
+    if settle_room() { most * 2 } else { most }
+}
+
+/// Whether the flights get twice the room before "lists in the air"
+/// settles them ([`late_most`]) and eight times the changed runs before
+/// the merge under shaders' writes gives up and settles them
+/// ([`stale_under_flights`]) (`VILOCITY_SETTLE_ROOM=1`; off by default;
+/// `alt`: twenty seconds with, twenty without, in turn). After victory-fork
+/// 06702fe (measured there: 11.5 ms less of the preparing thread a frame).
+/// Watch "tables asked, N refused": dynamic slots are held while lists fly.
+fn settle_room() -> bool {
+    static MODE: OnceLock<u8> = OnceLock::new();
+    static LAST: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
+    switch_alt(&MODE, &LAST, "VILOCITY_SETTLE_ROOM")
+}
+
+/// An off-by-default switch read once from `var`: `1` on, `alt` twenty
+/// seconds on, twenty off, in turn (each change said in the log).
+fn switch_alt(mode: &OnceLock<u8>, last: &std::sync::atomic::AtomicU8, var: &str) -> bool {
+    match *mode.get_or_init(|| match std::env::var(var).as_deref() {
+        Ok("1") => 1,
+        Ok("alt") => 2,
+        _ => 0,
+    }) {
+        0 => false,
+        1 => true,
+        _ => {
+            let on = (now_us() / 20_000_000) % 2 == 1;
+            if last.swap(u8::from(on), Ordering::Relaxed) != u8::from(on) {
+                tracing::info!("{var}=alt: {} from now", if on { "ON" } else { "off" });
+            }
+            on
+        }
+    }
 }
 
 /// Whether a submission with bottom-of-pipe writes may fly
@@ -3193,6 +3227,9 @@ fn stale_under_flights(runs: &[&HostList]) -> bool {
             let default = if crate::scatter::get().is_some() { 1 << 22 } else { 512 };
             std::env::var("VILOCITY_MERGE_RUNS").ok().and_then(|v| v.trim().parse::<usize>().ok()).map_or(default, |n| n.clamp(1, 1 << 22))
         });
+        if settle_room() {
+            runs_left = (runs_left * 8).min(1 << 22);
+        }
         return spans.iter().any(|(shadow, from, to)| shadow.merge_under_writes(*from, *to - *from, &mut runs_left));
     }
     spans.iter().any(|(shadow, from, to)| shadow.stale_under_writes(*from, *to - *from))
@@ -7062,7 +7099,14 @@ impl HostList {
                 }
                 Step::Texture(staging) => {
                     if batch.texture_due(staging) {
-                        staging.refresh();
+                        if parallel_refresh() {
+                            // Checked with the others of the batch, several at
+                            // a time, before our next title write or flush.
+                            let staging = staging.clone();
+                            batch.due_textures.push(Box::new(move || staging.refresh()));
+                        } else {
+                            staging.refresh();
+                        }
                     }
                     continue;
                 }
@@ -7088,6 +7132,23 @@ impl HostList {
 fn wide_refresh() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("VILOCITY_WIDE_REFRESH").is_some_and(|v| v == "1"))
+}
+
+/// Whether a submission's texture checks (`crate::texture::Staging::refresh`:
+/// the write watch or guards asked, then the memory hashed and detiled if
+/// it may have changed) are gathered between writes of ours and run on the
+/// helper threads side by side (`VILOCITY_PARALLEL_REFRESH=1`; off by
+/// default; `alt`: twenty seconds with, twenty without, in turn). After
+/// victory-fork ceb9e1f (measured there: 8.7-9.4 ms less of the preparing
+/// thread a frame). Pairs with [`wide_refresh`] for the buffers' copies.
+///
+/// What changes: a texture's check moves from its step to our next title
+/// write or flush, so it reads title memory a little later in the
+/// preparing, never after a write of ours that its lists come before.
+fn parallel_refresh() -> bool {
+    static MODE: OnceLock<u8> = OnceLock::new();
+    static LAST: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
+    switch_alt(&MODE, &LAST, "VILOCITY_PARALLEL_REFRESH")
 }
 
 /// Whether a range of a host copy brought up to date in a submission is
@@ -7137,6 +7198,9 @@ struct Batch {
     current: std::collections::HashMap<usize, (std::sync::Arc<crate::shadow::Shadow>, usize, usize)>,
     /// Staging buffers (by address) refreshed since the last title write.
     textures: std::collections::HashSet<usize>,
+    /// With [`parallel_refresh`]: texture checks due, not run yet
+    /// ([`Batch::check_textures`]).
+    due_textures: Vec<Box<dyn FnOnce() + Send>>,
 }
 
 impl Batch {
@@ -7225,6 +7289,7 @@ impl Batch {
     /// Before a step that writes title memory: pending refreshes are done
     /// first, and textures are checked again after it.
     fn title_written(&mut self) {
+        self.check_textures();
         self.flush();
         self.textures.clear();
         // Where it writes is not known: no copy counts as up to date.
@@ -7236,6 +7301,7 @@ impl Batch {
     /// in this submission that holds some of those bytes, the larger part
     /// beside them stays so.
     fn title_wrote(&mut self, at: usize, len: usize) {
+        self.check_textures();
         self.flush();
         self.textures.clear();
         let end = at + len;
@@ -7254,7 +7320,29 @@ impl Batch {
         });
     }
 
+    /// With [`parallel_refresh`]: runs the texture checks due on the helper
+    /// threads (`crate::shadow::wide_run`), all done before it returns. Each
+    /// check takes its texture's own lock; the hashing and detiling go side
+    /// by side. "textures N ms" counts the time taken, not the threads' sum.
+    fn check_textures(&mut self) {
+        let mut due = std::mem::take(&mut self.due_textures);
+        if due.len() < 2 {
+            if let Some(check) = due.pop() {
+                check();
+            }
+            return;
+        }
+        let started = std::time::Instant::now();
+        let before = PREPARING[2].load(Ordering::Relaxed);
+        crate::shadow::wide_run(due);
+        let summed = PREPARING[2].load(Ordering::Relaxed).saturating_sub(before);
+        let over = summed.saturating_sub(started.elapsed().as_micros() as u64);
+        PREPARING[2].fetch_sub(over, Ordering::Relaxed);
+        crate::framelog::sub(crate::framelog::T::RefreshUs, over);
+    }
+
     fn flush(&mut self) {
+        self.check_textures();
         self.index.clear();
         // One write-watch asking for the copies that lie close together,
         // not one per copy.
@@ -8598,6 +8686,33 @@ mod batch {   // Batch::texture_due lives here; `mod tests` is already taken at 
         // A fresh submission starts over.
         let mut next = Batch::default();
         assert!(next.texture_due(&a));
+    }
+
+    #[test]
+    fn due_texture_checks_run_before_title_writes_and_flush() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        let ran = Arc::new(AtomicUsize::new(0));
+        let mut batch = Batch::default();
+        let due = |batch: &mut Batch, n: usize| {
+            for _ in 0..n {
+                let ran = ran.clone();
+                batch.due_textures.push(Box::new(move || {
+                    ran.fetch_add(1, SeqCst);
+                }));
+            }
+        };
+        // Several at once go to the helper threads, all done on return.
+        due(&mut batch, 5);
+        batch.title_written();
+        assert_eq!(ran.load(SeqCst), 5);
+        assert!(batch.due_textures.is_empty());
+        due(&mut batch, 1);
+        batch.title_wrote(0x1000, 16);
+        assert_eq!(ran.load(SeqCst), 6);
+        due(&mut batch, 3);
+        batch.flush();
+        assert_eq!(ran.load(SeqCst), 9);
+        assert!(batch.due_textures.is_empty());
     }
 
     /// The hashing a submission does for textures in physical-page memory,
