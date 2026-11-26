@@ -47,8 +47,18 @@ pub(crate) fn listed(n: u64) -> bool {
     });
     let first = WORLD.load(std::sync::atomic::Ordering::Relaxed);
     let after = n.wrapping_sub(first);
-    named || first != u64::MAX && ([2, 6, 30, 80].contains(&after) || also.contains(&after))
+    let timed = TIMED.load(std::sync::atomic::Ordering::Relaxed);
+    named
+        || timed != u64::MAX && (n == timed || n == timed + 1)
+        || first != u64::MAX && ([2, 6, 30, 80].contains(&after) || also.contains(&after))
 }
+
+/// `VILOCITY_CAPTURE_WORLD_SECONDS=<s>`: two frames s seconds after the world's first
+/// frame are captured too. Frame numbers land on different shots from launch to launch
+/// (each runs at its own pace); a time well past the opening cutscene lands in the
+/// same place (the prologue's cell) every time, so launches can be compared.
+static TIMED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+static WORLD_AT: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
 /// With a capture folder, for the frames [`listed`]: `what` is added to
 /// the frame's `frame-<n>-ops.txt`, one line per draw, dispatch, copy or
@@ -144,10 +154,12 @@ pub(crate) fn frame_drew(frame: u64, drawn: u64) {
     use std::sync::atomic::Ordering::Relaxed;
     static LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let before = LAST.swap(drawn, Relaxed);
+    timed_capture(frame);
     if world_on()
         && drawn.saturating_sub(before) >= 500
         && WORLD.compare_exchange(u64::MAX, frame, Relaxed, Relaxed).is_ok()
     {
+        let _ = WORLD_AT.set(std::time::Instant::now());
         tracing::info!(frame, "the first frame of 500 draws or more: frames {} and {} are captured", frame + 2, frame + 6);
         #[cfg(feature = "diagnostics")]
         if let Some(folder) = folder() {
@@ -155,6 +167,22 @@ pub(crate) fn frame_drew(frame: u64, drawn: u64) {
             let _ = std::fs::write(folder.join("before-world-ops.txt"), lines.join("
 "));
         }
+    }
+}
+
+/// At each present: the frames `VILOCITY_CAPTURE_WORLD_SECONDS` asks for, once the time has come.
+fn timed_capture(frame: u64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    static SECONDS: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    let Some(secs) = *SECONDS.get_or_init(|| {
+        std::env::var("VILOCITY_CAPTURE_WORLD_SECONDS").ok().and_then(|v| v.trim().parse().ok())
+    }) else {
+        return;
+    };
+    if WORLD_AT.get().is_some_and(|at| at.elapsed().as_secs() >= secs)
+        && TIMED.compare_exchange(u64::MAX, frame + 2, Relaxed, Relaxed).is_ok()
+    {
+        tracing::info!(frame = frame + 2, secs, "frames captured at VILOCITY_CAPTURE_WORLD_SECONDS");
     }
 }
 
