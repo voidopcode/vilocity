@@ -50,18 +50,26 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-26 14:07, game build Series 1.0.2.1
+**Latest test run:** 2026-11-26 16:45, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
 | Best frame rate (menus included) | 30.0 fps |
-| Median frame time | 91 ms |
-| Last frame | 9.7 fps, 103 ms, 4193 draws, 466 dropped without a pipeline |
+| Median frame time | 88 ms |
+| Last frame | 11.5 fps, 87 ms, 4178 draws, 460 dropped without a pipeline |
 | Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: 16-bit typed buffer reads and writes through integer views
+Latest: in about two launches of three Lucia's hair showed as a flat dark cap,
+her neck black, and the jumpsuit had no "INMATE" print, already wrong in the
+G-buffer's colour. The launcher let texture refreshes run while title memory
+was being remapped (`VILOCITY_TEXTURE_NO_WAIT=1`); a refresh that met a remap
+read nothing and the texture kept zeros for the rest of the run. It now waits
+(`0`, as fxceless/victory-fork issue #923 found): hair in 4 of 4 cell captures,
+the print in 2 of 4, at the same frame rate. The print still misses sometimes.
+
+Before that: 16-bit typed buffer reads and writes through integer views
 (`buffer_load_format_d16_*` on R16_UINT) were converted as half floats: the
 face network that moves mouths read zeros. They now keep their bits (ported
 from fxceless/victory-fork PR #927; a GPU test checks loads and stores).

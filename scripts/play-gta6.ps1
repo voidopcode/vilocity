@@ -32,7 +32,11 @@ if (-not $Defaults) {
     $env:VILOCITY_ASYNC_SUBMIT = "1"     # submissions sent by a thread of our own
     $env:VILOCITY_QUEUE2 = "1"           # read-backs on a copy queue
     $env:VILOCITY_INDIRECT_WINDOW = "1"  # cheaper indirect draws
-    $env:VILOCITY_TEXTURE_NO_WAIT = "1"  # texture refreshes do not wait for remaps
+    # Texture refreshes wait for title memory to hold still (0). With 1 a refresh
+    # that met a remap read nothing and the texture kept zeros for the run: Lucia's
+    # hair a flat dark cap, neck black, no "INMATE" print in about 2 launches of 3
+    # (fxceless/victory-fork #923; hair in 4 of 4 cell captures with 0, same fps).
+    if (-not $env:VILOCITY_TEXTURE_NO_WAIT) { $env:VILOCITY_TEXTURE_NO_WAIT = "0" }
     $env:VILOCITY_COPY_PLAIN = "1"       # title memory copied in place (fork 0b0074e: 145 -> 124 ms at 4,500 draws)
     # 4.7 GB of the card's copies spilled into PC memory; levels the title
     # does not hold take no card memory with this (the fork: 2-3 GB saved).
