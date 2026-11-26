@@ -303,6 +303,11 @@ pub struct HostShader {
     pub root_uavs: Vec<u8>,
     /// Heap descriptors that can be selected from root state at bind time.
     pub root_indexed_views: Vec<crate::resource::RootIndexedView>,
+    /// Ported from Op-lite/victory-scarlett (GPL-3.0), fxceless #927: table places (root
+    /// parameter, dword in the table) the shader moves 16-bit halves through as unsigned
+    /// integers; the host shows a 16-bit float or signed buffer view there as its unsigned
+    /// twin (`descriptor::host::half_view`). `VILOCITY_HALF_VIEWS=0`: none.
+    pub half_views: Vec<(u8, u32)>,
 }
 
 impl HostShader {
@@ -851,6 +856,7 @@ fn host_shader(stage: HwStage, l: lower::Lowered, res: &resource::Resources) -> 
         root_srvs: l.root_srvs,
         root_uavs: l.root_uavs,
         root_indexed_views: res.root_indexed_views.clone(),
+        half_views: l.half_views,
     }
 }
 
@@ -1360,6 +1366,7 @@ mod tests {
             root_srvs: Vec::new(),
             root_uavs: Vec::new(),
             root_indexed_views: Vec::new(),
+            half_views: Vec::new(),
         };
         let file = |var: &str, stage| {
             std::env::var(var).ok().map(|p| super::HostShader {
@@ -1372,6 +1379,7 @@ mod tests {
                 root_srvs: Vec::new(),
                 root_uavs: Vec::new(),
                 root_indexed_views: Vec::new(),
+                half_views: Vec::new(),
             })
         };
         let ps = file("VILOCITY_REF_PS", crate::HwStage::Ps).unwrap_or(ps);
@@ -1840,6 +1848,7 @@ mod tests {
                 root_srvs: l.root_srvs,
                 root_uavs: l.root_uavs,
                 root_indexed_views: Vec::new(),
+                half_views: Vec::new(),
             };
             let (root, pso) = host.compute_pipeline(&cs).unwrap();
             let inputs: Vec<u32> = [

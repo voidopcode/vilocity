@@ -142,10 +142,18 @@ pub fn run(exe: &Path, args: &[OsString], grants: &[Grant], env: &[(&str, OsStri
         }
         ResumeThread(pi.hThread);
         CloseHandle(pi.hThread);
+        // The cursor clip the sandbox may not do itself.
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let clip = {
+            let (pid, done) = (pi.dwProcessId, done.clone());
+            std::thread::spawn(move || crate::mouseclip::watch(pid, done))
+        };
         let mut code = 1u32;
         if WaitForSingleObject(pi.hProcess, INFINITE) == WAIT_OBJECT_0 {
             GetExitCodeProcess(pi.hProcess, &mut code);
         }
+        done.store(true, std::sync::atomic::Ordering::Relaxed);
+        let _ = clip.join();
         CloseHandle(pi.hProcess);
         // A title that relaunched itself goes on in a new process of the job.
         // shortcut: polls twice a second; a completion port would wake at once.

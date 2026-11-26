@@ -113,6 +113,7 @@ fn build(words: &[u32]) -> Result<HostShader, crate::ShaderError> {
         root_srvs: lowered.root_srvs,
         root_uavs: lowered.root_uavs,
         root_indexed_views: Vec::new(),
+        half_views: Vec::new(),
     })
 }
 
@@ -441,4 +442,65 @@ fn ordered_pixel_sections_use_rasterizer_ordered_views() {
         panic!("translated a collision id outside an ordered section");
     };
     assert_eq!(what, "a hardware SGPR input");
+}
+
+/// Ported from Op-lite/victory-scarlett (GPL-3.0), Neptune 25fbf69 (`VILOCITY_NAN_GUARD`): a
+/// pixel program's float colour export (a NaN here) is guarded, which adds code that validates;
+/// with the switch off it is as before.
+#[test]
+fn colour_exports_are_nan_guarded() {
+    let code: [u32; 5] = [
+        0x7E00_02FF,
+        0x7FC0_0000, // v_mov_b32 v0, NaN
+        0xF800_180F,
+        0x0000_0000, // exp mrt0 v0, v0, v0, v0 done vm
+        0xBF81_0000, // s_endpgm
+    ];
+    let native = NativeProgram {
+        stage: HwStage::Ps,
+        wave64: true,
+        vgprs: 8,
+        layout: Vec::new(),
+        used: Vec::new(),
+        io: StageIo::Ps { inputs: Vec::new(), input_addr: 0, db_shader_control: 0, patches: Vec::new() },
+        code: code.iter().flat_map(|w| w.to_le_bytes()).collect(),
+    };
+    let target = super::container::SigElement {
+        name: "SV_Target".into(),
+        index: 0,
+        kind: 16,
+        comp: 9,
+        interp: 0,
+        row: Some(0),
+        col: 0,
+        cols: 4,
+        usage: 0,
+        half: false,
+    };
+    let with = |guard: bool| {
+        let p = ir::build(&native.code, native.wave64, native.vgprs).expect("ir::build");
+        let st = structure::structure(&p).expect("structure");
+        let res = resource::track(&p, &native.layout, native.stage, Some(&st)).expect("track");
+        let io = io::raise(&p, &native).expect("io::raise");
+        lower::TEST_NAN_GUARD.set(Some(guard));
+        let l = lower::lower(&lower::Parts {
+            native: &native,
+            p: &p,
+            st: &st,
+            io: &io,
+            res: &res,
+            inputs: Vec::new(),
+            outputs: vec![target.clone()],
+            prims: Vec::new(),
+            mesh_stride: 0,
+            split: false,
+        });
+        lower::TEST_NAN_GUARD.set(None);
+        l.expect("lower").dxil
+    };
+    let (on, off) = (with(true), with(false));
+    assert!(on.len() > off.len(), "the guard adds code: {} vs {} bytes", on.len(), off.len());
+    if let Ok(mut v) = validator::Validator::load(validator::Validator::default_path().as_deref()) {
+        v.validate(&mut on.clone()).expect("DXIL validation failed");
+    }
 }

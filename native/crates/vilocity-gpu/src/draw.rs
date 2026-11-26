@@ -645,6 +645,34 @@ fn view_limit(left: u64) -> u32 {
     (left.saturating_sub(16).min(u64::from(u32::MAX)) as u32) & !3
 }
 
+// Ported from kelvaroq patch 0038-direct-constants (GPL-3.0, victory-fork lineage).
+/// Whether a table's constant view is bound on the host copy of the title
+/// memory it names, read when the draw runs in the queue's order, instead
+/// of filled into upload memory at submission (`VILOCITY_DIRECT_CONSTANTS=1`;
+/// off by default). A view not on 256 bytes in the copy, or whose rounded
+/// size runs past the copy's end, is filled as before.
+fn direct_constants() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VILOCITY_DIRECT_CONSTANTS").is_some_and(|v| v == "1"))
+}
+
+/// The host GPU address a table's constant view of `size` bytes at title
+/// address `address` reads on the title memory's host copy, with the range
+/// refreshed before the list runs; `None`: it is filled ([`direct_constants`]).
+fn direct_constant(list: &HostList, address: u64, size: u32) -> Option<u64> {
+    if !direct_constants() || size > 1 << 16 {
+        return None;
+    }
+    let shadow = crate::shadow::find(address, u64::from(size))?;
+    let gpu = shadow.gpu(address);
+    let rounded = u64::from(size.next_multiple_of(256));
+    if !gpu.is_multiple_of(256) || shadow.left(address) < rounded {
+        return None;
+    }
+    shadow.refresh(list, address, rounded);
+    Some(gpu)
+}
+
 /// The host address of a root view: its buffer's host copy, or for a
 /// constant buffer not 256-byte aligned there (the console needs 16) a
 /// copy in upload memory.
@@ -1199,7 +1227,7 @@ impl State {
         for stage in &p.stages {
             let t = stage.translated();
             STORES.set(t.stores);
-            let made = self.tables(list, &t.used, &t.host.root_indexed_views, compute);
+            let made = self.tables(list, &t.used, &t.host.root_indexed_views, &t.host.half_views, compute);
             STORES.set(true);
             if made.iter().any(|m| m.1 == u32::MAX) {
                 once!("a draw whose descriptor table found no free slots is dropped");
@@ -2800,6 +2828,7 @@ impl State {
         list: &HostList,
         used: &[UsedResource],
         indexed: &[RootIndexedView],
+        half: &[(u8, u32)],
         compute: bool,
     ) -> Vec<(u8, u32)> {
         let tables = |u: &&UsedResource| u.root == RootType::Table;
@@ -2828,6 +2857,20 @@ impl State {
             };
             if index >= host.count() {
                 fresh.push(u.slot);
+            }
+        }
+        // Ported from Op-lite/victory-scarlett (GPL-3.0), fxceless #927: a table with a 16-bit
+        // float or signed buffer view at a place the shader moves halves through is made afresh
+        // too, with that view in the unsigned format of the same layout
+        // (`descriptor::host::half_view`); the title's own slot keeps the title's format.
+        for &(slot, at) in half {
+            let Some(&Root::Table(table)) = self.roots_ref(compute).get(usize::from(slot)) else {
+                continue;
+            };
+            if crate::descriptor::view(table + u64::from(at) * 4)
+                .is_some_and(|view| crate::descriptor::host::half_view(&view).is_some())
+            {
+                fresh.push(slot);
             }
         }
         fresh.sort_unstable();
@@ -2895,6 +2938,8 @@ impl State {
                     // SAFETY: a descriptor slot in title memory.
                     unsafe { (at as *const [u32; 3]).read_unaligned() }.hash(&mut h);
                 }
+                // (fxceless #927, ported) A table made with unsigned twins is another table.
+                half.iter().any(|&(s, _)| s == slot).hash(&mut h);
                 (table, n, h.finish())
             };
             if let Some(&first) = self.fresh_tables.get(&key) {
@@ -2942,6 +2987,11 @@ impl State {
                             host.constant_at(index, 0, 0);
                             continue;
                         }
+                        // Ported from kelvaroq patch 0038-direct-constants.
+                        if let Some(gpu) = direct_constant(list, address, size) {
+                            host.constant_at(index, gpu, size);
+                            continue;
+                        }
                         let Some((gpu, to)) = list.scratch(u64::from(size)) else {
                             host.make_null(index);
                             continue;
@@ -2950,7 +3000,12 @@ impl State {
                         host.constant_at(index, gpu, size);
                     }
                     Some(view) => {
-                        host.make_at(index, &view);
+                        // (fxceless #927, ported) The unsigned twin where the shader moves halves.
+                        let twin = half
+                            .contains(&(slot, k * 8))
+                            .then(|| crate::descriptor::host::half_view(&view))
+                            .flatten();
+                        host.make_at(index, twin.as_ref().unwrap_or(&view));
                         let kind = used.map(|u| u.kind).or_else(|| {
                             selected.binary_search(&k).ok().and_then(|_| view_kind(&view))
                         });

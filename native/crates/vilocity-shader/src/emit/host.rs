@@ -779,6 +779,7 @@ fn fmad_probe() -> Result<HostShader, crate::ShaderError> {
         root_srvs: lowered.root_srvs,
         root_uavs: lowered.root_uavs,
         root_indexed_views: Vec::new(),
+        half_views: Vec::new(),
     })
 }
 
@@ -873,6 +874,7 @@ fn stub(pixel: bool, outputs: Vec<SigElement>) -> HostShader {
         root_srvs: Vec::new(),
         root_uavs: Vec::new(),
         root_indexed_views: Vec::new(),
+        half_views: Vec::new(),
     }
 }
 

@@ -718,6 +718,49 @@ pub(crate) fn is_texture_view(view: &View) -> bool {
     }
 }
 
+/// Ported from Op-lite/victory-scarlett (GPL-3.0), fxceless #927 via trustno1 77e13a9.
+/// The unsigned integer format with the layout of a 16-bit float or signed
+/// integer format (one, two or four channels), if `format` is one.
+pub(crate) fn half_format(format: u32) -> Option<u32> {
+    match format {
+        // R16G16B16A16_FLOAT and _SINT: R16G16B16A16_UINT.
+        10 | 14 => Some(12),
+        // R16G16_FLOAT and _SINT: R16G16_UINT.
+        34 | 38 => Some(36),
+        // R16_FLOAT and _SINT: R16_UINT.
+        54 | 59 => Some(57),
+        _ => None,
+    }
+}
+
+/// Ported from Op-lite/victory-scarlett (GPL-3.0), fxceless #927.
+/// `view` as a shader is shown it where it moves a buffer's 16-bit channels
+/// as unsigned integers (`vilocity_shader::emit::HostShader::half_views`): a
+/// buffer view in a 16-bit float or signed format, in the unsigned format of
+/// the same layout, through which every 16-bit pattern is read and stored as
+/// it is. `None` for every other view: the title's own serves.
+pub(crate) fn half_view(view: &View) -> Option<View> {
+    const BUFFER: u32 = 1;
+    match view {
+        View::Shader(resource, Some(desc)) if desc[1] == BUFFER => {
+            let mut desc = *desc;
+            desc[0] = half_format(desc[0])?;
+            Some(View::Shader(*resource, Some(desc)))
+        }
+        View::Unordered(resource, counter, Some(desc)) if desc[1] == BUFFER => {
+            let mut desc = *desc;
+            desc[0] = half_format(desc[0])?;
+            Some(View::Unordered(*resource, *counter, Some(desc)))
+        }
+        View::Placed(unordered, resource, desc) if resource[0] == BUFFER && desc[1] == BUFFER => {
+            let mut desc = *desc;
+            desc[0] = half_format(desc[0])?;
+            Some(View::Placed(*unordered, *resource, desc))
+        }
+        _ => None,
+    }
+}
+
 /// Buffer views left null because the host would refuse them
 /// ([`buffer_view_ok`]), since the start.
 pub(crate) static REFUSED_VIEWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -3182,6 +3225,29 @@ mod tests {
         assert_eq!(dimension(None), D3D12_UAV_DIMENSION_TEXTURE2D);
         // Multisampled UAVs need a cap; they stay 2D.
         assert_eq!(dimension(Some(6)), D3D12_UAV_DIMENSION_TEXTURE2D);
+    }
+
+    /// Ported from Op-lite/victory-scarlett (GPL-3.0), fxceless #927: the unsigned twin of a
+    /// 16-bit float or signed format has its layout, and only buffer views in such a format
+    /// are shown as another view.
+    #[test]
+    fn only_16_bit_float_and_signed_buffer_views_get_an_unsigned_twin() {
+        for (format, unsigned) in [(10, 12), (14, 12), (34, 36), (38, 36), (54, 57), (59, 57)] {
+            assert_eq!(half_format(format), Some(unsigned));
+        }
+        for other in [0, 12, 36, 57, 11, 13, 35, 37, 56, 58, 42, 17, 30, 61] {
+            assert_eq!(half_format(other), None, "format {other}");
+        }
+        const BUFFER: u32 = 1;
+        let words = |format: u32, dimension: u32| [format, dimension, 5768, 0, 0, 0, 64, 0, 0, 0];
+        assert_eq!(
+            half_view(&View::Unordered(7, 0, Some(words(10, BUFFER)))),
+            Some(View::Unordered(7, 0, Some(words(12, BUFFER))))
+        );
+        assert_eq!(half_view(&View::Shader(7, Some(words(54, BUFFER)))), Some(View::Shader(7, Some(words(57, BUFFER)))));
+        assert_eq!(half_view(&View::Unordered(7, 0, Some(words(12, BUFFER)))), None);
+        assert_eq!(half_view(&View::Unordered(7, 0, Some(words(10, 4)))), None);
+        assert_eq!(half_view(&View::Shader(7, None)), None);
     }
 
     /// What the texture code asks of the spans (levels on demand): where

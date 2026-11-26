@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
 #[cfg(windows)]
+mod mouseclip;
+#[cfg(windows)]
 mod sandbox;
 
 const HELP: &str = "\

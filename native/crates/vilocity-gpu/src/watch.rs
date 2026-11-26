@@ -54,6 +54,7 @@ pub(crate) fn track(start: usize, len: usize, views: bool) -> Option<Tracked> {
     })
 }
 
+#[derive(Default)]
 struct Journal {
     /// Numbers the askings; 0 is "never".
     asked: u64,
@@ -65,6 +66,9 @@ struct Journal {
     /// and the asking that did: `writes` answers for a range inside one
     /// from the journal, without another kernel call.
     ahead: Vec<(usize, usize)>,
+    /// `ahead` has both starts and ends in increasing order
+    /// ([`ask_reservations`]): [`cached`] looks it up by halves.
+    ordered: bool,
     ahead_asked: u64,
     /// The ahead asking stands for a whole submission ([`ask_once`]): no
     /// other ahead asking is made, and `ahead` stays, until
@@ -77,6 +81,7 @@ static JOURNAL: Mutex<Journal> = Mutex::new(Journal {
     written: BTreeMap::new(),
     found: Vec::new(),
     ahead: Vec::new(),
+    ordered: false,
     ahead_asked: 0,
     kept: false,
 });
@@ -126,6 +131,7 @@ pub(crate) fn ask_ahead(ranges: &[(usize, usize)]) {
     j.asked += 1;
     j.ahead_asked = j.asked;
     j.ahead.clear();
+    j.ordered = false;
     let mut i = 0;
     while i < pieces.len() {
         let first = pieces[i].0;
@@ -214,9 +220,16 @@ pub(crate) fn ask_once(ranges: &[(usize, usize)]) {
         return;
     }
     ask_once_end();
+    if by_reservation() {
+        let pieces = sorted_pages(ranges);
+        let mut j = JOURNAL.lock().unwrap_or_else(|e| e.into_inner());
+        ask_reservations(&mut j, &pieces);
+        return;
+    }
     ask_ahead(ranges);
     let mut j = JOURNAL.lock().unwrap_or_else(|e| e.into_inner());
     let j = &mut *j;
+    j.ordered = false;
     if j.ahead.is_empty() {
         // `ask_ahead` asked nothing (fewer than two ranges).
         j.asked += 1;
@@ -248,6 +261,128 @@ pub(crate) fn ask_once(ranges: &[(usize, usize)]) {
     j.kept = !j.ahead.is_empty();
 }
 
+// Ported from kelvaroq patch 0045-watch-reservation (GPL-3.0, victory-fork lineage).
+/// With `VILOCITY_WATCH_RESERVATION=1` (off by default) a submission's one
+/// asking ([`ask_once`]) is one kernel call per run of ranges within one
+/// reservation, instead of distance-based runs, recursive splits on failure
+/// and single ranges asked again.
+fn by_reservation() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VILOCITY_WATCH_RESERVATION").is_some_and(|v| v == "1"))
+}
+
+/// Non-empty ranges as page ranges, sorted.
+fn sorted_pages(ranges: &[(usize, usize)]) -> Vec<(usize, usize)> {
+    let mut pieces: Vec<_> = ranges
+        .iter()
+        .filter(|r| r.0 < r.1)
+        .map(|&(start, end)| (start / PAGE, end.div_ceil(PAGE)))
+        .collect();
+    pieces.sort_unstable();
+    pieces
+}
+
+/// The end page of the allocation holding page `first`, and whether it is
+/// private memory (a reservation, not a mapped view).
+fn reservation(first: usize) -> Option<(usize, bool)> {
+    use windows_sys::Win32::System::Memory::{
+        MemoryRegionInfo, QueryVirtualMemoryInformation, WIN32_MEMORY_REGION_INFORMATION,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    // SAFETY: plain data; all zeros is a valid value.
+    let mut info: WIN32_MEMORY_REGION_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: the query takes an address as input and fills our structure.
+    let ok = unsafe {
+        QueryVirtualMemoryInformation(
+            GetCurrentProcess(),
+            (first * PAGE) as *const _,
+            MemoryRegionInfo,
+            (&raw mut info).cast(),
+            size_of_val(&info),
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        return None;
+    }
+    let end = (info.AllocationBase as usize).checked_add(info.RegionSize)? / PAGE;
+    // SAFETY: the successful query filled the flags; bit zero is Private.
+    Some((end, unsafe { info.Anonymous.Flags } & 1 != 0))
+}
+
+/// Beyond [`AHEAD_GAP`], join only substantial neighbours: two tiny copies
+/// far apart should not walk a GiB of page tables.
+fn can_join(first: usize, last: usize, (start, end): (usize, usize)) -> bool {
+    last.max(end) - first <= AHEAD_MAX
+        && start.saturating_sub(last) <= AHEAD_GAP.max((last - first).min(end - start))
+}
+
+/// [`ask_once`] by reservation: sorted `pieces` joined while they stay in
+/// one allocation, one read-and-reset each. Every returned page is
+/// journalled, but only requested pieces are answered from the journal.
+fn ask_reservations(j: &mut Journal, mut pieces: &[(usize, usize)]) {
+    j.asked += 1;
+    j.ahead_asked = j.asked;
+    j.ahead.clear();
+    j.ordered = true;
+    j.kept = !pieces.is_empty();
+    let mut allocation = None;
+    while let Some(&(first, end)) = pieces.first() {
+        if allocation.is_none_or(|(limit, _)| first >= limit) {
+            // An isolated piece already takes one call: query its boundary
+            // only to join neighbours or to avoid a failed asking on a view.
+            let neighbour = pieces.get(1).is_some_and(|&next| can_join(first, end, next));
+            allocation = if neighbour || known_view(first * PAGE) { reservation(first) } else { None };
+        }
+        let (limit, private) = allocation.unwrap_or((end, true));
+        let mut last = end;
+        let mut n = 1;
+        while let Some(&next) = pieces.get(n) {
+            if last > limit || next.1 > limit || !can_join(first, last, next) {
+                break;
+            }
+            last = last.max(next.1);
+            n += 1;
+        }
+        if (private || force_view_ask()) && ask_kernel(j, first, last) {
+            keep_requested(&mut j.ahead, &pieces[..n]);
+        }
+        // Failed: nothing cached for this group; `writes` asks per range.
+        pieces = &pieces[n..];
+    }
+}
+
+/// Starts arrive in order. Keep ends in order too, so [`cached`] can find a
+/// piece by halves. Touching requests share an entry only within one call.
+fn keep_requested(ahead: &mut Vec<(usize, usize)>, pieces: &[(usize, usize)]) {
+    let mut same_call = false;
+    for &(start, end) in pieces {
+        if let Some((_, last)) = ahead.last_mut() {
+            if end <= *last {
+                continue;
+            }
+            if same_call && start <= *last {
+                *last = end;
+                continue;
+            }
+        }
+        ahead.push((start, end));
+        same_call = true;
+    }
+}
+
+/// The journal's answer for pages `[first, last)` if they lie in one range
+/// asked ahead.
+fn cached(j: &Journal, first: usize, last: usize) -> Option<(u64, Vec<(usize, u64)>)> {
+    let covered = if j.ordered {
+        let i = j.ahead.partition_point(|&(_, end)| end < last);
+        j.ahead.get(i).is_some_and(|&(start, _)| start <= first)
+    } else {
+        j.ahead.iter().any(|&(a, b)| a <= first && last <= b)
+    };
+    covered.then(|| (j.ahead_asked, j.written.range(first..last).map(|(&p, &w)| (p, w)).collect()))
+}
+
 /// The submission's one asking stands no longer: its refreshes are done,
 /// or title memory was written in a way the journal was not told.
 pub(crate) fn ask_once_end() {
@@ -263,7 +398,7 @@ pub(crate) fn ask_once_end() {
 /// as written after that asking, so the refreshes that follow copy them.
 pub(crate) fn wrote(at: usize, len: usize) {
     let mut j = JOURNAL.lock().unwrap_or_else(|e| e.into_inner());
-    if !j.kept || len == 0 {
+    if !j.kept || j.ahead.is_empty() || len == 0 {
         return;
     }
     j.asked += 1;
@@ -372,10 +507,7 @@ fn ask_kernel(j: &mut Journal, first: usize, last: usize) -> bool {
 pub(crate) fn asked(start: usize, end: usize) -> Option<(u64, Vec<(usize, u64)>)> {
     let (first, last) = (start / PAGE, end.div_ceil(PAGE));
     let j = JOURNAL.lock().unwrap_or_else(|e| e.into_inner());
-    j.ahead
-        .iter()
-        .any(|&(a, b)| a <= first && last <= b)
-        .then(|| (j.ahead_asked, j.written.range(first..last).map(|(&p, &w)| (p, w)).collect()))
+    cached(&j, first, last)
 }
 
 /// The pages of `[start, end)` (whole pages) as last written, for pages
@@ -390,14 +522,8 @@ pub(crate) fn writes(start: usize, end: usize, guarded: bool) -> Option<(u64, Ve
     let mut j = JOURNAL.lock().unwrap_or_else(|e| e.into_inner());
     let j = &mut *j;
     // Asked ahead with the submission's other ranges: the journal has it.
-    if j.ahead.iter().any(|&(a, b)| a <= first && last <= b) {
-        return Some((
-            j.ahead_asked,
-            j.written
-                .range(first..last)
-                .map(|(&p, &w)| (p, w))
-                .collect(),
-        ));
+    if let Some(answer) = cached(j, first, last) {
+        return Some(answer);
     }
     let mut count = (last - first) * PAGE / KERNEL_PAGE;
     j.found.resize(count.max(j.found.len()), 0);
@@ -509,18 +635,23 @@ const BLOCK: usize = PAGE;
 /// watch about it can only fail. `VILOCITY_VIEW_ASK=1` (or
 /// `VILOCITY_GUARD_ASK=1`) asks the kernel anyway, as before.
 fn known_view(start: usize) -> bool {
-    static ASK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    let ask = *ASK.get_or_init(|| {
-        ["VILOCITY_VIEW_ASK", "VILOCITY_GUARD_ASK"]
-            .iter()
-            .any(|n| std::env::var_os(n).is_some_and(|v| v == "1"))
-    });
-    if ask {
+    if force_view_ask() {
         return false;
     }
     let g = guards();
     let first = start / BLOCK;
     g.protected.contains(&first) || g.absent.contains(&first) || (view_known() && g.viewed.contains(&first))
+}
+
+/// `VILOCITY_VIEW_ASK=1` (or `VILOCITY_GUARD_ASK=1`): ask the kernel about
+/// view memory anyway.
+fn force_view_ask() -> bool {
+    static ASK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ASK.get_or_init(|| {
+        ["VILOCITY_VIEW_ASK", "VILOCITY_GUARD_ASK"]
+            .iter()
+            .any(|n| std::env::var_os(n).is_some_and(|v| v == "1"))
+    })
 }
 
 struct Guards {
@@ -1174,6 +1305,52 @@ mod tests {
             )
             .is_none()
         );
+        // SAFETY: our allocation.
+        unsafe { VirtualFree(p as *mut _, 0, MEM_RELEASE) };
+    }
+
+    // Ported from kelvaroq patch 0045-watch-reservation (its submission tests).
+    #[test]
+    fn cached_answers_keep_holes_and_reservation_boundaries() {
+        let mut j = Journal { ordered: true, ..Default::default() };
+        keep_requested(&mut j.ahead, &[(1, 3), (3, 6), (7, 10)]);
+        keep_requested(&mut j.ahead, &[(8, 9), (9, 11)]);
+        keep_requested(&mut j.ahead, &[(11, 12)]);
+        for (first, last) in [(1, 6), (7, 10), (9, 11), (11, 12)] {
+            assert!(cached(&j, first, last).is_some());
+        }
+        for (first, last) in [(5, 8), (6, 7), (10, 12)] {
+            assert!(cached(&j, first, last).is_none());
+        }
+    }
+
+    /// Two pieces of one reservation with an unrequested hole: one kernel
+    /// call, a write in the hole journalled, only the pieces answered.
+    #[test]
+    fn a_reservation_is_asked_once_and_only_requested_pieces_are_cached() {
+        // SAFETY: a fresh write-watched allocation, freed at the end.
+        let p = unsafe {
+            VirtualAlloc(std::ptr::null(), 5 * PAGE, MEM_RESERVE | MEM_WRITE_WATCH, PAGE_READWRITE)
+        } as usize;
+        assert_ne!(p, 0);
+        for at in [p, p + 2 * PAGE, p + 4 * PAGE] {
+            // SAFETY: a kernel page inside our reservation.
+            assert_eq!(unsafe { VirtualAlloc(at as *const _, KERNEL_PAGE, MEM_COMMIT, PAGE_READWRITE) } as usize, at);
+        }
+        let first = p / PAGE;
+        let mut j = Journal::default();
+        // SAFETY: committed pages of ours.
+        unsafe {
+            (p as *mut u8).write_volatile(1);
+            ((p + 2 * PAGE) as *mut u8).write_volatile(1);
+        }
+        ask_reservations(&mut j, &[(first, first + 1), (first + 4, first + 5)]);
+        let now = j.asked;
+        assert!(j.kept);
+        assert_eq!(j.ahead, [(first, first + 1), (first + 4, first + 5)]);
+        assert_eq!(cached(&j, first, first + 1), Some((now, vec![(first, now)])));
+        assert!(cached(&j, first + 2, first + 3).is_none());
+        assert_eq!(j.written[&(first + 2)], now, "the hole's write was journalled");
         // SAFETY: our allocation.
         unsafe { VirtualFree(p as *mut _, 0, MEM_RELEASE) };
     }

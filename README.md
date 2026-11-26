@@ -50,18 +50,29 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-26 20:04, game build Series 1.0.2.1
+**Latest test run:** 2026-11-26 20:45, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 713.0 fps |
-| Median frame time | 33 ms |
-| Last frame | 2.5 fps, 402 ms, 3639 draws, 2250 dropped without a pipeline |
+| Best frame rate (menus included) | 721.4 fps |
+| Median frame time | 136 ms |
+| Last frame | 8.2 fps, 122 ms, 3425 draws, 276 dropped without a pipeline |
 | Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: menus, the start screen and the intro are no longer held to the title's
+Latest: the mouse is the game's after a click in its window (cursor held there
+and hidden) and the desktop's again after Esc or another window in front; the
+clip is done outside the sandbox, which Windows refuses it. From avatarmanz:
+lane_uniform proven to a fixed point (the ray-tracing builder's last 3 programs
+translate on 32-lane cards) and placed views keyed without their padding words.
+From Op-lite/victory-scarlett: 16-bit views and loads keep their bits
+(`VILOCITY_HALF_VIEWS`, `VILOCITY_D16_BITS`, on; facial animation), and its NaN
+guard as `VILOCITY_NAN_GUARD=1`, off: on, daylight went white and stayed white.
+From stellarr-studio/kelvaroq, off and measured flat here: `VILOCITY_WATCH_RESERVATION`,
+`VILOCITY_DIRECT_CONSTANTS`.
+
+Before that: menus, the start screen and the intro are no longer held to the title's
 30 frames a second (`VILOCITY_MAX_FPS`, the launcher's default 0: no limit; n: at
 most n): the start screen runs at about 700 fps, the intro animation at 95-100,
 and the movie keeps its own pace.

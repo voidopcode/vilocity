@@ -46,6 +46,32 @@ mod images;
 #[path = "lanes.rs"]
 mod lanes;
 
+/// Ported from Op-lite/victory-scarlett (GPL-3.0), fxceless #927: format loads that move
+/// 16-bit halves without the d16 form, a child module likewise.
+#[path = "halves.rs"]
+mod halves;
+
+/// Whether table places that move 16-bit halves are lowered as unsigned
+/// integers and named to the host ([`super::HostShader::half_views`];
+/// `VILOCITY_HALF_VIEWS=0`: as before, the halves go through float views,
+/// which read zeros on NVIDIA: frozen faces).
+fn half_views_on() -> bool {
+    #[cfg(test)]
+    if let Some(on) = TEST_HALF_VIEWS.get() {
+        return on;
+    }
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VILOCITY_HALF_VIEWS").is_none_or(|v| v != "0"))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: [`half_views_on`] as given instead of the switch.
+    pub(crate) static TEST_HALF_VIEWS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    /// Tests: `VILOCITY_NAN_GUARD` as given instead of the switch.
+    pub(crate) static TEST_NAN_GUARD: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
 type Why = &'static str;
 
 /// How an interpolation evaluates an input channel.
@@ -78,6 +104,8 @@ pub(crate) struct Lowered {
     pub root_uavs: Vec<u8>,
     pub user_data: Vec<UserData>,
     pub samplers: Vec<[u32; 4]>,
+    /// See [`super::HostShader::half_views`].
+    pub half_views: Vec<(u8, u32)>,
     /// The wave size the shader requires of the host, if any.
     pub wave_size: Option<u32>,
     /// Heap handles made with a non-uniform index.
@@ -266,6 +294,11 @@ struct Lower<'a> {
     /// Dwords read from the host's table by heap slot
     /// ([`super::shader::SLOT_STRIDES`]), by block and descriptor load.
     strides: HashMap<(usize, Site, u8), V>,
+    /// Ported from Op-lite/victory-scarlett (GPL-3.0), fxceless #927: table places every access
+    /// through which moves 16-bit halves ([`Self::places_read_as_halves`]).
+    halves_only: std::collections::BTreeSet<(u8, u32)>,
+    /// The halves places the program accessed ([`super::HostShader::half_views`]).
+    half_views: std::collections::BTreeSet<(u8, u32)>,
     /// Blocks splitting the edge from one IR block to another.
     edges: HashMap<(usize, usize), usize>,
     /// Per IR block: a `done` export is behind every lane entering it.
@@ -634,59 +667,150 @@ fn need(block: usize) {
     });
 }
 
-/// VGPR values that are the same in every lane holding them (`all` is [`all_lane_blocks`]):
-/// written by an instruction every arriving lane runs (no guard), lane by lane, from scalars,
-/// constants and such values; or loaded from an address made of them. The compiler keeps
-/// wave-uniform data in VGPRs and fetches it with `v_readfirstlane`.
-/// shortcut: a value joined by a phi counts only where every predecessor is a block all lanes
-/// run (no lane branch can have split the arriving lanes); loop-carried values never do.
-fn lane_uniform(p: &Program, st: &Structured, all: &[bool]) -> HashSet<Value> {
+// Ported from avatarmanz/VIctory-7900XTX 431cab5d (GPL-3.0): the fixed-point proof.
+/// VGPR values that are the same in every lane of a console wave holding them (`all` is
+/// [`all_lane_blocks`]): written lane by lane from scalars, constants and such values, by an
+/// instruction that either every arriving lane runs or that runs under a condition itself the
+/// same in every lane of the console wave (then only over an old value that is such a value
+/// too: a wave the condition leaves out keeps that); loaded from LDS at such an address; or
+/// the thread id's x shifted right past the console wave (`wave_tid`, ids `>> 6` or more,
+/// where a console wave is one run of 64 ids along x). The compiler keeps wave-uniform data
+/// in VGPRs and fetches it with `v_readfirstlane`.
+/// A value joined by a phi counts where every predecessor is a block every lane of the console
+/// wave reaches together: no branch on a lane-dependent condition can have split them (a
+/// branch on such alike values does not). Loop-carried values count only when what the loop
+/// carries is made of such values; the analysis runs to a fixed point from nothing, so a value
+/// that needs itself to be alike never is.
+fn lane_uniform(p: &Program, st: &Structured, all: &[bool], wave_tid: Option<Value>) -> HashSet<Value> {
     let is_mask = |v: Value| st.masks.contains_key(&v) || st.highs.contains_key(&v);
     let mut same: HashSet<Value> = HashSet::new();
-    for b in crate::ir::reverse_postorder(&p.blocks) {
-        let block = &p.blocks[b];
-        let whole = block.preds.iter().all(|&q| all.get(q).copied().unwrap_or(false));
-        for phi in &block.phis {
-            if matches!(phi.reg, Reg::V(_)) && whole && phi.args.iter().all(|a| same.contains(a)) {
-                same.insert(phi.value);
+    loop {
+        // An atom of a lane condition that every lane of a console wave holds alike.
+        let alike_atom = |same: &HashSet<Value>, a: &Atom| match *a {
+            Atom::Uniform(_) => true,
+            Atom::Lane(v) => same.contains(&v),
+            _ => false,
+        };
+        let alike_bool = |same: &HashSet<Value>, b: Bool| st.bools.support(b).iter().all(|a| alike_atom(same, a));
+        // Blocks every lane of a console wave reaches together: `all`, or reached only past
+        // branches on alike conditions.
+        let wave_all: Vec<bool> = match lane_regions(st) {
+            Some(regions) => {
+                let mut w = vec![true; st.exits.len()];
+                for (d, region) in regions {
+                    let LaneExit::Branch { when, .. } = st.exits[d] else {
+                        continue;
+                    };
+                    if alike_bool(&same, when) {
+                        continue;
+                    }
+                    for (b, r) in region.iter().enumerate() {
+                        if *r {
+                            w[b] = false;
+                        }
+                    }
+                }
+                w
             }
-        }
-        for (i, inst) in block.insts.iter().enumerate() {
-            let name = inst.name();
-            let ops: Vec<Operand> = match &inst.fields {
-                Fields::Valu(v)
-                    if v.dpp.is_none()
-                        && v.sdwa.is_none()
-                        && !name.starts_with("v_mbcnt")
-                        && !name.starts_with("v_cmpx")
-                        && !name.contains("lane") =>
+            None => all.to_vec(),
+        };
+        let mut next: HashSet<Value> = HashSet::new();
+        for b in crate::ir::reverse_postorder(&p.blocks) {
+            let block = &p.blocks[b];
+            let whole = block.preds.iter().all(|&q| wave_all.get(q).copied().unwrap_or(false));
+            for phi in &block.phis {
+                if matches!(phi.reg, Reg::V(_)) && whole && phi.args.iter().all(|a| next.contains(a) || same.contains(a)) {
+                    next.insert(phi.value);
+                }
+            }
+            let known = |next: &HashSet<Value>, x: &Value| next.contains(x) || same.contains(x);
+            for (i, inst) in block.insts.iter().enumerate() {
+                let name = inst.name();
+                // under a condition: only one every lane of the console wave holds alike, and
+                // over an old value that is alike too
+                if let Some(g) = st.guards[b][i] {
+                    if !alike_bool(&same, g) {
+                        continue;
+                    }
+                    let old_alike = inst
+                        .writes
+                        .iter()
+                        .filter(|w| matches!(w.0, Reg::V(_)))
+                        .all(|w| inst.read(w.0).is_none_or(|old| known(&next, &old)));
+                    if !old_alike {
+                        continue;
+                    }
+                }
+                // an LDS read at an alike address reads one value in every lane
+                if let Fields::Ds { addr: Some(Operand::Vector { reg, .. }), dst: Some(_), data, .. } = &inst.fields
+                    && name.starts_with("ds_read")
+                    && data.is_empty()
                 {
-                    v.src.clone()
+                    if inst.read(Reg::V(*reg)).is_some_and(|a| known(&next, &a)) {
+                        next.extend(inst.writes.iter().filter(|w| matches!(w.0, Reg::V(_))).map(|w| w.1));
+                    }
+                    continue;
                 }
-                _ => continue,
-            };
-            if st.guards[b][i].is_some() {
-                continue; // lanes outside EXEC keep another value
-            }
-            let alike = ops.iter().all(|op| match *op {
-                Operand::Vector { reg, .. } => {
-                    // every dword of the operand the instruction reads from that register on
-                    let read: Vec<Value> =
-                        inst.reads.iter().filter(|r| matches!(r.0, Reg::V(x) if x >= reg)).map(|r| r.1).collect();
-                    !read.is_empty() && read.iter().all(|x| same.contains(x))
+                let ops: Vec<Operand> = match &inst.fields {
+                    Fields::Valu(v)
+                        if v.dpp.is_none()
+                            && v.sdwa.is_none()
+                            && !name.starts_with("v_mbcnt")
+                            && !name.starts_with("v_cmpx")
+                            && !name.contains("lane") =>
+                    {
+                        v.src.clone()
+                    }
+                    _ => continue,
+                };
+                // the thread id's x shifted past the console wave: one value per console wave
+                // (an inline constant 6..64: operand codes 134..192)
+                if let (Some(tid), "v_lshrrev_b32", [Operand::Const(k), Operand::Vector { reg, .. }, ..]) =
+                    (wave_tid, name, ops.as_slice())
+                    && (134..=192).contains(k)
+                    && inst.read(Reg::V(*reg)) == Some(tid)
+                {
+                    next.extend(inst.writes.iter().filter(|w| w.0 != Reg::Scc).map(|w| w.1));
+                    continue;
                 }
-                // a scalar is one value; a lane mask is not, unless a compare of such values made it
-                Operand::Scalar { code, .. } if code != NULL => {
-                    inst.read(Reg::S(code)).is_none_or(|x| !is_mask(x) || same.contains(&x))
+                let alike = ops.iter().all(|op| match *op {
+                    Operand::Vector { reg, .. } => {
+                        // every dword of the operand the instruction reads from that register on
+                        let read: Vec<Value> =
+                            inst.reads.iter().filter(|r| matches!(r.0, Reg::V(x) if x >= reg)).map(|r| r.1).collect();
+                        !read.is_empty() && read.iter().all(|x| known(&next, x))
+                    }
+                    // a scalar is one value; a lane mask is not, unless a compare of such values made it
+                    Operand::Scalar { code, .. } if code != NULL => {
+                        inst.read(Reg::S(code)).is_none_or(|x| !is_mask(x) || known(&next, &x))
+                    }
+                    _ => true,
+                });
+                if alike {
+                    next.extend(inst.writes.iter().filter(|w| w.0 != Reg::Scc).map(|w| w.1));
                 }
-                _ => true,
-            });
-            if alike {
-                same.extend(inst.writes.iter().filter(|w| w.0 != Reg::Scc).map(|w| w.1));
             }
         }
+        if next.is_subset(&same) {
+            return same;
+        }
+        same.extend(next);
     }
-    same
+}
+
+/// The thread id's x (`v0` on entry) of a console wave64 compute program whose console waves are
+/// runs of 64 ids along x (a group 64-aligned along x, or one row): `id >> 6` and up is then one
+/// value per console wave ([`lane_uniform`]).
+// Ported from avatarmanz/VIctory-7900XTX 431cab5d (GPL-3.0).
+fn wave_tid(p: &Program, x: &Parts<'_>) -> Option<Value> {
+    let StageIo::Cs(cs) = &x.native.io else {
+        return None;
+    };
+    let [tx, ty, tz] = cs.threads;
+    if !x.native.wave64 || !(tx % 64 == 0 || ty * tz == 1) {
+        return None;
+    }
+    p.inputs.iter().find(|(r, _)| *r == Reg::V(0)).map(|(_, v)| *v)
 }
 
 /// What a register value holds, for [`wave_local`].
@@ -1761,6 +1885,8 @@ impl<'a> Lower<'a> {
             },
             handles: HashMap::new(),
             strides: HashMap::new(),
+            halves_only: Default::default(),
+            half_views: Default::default(),
             edges: HashMap::new(),
             exported: vec![false; p.blocks.len()],
             rpo: vec![usize::MAX; p.blocks.len()],
@@ -1774,7 +1900,7 @@ impl<'a> Lower<'a> {
             local_ok: false,
             local_any: LOCAL_ANY.get(),
             uniform: match &exchange {
-                Some((_, false, all)) if !LOCAL_WAVES.get() => lane_uniform(p, x.st, all),
+                Some((_, false, all)) if !LOCAL_WAVES.get() => lane_uniform(p, x.st, all, wave_tid(p, x)),
                 _ => HashSet::new(),
             },
             own_bits: match &exchange {
@@ -2500,6 +2626,9 @@ impl<'a> Lower<'a> {
 
     fn run(mut self) -> Result<Lowered, Stop> {
         let p = self.x.p;
+        if half_views_on() {
+            self.halves_only = self.places_read_as_halves();
+        }
         let order = crate::ir::reverse_postorder(&p.blocks);
         for (n, &b) in order.iter().enumerate() {
             self.rpo[b] = n;
@@ -2612,8 +2741,10 @@ impl<'a> Lower<'a> {
         let root_uavs = self.s.root_uavs.iter().map(|r| r.0).collect();
         let cmp_samplers = self.s.cmp_samplers;
         let wave_size = self.s.wave_size;
+        let half_views = std::mem::take(&mut self.half_views).into_iter().collect();
         Ok(Lowered {
             wave_size,
+            half_views,
             cmp_samplers,
             root_cbvs,
             root_srvs,
@@ -6580,7 +6711,12 @@ impl<'a> Lower<'a> {
                 let props = if un.starts_with("buffer_load_format")
                     || un.starts_with("buffer_store_format")
                 {
-                    (10 | u, 0x409)
+                    // Ported from Op-lite/victory-scarlett (GPL-3.0), fxceless #927: unsigned integers where the access moves halves.
+                    let halves = self.table_place(&src).is_some_and(|p| {
+                        self.halves_only.contains(&p)
+                            && (un.contains("_format_d16_") || self.format_load_read_as_halves(ui))
+                    });
+                    (10 | u, if halves { 0x405 } else { 0x409 })
                 } else if *idxen && format.is_none() && stride >= 4 && stride.is_multiple_of(4) {
                     (12 | u, stride)
                 } else {
@@ -7271,6 +7407,77 @@ impl<'a> Lower<'a> {
             self.s.m.cmp(c, pred::NE, x, zero)
         });
         Ok(Some((int, signed)))
+    }
+
+    /// Ported from Op-lite/victory-scarlett (GPL-3.0), Neptune 25fbf69 `VICTORY_NAN_GUARD`.
+    /// `VILOCITY_NAN_GUARD=1` (off by default: on, a daylight scene went white
+    /// and stayed white, run 2026-11-26 20:37): a float a pixel program exports
+    /// to a colour target with NaN made 0 and an infinity +-65504, so one bad
+    /// pixel does not stay in a history the title blends into each frame.
+    fn nan_guard(&mut self, f: V) -> V {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let on = || *ON.get_or_init(|| std::env::var_os("VILOCITY_NAN_GUARD").is_some_and(|v| v == "1"));
+        #[cfg(test)]
+        let on = || TEST_NAN_GUARD.get().unwrap_or_else(on);
+        if !on() {
+            return f;
+        }
+        let c = self.cur;
+        let bits = self.as_int(f);
+        let mag = self.s.m.i32(0x7FFF_FFFF);
+        let abs = self.s.m.bin(c, Bin::And, bits, mag);
+        let inf_bits = self.s.m.i32(0x7F80_0000);
+        let nan = self.s.m.cmp(c, pred::IUGT, abs, inf_bits);
+        let inf = self.s.m.cmp(c, pred::EQ, abs, inf_bits);
+        let sign_bit = self.s.m.i32(0x8000_0000);
+        let sign = self.s.m.bin(c, Bin::And, bits, sign_bit);
+        let big = self.s.m.i32(65504f32.to_bits());
+        let big = self.s.m.bin(c, Bin::Or, sign, big);
+        let zero = self.s.m.i32(0);
+        let r = self.s.m.select(c, inf, big, bits);
+        let r = self.s.m.select(c, nan, zero, r);
+        self.as_float(r)
+    }
+
+    /// Ported from Op-lite/victory-scarlett (GPL-3.0), D1 `VICTORY_D16_BITS`.
+    /// A d16 load's 16 bits from `x`, the 32-bit value a float-typed load
+    /// returned, where no view-kind word tells the view's format (images,
+    /// descriptors chosen by control flow). Through a view of an integer
+    /// format the host passes the integer's bits unconverted: a 16-bit
+    /// unsigned (or non-negative signed) value is a tiny denormal there (bits
+    /// up to 0xFFFF), a negative signed one sign-extended (bits from
+    /// 0xFFFF8000), and the console's d16 load gives its low 16 bits;
+    /// converting them as a float gave 0 (or NaN). Every other value is
+    /// converted to a half as before. `VILOCITY_D16_BITS=0`: always converted.
+    fn d16_bits(&mut self, x: V) -> V {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let c = self.cur;
+        let i32t = self.s.t.i32;
+        let half = self.s.op(c, "legacyF32ToF16", Attr::ReadNone, i32t, 130, &[x]);
+        if !*ON.get_or_init(|| std::env::var_os("VILOCITY_D16_BITS").is_none_or(|v| v != "0")) {
+            return half;
+        }
+        let bits = self.as_int(x);
+        let (top, neg) = (self.s.m.i32(0xFFFF), self.s.m.i32(0xFFFF_7FFF));
+        let small = self.s.m.cmp(c, pred::IULE, bits, top);
+        let negative = self.s.m.cmp(c, pred::IUGT, bits, neg);
+        let integer = self.s.m.bin(c, Bin::Or, small, negative);
+        let low = self.s.m.bin(c, Bin::And, bits, top);
+        self.s.m.select(c, integer, low, half)
+    }
+
+    /// Ported from Op-lite/victory-scarlett (GPL-3.0), fxceless #927.
+    /// The table descriptor `src` is, as (root parameter, dword in the
+    /// table), when the code loads it from a fixed place in a table. `None`
+    /// for a descriptor picked at run time, built in the code or chosen by
+    /// control flow.
+    fn table_place(&self, src: &Source) -> Option<(u8, u32)> {
+        let Source::Loaded { load, first } = src else {
+            return None;
+        };
+        let a = self.scalar.get(load)?;
+        let rp = self.x.native.layout.get(a.param)?;
+        (rp.root == RootType::Table && a.dynamic.is_none()).then(|| (rp.slot, a.offset / 4 + u32::from(*first)))
     }
 
     /// The host's table dword ([`super::shader::SLOT_STRIDES`]) for the heap
@@ -10589,8 +10796,11 @@ impl<'a> Lower<'a> {
                     .op(c, "legacyF16ToF32", Attr::ReadNone, f32t, 131, &[x]);
                 x = self.as_int(f);
             }
+            let pixel = self.s.pixel;
             let el = &mut elements(self, primitive)[id];
             el.usage |= 1 << col;
+            // Ported from Op-lite/victory-scarlett (GPL-3.0), VICTORY_NAN_GUARD: a pixel program's float colour target.
+            let target = !mesh && pixel && el.kind == 16 && el.comp == 9;
             let (suffix, x) = match el.comp {
                 9 if half.is_some() => (".f32", self.as_float(x)),
                 9 => {
@@ -10602,6 +10812,7 @@ impl<'a> Lower<'a> {
                 }
                 _ => (".i32", x),
             };
+            let x = if target { self.nan_guard(x) } else { x };
             let mut args = vec![
                 self.s.m.i32(id as u32),
                 self.s.m.i32(0),

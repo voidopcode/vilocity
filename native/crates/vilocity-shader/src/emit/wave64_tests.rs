@@ -133,6 +133,7 @@ fn lowered_on(
         root_srvs: lowered.root_srvs,
         root_uavs: lowered.root_uavs,
         root_indexed_views: res.root_indexed_views,
+        half_views: Vec::new(),
     })
 }
 
@@ -818,4 +819,97 @@ fn the_console_threads_of_a_two_dimensional_group_are_each_given_once() {
         assert!(wrong.is_empty(), "{x}x{y}: dwords not their console lane: {wrong:?}");
         eprintln!("{x}x{y}: ran on the hardware device, {n} of {n} console threads each once");
     }
+}
+/// The prefix of wave totals the console's structure builder computes: each console
+/// wave of a 256-thread group writes its total (10 + its index) to LDS, then, under
+/// `if (id >> 6 != 0)`, loops over the totals of the waves before it with lanes leaving at their
+/// own wave's index, reading the running sum's first lane (`v_readfirstlane`) every iteration.
+/// (The total is read from the wave's last lane first, as the builder's scan does: a read
+/// across the two host waves, which makes them exchange.)
+/// The condition and the sum are the same in every lane of a console wave, so each host wave
+/// takes its own first lane; before, the read was refused ("a first-lane read where not every
+/// lane runs"), which kept the builder off on 32-lane GPUs. Every thread stores the sum of the
+/// waves before its own: 0, 10, 10 + 11, 10 + 11 + 12.
+// Ported from avatarmanz/VIctory-7900XTX 431cab5d (GPL-3.0).
+#[test]
+fn a_first_lane_read_of_a_wave_alike_sum_under_a_wave_alike_loop() {
+    let words = [
+        0x2C0E_0086, // v_lshrrev_b32 v7, 6, v0             (the console wave's index)
+        0x3410_0E82, // v_lshlrev_b32 v8, 2, v7
+        0x4A12_0E8A, // v_add_nc_u32 v9, 10, v7
+        0xD760_0013,
+        0x0201_7F09, // v_readlane_b32 s19, v9, 63   (the wave's last lane: the other host wave)
+        0x7E12_0213, // v_mov_b32 v9, s19
+        0xD834_0000,
+        0x0000_0908, // ds_write_b32 v8, v9
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0xBF8A_0000, // s_barrier
+        0x7E10_0280, // v_mov_b32 v8, 0
+        0xBE80_047E, // s_mov_b64 s[0:1], exec
+        0x7DAA_0E80, // v_cmpx_ne_u32 0, v7
+        0xBF88_0011, // s_cbranch_execz END
+        0xBE86_047E, // s_mov_b64 s[6:7], exec
+        0xBE92_0380, // s_mov_b32 s18, 0
+        0xBE91_0380, // s_mov_b32 s17, 0
+        0xBF82_0002, // s_branch BODY
+        0x87FE_0614, // LOOPTOP: s_and_b64 exec, s[20:21], s[6:7]
+        0x7E22_0508, // v_readfirstlane_b32 s17, v8
+        0x8F10_8212, // BODY: s_lshl_b32 s16, s18, 2
+        0x8112_8112, // s_add_i32 s18, s18, 1
+        0x7E10_0210, // v_mov_b32 v8, s16
+        0xD8D8_0000,
+        0x0800_0008, // ds_read_b32 v8, v8
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0x4A10_1011, // v_add_nc_u32 v8, s17, v8
+        0xBE94_047E, // s_mov_b64 s[20:21], exec
+        0x7DA4_0E12, // v_cmpx_eq_u32 s18, v7
+        0x8A86_7E06, // s_andn2_b64 s[6:7], s[6:7], exec
+        0xBF85_FFF3, // s_cbranch_scc1 LOOPTOP
+        0xBEFE_0400, // END: s_mov_b64 exec, s[0:1]
+        0x3402_0082, // v_lshlrev_b32 v1, 2, v0
+        0xE070_1000,
+        0x8002_0801, // buffer_store_dword v8, v1, s[8:11], 0 offen
+    ];
+    let mut native = native_of(&words, true, 256);
+    if let StageIo::Cs(cs) = &mut native.io {
+        cs.rsrc2 |= 1 << 15; // 512 bytes of LDS
+    }
+    let p = ir::build(&native.code, native.wave64, native.vgprs).expect("ir::build");
+    assert!(p.blocks.iter().flat_map(|b| &b.insts).any(|i| i.name() == "v_readfirstlane_b32"));
+    let shader = lowered(&native, &p, &HashSet::new()).expect("lower");
+    if let Ok(mut v) = validator::Validator::load(validator::Validator::default_path().as_deref()) {
+        let mut copy = shader.dxil.clone();
+        v.validate(&mut copy).expect("DXIL validation failed");
+    }
+    let _one = super::valu_tests::ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(host) = Host::new(false) else {
+        eprintln!("no SM 6.6 hardware device; not run");
+        return;
+    };
+    let (root, pso) = match host.compute_pipeline(&shader) {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("the hardware device does not take this program (waves of 32?): {e}; not run");
+            return;
+        }
+    };
+    let ud = vec![0u32; shader.user_data_dwords().max(1) as usize];
+    let out = host
+        .dispatch(
+            &root,
+            &pso,
+            &Dispatch {
+                roots: vec![(0, Root::Constants(ud))],
+                views: &[View::RawUav(256)],
+                samplers: &[],
+                groups: [1, 1, 1],
+            },
+        )
+        .unwrap_or_else(|e| panic!("dispatch failed: {e}"));
+    let expected = |t: u32| (0..t >> 6).map(|w| 10 + w).sum::<u32>();
+    let got: Vec<u32> = (0..256).map(|t| out[0][t]).collect();
+    for t in 0..256u32 {
+        assert_eq!(got[t as usize], expected(t), "thread {t}: {got:?}");
+    }
+    eprintln!("ran on the hardware device: every console wave got the sum of the waves before it");
 }

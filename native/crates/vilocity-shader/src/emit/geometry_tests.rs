@@ -154,6 +154,7 @@ fn mesh_shader() -> HostShader {
         root_srvs: l.root_srvs,
         root_uavs: l.root_uavs,
         root_indexed_views: Vec::new(),
+        half_views: Vec::new(),
     };
     // shortcut: the SDK validator (10.0.28000) derives a group-shared size
     // for the PSV0 part of this mesh shader that its own module check does
@@ -199,6 +200,7 @@ fn pixel_shader() -> Option<HostShader> {
         root_srvs: Vec::new(),
         root_uavs: Vec::new(),
         root_indexed_views: Vec::new(),
+        half_views: Vec::new(),
     })
 }
 

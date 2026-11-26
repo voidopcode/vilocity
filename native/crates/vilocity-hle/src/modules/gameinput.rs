@@ -130,6 +130,12 @@ struct Mouse {
     right: bool,
 }
 
+/// Whether the mouse is the game's after this poll: taken by a click in
+/// its window, given back by Esc or by another window coming in front.
+fn mouse_lock(locked: bool, front: bool, click_inside: bool, esc: bool) -> bool {
+    front && !esc && (locked || click_inside)
+}
+
 fn fallback(keys: &[KeyState], mouse: Mouse) -> PadState {
     let on = |vk: u8| -> f32 {
         if keys.iter().any(|k| k.virtual_key == vk) {
@@ -1103,8 +1109,8 @@ mod host {
     };
     use windows_sys::Win32::Foundation::{POINT, RECT};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        ClipCursor, GetCursorPos, GetForegroundWindow, GetWindowRect, GetWindowThreadProcessId,
-        SetCursorPos,
+        ClipCursor, GCLP_HCURSOR, GetCursorPos, GetForegroundWindow, GetWindowRect,
+        CreateCursor, GetWindowThreadProcessId, IDC_ARROW, LoadCursorW, SetClassLongPtrW, SetCursor, SetCursorPos,
     };
 
     use super::*;
@@ -1224,29 +1230,57 @@ mod host {
             }) else {
                 return Mouse::default();
             };
-            // The cursor is held inside the game's window while it is in
-            // front (a fast move between polls left it, onto other
-            // windows), and let go as soon as another window is.
-            static CLIPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-            if !focused() {
-                if CLIPPED.swap(false, std::sync::atomic::Ordering::Relaxed) {
-                    // SAFETY: a null rectangle frees the cursor.
-                    unsafe { ClipCursor(std::ptr::null()) };
-                }
-                return Mouse::default();
-            }
+            // The mouse is the game's once a click lands in its window, and
+            // the desktop's again after Esc or when another window comes in
+            // front: only while it is the game's is the cursor held in the
+            // window, centred and read as the stick.
+            static LOCKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            let was = LOCKED.load(std::sync::atomic::Ordering::Relaxed);
             let (mut at, mut window) = (POINT { x: 0, y: 0 }, RECT { left: 0, top: 0, right: 0, bottom: 0 });
             // SAFETY: plain queries, a cursor move and a clip, on valid structs.
             unsafe {
-                if GetCursorPos(&mut at) == 0 || GetWindowRect(GetForegroundWindow(), &mut window) == 0 {
-                    return Mouse::default();
-                }
+                let front = focused();
+                let placed = front && GetCursorPos(&mut at) != 0 && GetWindowRect(GetForegroundWindow(), &mut window) != 0;
                 // Inside the frame, so the title bar and edges stay out of reach.
                 let inner = RECT { left: window.left + 16, top: window.top + 40, right: window.right - 16, bottom: window.bottom - 16 };
+                let inside = placed && at.x >= inner.left && at.x < inner.right && at.y >= inner.top && at.y < inner.bottom;
+                let locked = mouse_lock(was, front, inside && GetAsyncKeyState(0x01) < 0, GetAsyncKeyState(0x1B) < 0);
+                LOCKED.store(locked, std::sync::atomic::Ordering::Relaxed);
+                // The game's window, kept to give its cursor back after it lost the front.
+                static WINDOW: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+                if !locked {
+                    if was {
+                        // A null rectangle frees the cursor; the window's arrow comes back.
+                        ClipCursor(std::ptr::null());
+                        let arrow = LoadCursorW(std::ptr::null_mut(), IDC_ARROW);
+                        let hwnd = WINDOW.load(std::sync::atomic::Ordering::Relaxed) as _;
+                        SetClassLongPtrW(hwnd, GCLP_HCURSOR, arrow as isize);
+                        SetCursor(arrow);
+                    }
+                    return Mouse::default();
+                }
+                if !was {
+                    // No cursor over the window while the mouse is the game's.
+                    let hwnd = GetForegroundWindow();
+                    WINDOW.store(hwnd as isize, std::sync::atomic::Ordering::Relaxed);
+                    // A see-through cursor: the window's thread sets the class's on
+                    // every move, and with none it would keep the last arrow.
+                    static BLANK: std::sync::OnceLock<isize> = std::sync::OnceLock::new();
+                    let blank = *BLANK.get_or_init(|| {
+                        let and = [0xFFu8; 128];
+                        let xor = [0u8; 128];
+                        CreateCursor(std::ptr::null_mut(), 0, 0, 32, 32, and.as_ptr().cast(), xor.as_ptr().cast()) as isize
+                    });
+                    SetClassLongPtrW(hwnd, GCLP_HCURSOR, blank);
+                    SetCursor(blank as _);
+                }
                 ClipCursor(&inner);
-                CLIPPED.store(true, std::sync::atomic::Ordering::Relaxed);
                 let (cx, cy) = ((window.left + window.right) / 2, (window.top + window.bottom) / 2);
                 SetCursorPos(cx, cy);
+                if !was {
+                    // The click that took the mouse fires nothing.
+                    return Mouse::default();
+                }
                 Mouse {
                     look_x: ((at.x - cx) as f32 / full).clamp(-1.0, 1.0),
                     // screen y grows down, the stick's up
@@ -1708,5 +1742,20 @@ mod tests {
         rumble(&hub.devices[FALLBACK], &[1.0; 4]);
         rumble(device, std::ptr::null());
         assert_eq!(host.lock().unwrap().rumble, [(2, 32767, 65535), (2, 0, 0)]);
+    }
+}
+
+#[cfg(test)]
+mod mouse_lock_tests {
+    use super::mouse_lock;
+
+    #[test]
+    fn a_click_takes_the_mouse_and_esc_or_another_window_gives_it_back() {
+        assert!(!mouse_lock(false, true, false, false));
+        assert!(mouse_lock(false, true, true, false));
+        assert!(mouse_lock(true, true, false, false));
+        assert!(!mouse_lock(true, true, false, true));
+        assert!(!mouse_lock(true, false, false, false));
+        assert!(!mouse_lock(false, false, true, false));
     }
 }

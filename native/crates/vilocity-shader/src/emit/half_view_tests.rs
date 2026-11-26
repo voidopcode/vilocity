@@ -84,16 +84,29 @@ fn program(body: &[u32], kind: ResourceType) -> NativeProgram {
     }
 }
 
+/// Lowers `native` in the split form (the one NVIDIA runs, and AMD's too),
+/// with halves places (`VILOCITY_HALF_VIEWS`) as `halves` says.
+fn lower_with(native: &NativeProgram, halves: bool) -> super::HostShader {
+    super::lower::TEST_HALF_VIEWS.set(Some(halves));
+    let shader = try_lower(native, true);
+    super::lower::TEST_HALF_VIEWS.set(None);
+    shader.expect("lower")
+}
+
 /// Runs `native` with `typed` at heap index 1, its stride-table dword
-/// `word`; the UAVs' dwords.
+/// `word`; the UAVs' dwords. Through the view kinds, not halves places
+/// (whose FLOAT views the host shows as UINT twins, which this host does not).
 fn run(native: &NativeProgram, typed: View, word: u32) -> Option<Vec<Vec<u32>>> {
+    run_with(native, typed, word, false)
+}
+
+fn run_with(native: &NativeProgram, typed: View, word: u32, halves: bool) -> Option<Vec<Vec<u32>>> {
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let Ok(host) = Host::new(false) else {
         eprintln!("no SM 6.6 hardware device; skipped");
         return None;
     };
-    // The split form: the one NVIDIA runs, and AMD's too.
-    let shader = try_lower(native, true).expect("lower");
+    let shader = lower_with(native, halves);
     let (root, pso) = host.compute_pipeline(&shader).expect("compute_pipeline");
     let ud = vec![0u32; shader.user_data_dwords().max(1) as usize];
     let mut roots = vec![(0, Root::Constants(ud))];
@@ -165,5 +178,28 @@ fn integer_view_d16_store_keeps_bits() {
         };
         let want: Vec<u32> = (0..64).flat_map(|_| [lo, hi]).collect();
         assert_eq!(out[1], want, "{format:?}");
+    }
+}
+
+/// Ported from Op-lite/victory-scarlett (GPL-3.0), fxceless #927 (`VILOCITY_HALF_VIEWS`):
+/// a table place only d16 accesses reach is a halves place, named to the host
+/// (`half_views`) and read through an unsigned-integer handle, so its 16 bits
+/// pass as they are through an R16_UINT view (the host shows a FLOAT view
+/// there as its UINT twin). With a whole-dword format load of the same place
+/// too it is no halves place.
+#[test]
+fn a_place_only_d16_accesses_reach_moves_its_halves_as_unsigned_integers() {
+    let d16 = mubuf_idxen(BUFFER_LOAD_FORMAT_D16_X, 1, 0, 12);
+    let native = program(&d16, ResourceType::Srv);
+    assert_eq!(lower_with(&native, true).half_views, [(1, 8)], "table at s4, dword 8");
+    assert!(lower_with(&native, false).half_views.is_empty(), "VILOCITY_HALF_VIEWS=0");
+    // The same place also loaded as a whole dword (not read as halves): no halves place.
+    let mut mixed = mubuf_idxen(BUFFER_LOAD_FORMAT_X, 3, 0, 12).to_vec();
+    mixed.extend(d16);
+    assert!(lower_with(&program(&mixed, ResourceType::Srv), true).half_views.is_empty());
+    let data: Vec<u32> = (0..32).map(|i| element(2 * i) | element(2 * i + 1) << 16).collect();
+    let typed = View::Buffer { data: &data, stride: Stride::Format(DXGI_FORMAT_R16_UINT, 2) };
+    if let Some(out) = run_with(&native, typed, 2 | VIEW_INTEGER, true) {
+        assert_eq!(out[0][..64], (0..64).map(element).collect::<Vec<_>>()[..]);
     }
 }

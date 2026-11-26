@@ -189,6 +189,7 @@ fn try_build_cs(body: &[u32], threads: u32, lds_bytes: u32) -> Result<HostShader
         root_srvs: lowered.root_srvs,
         root_uavs: lowered.root_uavs,
         root_indexed_views: res.root_indexed_views,
+        half_views: Vec::new(),
     };
 
     if let Ok(mut v) = validator::Validator::load(validator::Validator::default_path().as_deref()) {
@@ -1097,6 +1098,7 @@ fn lower_cs32(words: &[u32], used: &[(u8, ResourceType, u32, u8)], validate: boo
         root_srvs: lowered.root_srvs,
         root_uavs: lowered.root_uavs,
         root_indexed_views: Vec::new(),
+        half_views: Vec::new(),
     };
     if let (true, Ok(mut v)) = (
         validate,
@@ -2082,6 +2084,7 @@ fn whole_wave_f64_sum_and_cvt_f32_f64() {
         root_srvs: lowered.root_srvs,
         root_uavs: lowered.root_uavs,
         root_indexed_views: Vec::new(),
+        half_views: Vec::new(),
     };
     if let Ok(mut v) = validator::Validator::load(validator::Validator::default_path().as_deref()) {
         let mut copy = shader.dxil.clone();

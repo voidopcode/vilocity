@@ -748,11 +748,17 @@ impl<'a> Lower<'a> {
                 None => self.s.m.extract(c, r, ch),
             };
             xs.push(if *d16 {
-                // shortcut: d16 results are taken as floats (rounded to
-                // nearest even); integer formats would keep 16 bits.
-                let i32t = self.s.t.i32;
-                self.s
-                    .op(c, "legacyF32ToF16", Attr::ReadNone, i32t, 130, &[x])
+                // d16 results are taken as floats (rounded to nearest even);
+                // ported from Op-lite/victory-scarlett (GPL-3.0), D1: a load or
+                // gather through an integer view keeps its 16 bits ([`Self::d16_bits`]).
+                // shortcut: samples are always floats.
+                if matches!(op, 66 | 73) {
+                    self.d16_bits(x)
+                } else {
+                    let i32t = self.s.t.i32;
+                    self.s
+                        .op(c, "legacyF32ToF16", Attr::ReadNone, i32t, 130, &[x])
+                }
             } else {
                 self.as_int(x)
             });
@@ -1168,6 +1174,20 @@ impl<'a> Lower<'a> {
             .copied()
             .ok_or("an untracked buffer")?;
         let used = self.used_kind(src);
+        // Ported from Op-lite/victory-scarlett (GPL-3.0), fxceless #927: sixteen bits a
+        // channel through a view of a table go as they are, as unsigned integers, and the
+        // host is told, which shows the shader a 16-bit float view there as its unsigned
+        // twin ([`super::HostShader::half_views`]). A d16 access, or a format load of whole
+        // dwords whose every use reads one half of a result as a half float, where every
+        // access through its place does ([`Self::places_read_as_halves`]).
+        let place = (typed && format.is_none())
+            .then(|| self.table_place(src))
+            .flatten()
+            .filter(|p| self.halves_only.contains(p) && (d16 || self.format_load_read_as_halves(inst)));
+        let halves = place.is_some();
+        if let Some(place) = place {
+            self.half_views.insert(place);
+        }
         let (base, extra) = self.built_offset(src)?;
         if base != 0 {
             let b = self.s.m.i32(base);
@@ -1508,13 +1528,19 @@ impl<'a> Lower<'a> {
                 // f16 for float and normalized views, widened for the 32-bit
                 // float store; through an integer view the 16-bit integer,
                 // zero- or sign-extended (its bits pass the float store).
-                let integer = if typed { self.integer_view(src)? } else { None };
+                // (fxceless #927, ported) Through a halves place each half is stored as it is.
+                let integer = if typed && !halves { self.integer_view(src)? } else { None };
                 let mut wide = Vec::new();
                 for k in 0..count {
                     let mut x = vals[(k / 2) as usize];
                     if k % 2 == 1 {
                         let k16 = self.s.m.i32(16);
                         x = self.s.m.bin(c, Bin::LShr, x, k16);
+                    }
+                    if halves {
+                        let low = self.s.m.i32(0xffff);
+                        wide.push(self.s.m.bin(c, Bin::And, x, low));
+                        continue;
                     }
                     let f32t = self.s.t.f32;
                     let f = self
@@ -1540,12 +1566,14 @@ impl<'a> Lower<'a> {
                 if count != 4 || *offen || *offset != 0 {
                     return Err("a typed buffer store of some channels or at an offset");
                 }
-                args.push(self.handle(site, src, false, (10 | u, 0x409))?);
+                // (fxceless #927, ported) Four unsigned integers for halves, four floats otherwise.
+                let component = if halves { 0x405 } else { 0x409 };
+                args.push(self.handle(site, src, false, (10 | u, component))?);
                 args.extend([index.unwrap_or(self.s.m.i32(0)), iu]);
                 for x in vals {
-                    args.push(self.as_float(x));
+                    args.push(if halves { x } else { self.as_float(x) });
                 }
-                (69, "bufferStore.f32")
+                (69, if halves { "bufferStore.i32" } else { "bufferStore.f32" })
             } else {
                 match index {
                     // A raw buffer (stride 1) written by index: the index is the byte.
@@ -1601,16 +1629,24 @@ impl<'a> Lower<'a> {
             if uav {
                 self.s.flags |= flags::TYPED_UAV_LOADS;
             }
-            let h = self.handle(site, src, false, (10 | u, 0x409))?;
             let index = index.unwrap_or(self.s.m.i32(0));
-            self.s.op(
-                c,
-                "bufferLoad.f32",
-                Attr::ReadOnly,
-                self.s.t.res_ret,
-                68,
-                &[h, index, iu],
-            )
+            if halves {
+                // (fxceless #927, ported) The halves as unsigned integers.
+                let h = self.handle(site, src, false, (10 | u, 0x405))?;
+                let i32t = self.s.t.i32;
+                let ret = self.s.m.named_struct("dx.types.ResRet.i32", vec![i32t; 5]);
+                self.s.op(c, "bufferLoad.i32", Attr::ReadOnly, ret, 68, &[h, index, iu])
+            } else {
+                let h = self.handle(site, src, false, (10 | u, 0x409))?;
+                self.s.op(
+                    c,
+                    "bufferLoad.f32",
+                    Attr::ReadOnly,
+                    self.s.t.res_ret,
+                    68,
+                    &[h, index, iu],
+                )
+            }
         } else {
             let mask = self.s.m.i8((1u8 << count) - 1);
             let align = self.s.m.i32(4);
@@ -1663,16 +1699,25 @@ impl<'a> Lower<'a> {
             // Two 16-bit channels per VGPR (an odd last high half 0): f16s,
             // or through an integer view the integers' low halves (the float
             // load passes their bits: `half_view_tests`).
-            let integer = if typed { self.integer_view(src)? } else { None };
+            let integer = if typed && !halves { self.integer_view(src)? } else { None };
             let k16 = self.s.m.i32(16);
             let i32t = self.s.t.i32;
             for k in 0..count.div_ceil(2) {
                 let mut x = None;
                 for ch in (2 * k..(2 * k + 2).min(count)).rev() {
                     let f = self.s.m.extract(c, r, ch);
-                    let mut h = self
-                        .s
-                        .op(c, "legacyF32ToF16", Attr::ReadNone, i32t, 130, &[f]);
+                    // Ported from Op-lite/victory-scarlett (GPL-3.0): fxceless #927 halves, D1 d16 bits.
+                    let mut h = if halves {
+                        // The 16 bits of each as they are.
+                        let low = self.s.m.i32(0xffff);
+                        self.s.m.bin(c, Bin::And, f, low)
+                    } else if typed && integer.is_none() {
+                        // No view-kind word for this view: its 16 bits where they
+                        // are an integer's ([`Self::d16_bits`]).
+                        self.d16_bits(f)
+                    } else {
+                        self.s.op(c, "legacyF32ToF16", Attr::ReadNone, i32t, 130, &[f])
+                    };
                     if let Some((int, _)) = integer {
                         let bits = self.as_int(f);
                         let low = self.s.m.i32(0xFFFF);
@@ -1693,7 +1738,8 @@ impl<'a> Lower<'a> {
         }
         for k in 0..count {
             let x = self.s.m.extract(c, r, k);
-            let x = self.as_int(x);
+            // (Integers already where the load moved halves.)
+            let x = if halves { x } else { self.as_int(x) };
             self.write(inst, Reg::V(reg + k as u8), x, guard);
         }
         Ok(())

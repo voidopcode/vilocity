@@ -199,6 +199,7 @@ pub(super) fn try_lower(native: &NativeProgram, split: bool) -> Result<HostShade
         root_srvs: l.root_srvs,
         root_uavs: l.root_uavs,
         root_indexed_views: Vec::new(),
+        half_views: l.half_views,
     };
     if let Ok(mut v) = validator::Validator::load(validator::Validator::default_path().as_deref()) {
         let mut copy = shader.dxil.clone();
