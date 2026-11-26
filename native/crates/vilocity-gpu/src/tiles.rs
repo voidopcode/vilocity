@@ -721,7 +721,7 @@ pub(crate) fn status() {
 /// heaps belong to the device that made them.
 ///
 /// Run by name, alone, no game needed:
-/// `cargo test -p vilocity-native-gpu --release -- --ignored levels_on_demand --nocapture`
+/// `cargo test -p vilocity-gpu --release -- --ignored levels_on_demand --nocapture`
 ///
 /// It runs on the SOFTWARE adapter unless `VILOCITY_TILES_TEST_CARD=1`: on
 /// that adapter nothing reaches the card or its driver, so nothing it does

@@ -12,6 +12,11 @@
 //! then the host if [`HostPolicy`] allows that DLL, then `Missing`.
 
 mod host;
+mod image_watch;
+#[cfg(all(windows, feature = "diagnostics"))]
+pub use vilocity_gpu::frame_phase;
+pub use vilocity_gpu::frames_begun;
+
 pub mod modules;
 mod registry;
 pub mod runtime;
@@ -19,6 +24,11 @@ pub mod runtime;
 pub use host::HostPolicy;
 pub use registry::{HleExport, HleModule, registry};
 pub use vilocity_gpu::console;
+#[cfg(all(windows, feature = "diagnostics"))]
+pub use vilocity_gpu::replay;
+
+#[cfg(windows)]
+pub use vilocity_gpu::pipeline::known as known_pipelines;
 
 use vilocity_loader::{ImportResolver, Provenance, Resolution};
 use vilocity_pe::ImportSymbol;

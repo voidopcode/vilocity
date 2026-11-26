@@ -14,7 +14,6 @@ pub mod gfx10;
 pub mod io;
 pub mod ir;
 pub mod native;
-pub mod range;
 pub mod resource;
 pub mod spill;
 pub mod structure;
@@ -24,12 +23,6 @@ pub use dxil::{DxilProgram, ShaderKind, XboxExtras};
 pub use native::{
     HwStage, NativeProgram, ResourceType, RootParam, RootType, UsedResource, native_programs,
 };
-
-/// A hash of what this translator is built from: its sources, manifest and
-/// build script, the workspace's lock file and the compiler's version. Caches
-/// of translations key on it, so a changed translator never serves an old
-/// translation.
-pub const SOURCE_HASH: &str = env!("VILOCITY_SHADER_SOURCE_HASH");
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ShaderError {

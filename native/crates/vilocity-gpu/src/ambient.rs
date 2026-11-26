@@ -1,5 +1,4 @@
-//! A stand-in for the indirect light the title traces rays for (from
-//! codec-d/cool_fox 30e54b4, GPL-3.0).
+//! A stand-in for the indirect light the title traces rays for.
 //!
 //! With the ray-tracing structure builder off (`crate::pipeline::builder_runs`)
 //! the title's rays find nothing. Its program that resolves the diffuse light
@@ -25,28 +24,22 @@
 //! at once). No occlusion but the creases'.
 //!
 //! `VILOCITY_AMBIENT`:
-//! - unset: the estimate at 0.8 (cool_fox's launcher's share).
-//! - `0`/`off`: the title's own output.
+//! - unset or `0`/`off`: the title's own output.
 //! - a number: that share of the estimate (1: all of it).
-//! - `constant:<level>`: the constant, as beloooo's fork has it (this
-//!   crate's earlier behaviour, 0.6 then).
+//! - `constant:<level>`: the constant, as beloooo's fork has it.
 //!
-//! `VILOCITY_AMBIENT_SHADE=<strength>,<radius in metres>,<near>,<tan_y>` sets
-//! the creases.
+//! `VILOCITY_AMBIENT_SHADE=<strength>,<radius in metres>` sets the creases.
 //!
 //! The air of a room is lit by the same probes: without rays they hold the
 //! sky's light indoors too, a brown veil at sunset. `VILOCITY_AMBIENT_AIR`
 //! bounds what the air scatters by a multiple of the light around.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use windows::Win32::Graphics::Direct3D12::*;
-use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::core::s;
 
 use crate::host::{HostList, host};
-use crate::object::This;
 
 /// Programs of the title the stand-in follows.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -75,26 +68,13 @@ pub(crate) fn role(container: &[u8]) -> Option<Role> {
 }
 
 /// Where the resolve writes the diffuse light (R9G9B9E5 as 32-bit integers)
-/// and reads the scene's depth (reversed, D32 with stencil), and where the
-/// other writes the light of visible surfaces: root parameter and place in
-/// its table, in dwords.
+/// and reads the scene's depth, and where the other writes the light of
+/// visible surfaces: root parameter and place in its table, in dwords.
 pub(crate) const LIGHT: (u8, u32) = (1, 176);
 pub(crate) const DEPTH: (u8, u32) = (0, 464);
 pub(crate) const RADIANCE: (u8, u32) = (1, 16);
 /// Where the light the air scatters is.
 pub(crate) const AIR: (u8, u32) = (1, 32);
-
-/// The program that puts what the rays found into the screen probes'
-/// radiance, ahead of the resolve. Without rays it put in what their
-/// buffers held: rainbow glitter through the final gather on faces and
-/// jackets (target dump of run gta6-20261125-173003: the final gather's
-/// outputs carry it, fed by the probes' radiance). With it in
-/// `VILOCITY_ZERO_OUT` its outputs are cleared and, in the constant mode,
-/// its radiance is the constant.
-pub(crate) const INJECT: &[u8] = b"CS_ScreenProbes_Inject";
-/// Where it writes the probes' radiance (R9G9B9E5 as 32-bit integers, a
-/// 2048x456 atlas): root parameter and place in its table.
-pub(crate) const INJECTED: (u8, u32) = (1, 112);
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Set {
@@ -105,9 +85,6 @@ enum Set {
 
 fn parse(set: &str) -> Set {
     let set = set.trim();
-    if set.is_empty() {
-        return Set::Estimate(0.8);
-    }
     let number = |t: &str| t.trim().parse::<f32>().ok().filter(|v| v.is_finite() && *v > 0.0);
     match set.strip_prefix("constant:") {
         Some(level) => number(level).map_or(Set::Off, Set::Constant),
@@ -140,10 +117,10 @@ fn air() -> f32 {
 /// channel, the leftover's brightness bounded, as cool_fox had it. Its hue
 /// is kept, and without rays the leftover is whatever that memory held
 /// (Neptune-VE saw bright magenta on translucent surfaces): a sheet of paper
-/// on the cell wall of the first scene was a glowing magenta (cool_fox run
-/// cf-skin0). `hue` (1): its brightness, within the same bound, in the
-/// estimate's colour. Unset or `off` (2): the estimate alone, as Neptune-VE
-/// has it; the sheet was white (cool_fox run cf-skin1).
+/// on the cell wall of the first scene was a glowing magenta (run cf-skin0).
+/// `hue` (1): its brightness, within the same bound, in the estimate's colour.
+/// Unset or `off` (2): the estimate alone, as Neptune-VE has it; the sheet
+/// was white (run cf-skin1).
 fn leftover() -> u32 {
     static SET: OnceLock<u32> = OnceLock::new();
     *SET.get_or_init(|| leftover_mode(&std::env::var("VILOCITY_AMBIENT_LEFTOVER").unwrap_or_default()))
@@ -157,13 +134,11 @@ fn leftover_mode(set: &str) -> u32 {
     }
 }
 
-/// Strength and radius of the creases' shade, the near plane's distance and
-/// the tangent of half the vertical field of view (guesses the picture is
-/// not sensitive to).
-fn shade() -> [f32; 4] {
-    static SET: OnceLock<[f32; 4]> = OnceLock::new();
+/// Strength and radius of the creases' shade.
+fn shade() -> [f32; 2] {
+    static SET: OnceLock<[f32; 2]> = OnceLock::new();
     *SET.get_or_init(|| {
-        let mut shade = [1.0, 0.6, 0.1, 0.45];
+        let mut shade = [1.0, 0.6];
         let set = std::env::var("VILOCITY_AMBIENT_SHADE").unwrap_or_default();
         for (to, v) in shade.iter_mut().zip(set.split(',')) {
             if let Ok(v) = v.trim().parse() {
@@ -392,10 +367,6 @@ const CELLS: u64 = 64 * 36;
 const CELL_BYTES: u64 = (2 * CELLS + 1) * 16;
 const POINT_BYTES: u64 = 160 * 90 * 48;
 
-/// Pairs of views (image, depth), used in turn: more than the passes of
-/// every list in flight.
-const SLOTS: u32 = 1024;
-
 struct Pass {
     root: ID3D12RootSignature,
     keep: ID3D12PipelineState,
@@ -406,9 +377,6 @@ struct Pass {
     air: ID3D12PipelineState,
     cells: ID3D12Resource,
     points: ID3D12Resource,
-    views: ID3D12DescriptorHeap,
-    step: u32,
-    next: AtomicU32,
 }
 // SAFETY: D3D12 objects are free-threaded.
 unsafe impl Send for Pass {}
@@ -439,16 +407,6 @@ fn make(device: &ID3D12Device, buffer: impl Fn(u64) -> Option<ID3D12Resource>) -
     let raise = pipeline("RAISE", s!("raise"))?;
     let air = pipeline("AIR", s!("clear_air"))?;
     let made = |bytes| buffer(bytes).ok_or_else(windows::core::Error::empty);
-    let kind = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-    // SAFETY: a plain creation.
-    let views = unsafe {
-        device.CreateDescriptorHeap(&D3D12_DESCRIPTOR_HEAP_DESC {
-            Type: kind,
-            NumDescriptors: SLOTS * 2,
-            Flags: D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
-            NodeMask: 0,
-        })?
-    };
     Ok(Pass {
         root: root.ok_or_else(windows::core::Error::empty)?,
         keep,
@@ -459,10 +417,6 @@ fn make(device: &ID3D12Device, buffer: impl Fn(u64) -> Option<ID3D12Resource>) -
         air,
         cells: made(CELL_BYTES)?,
         points: made(POINT_BYTES)?,
-        views,
-        // SAFETY: a plain query.
-        step: unsafe { device.GetDescriptorHandleIncrementSize(kind) },
-        next: AtomicU32::new(0),
     })
 }
 
@@ -485,24 +439,27 @@ fn uav_barrier(list: &ID3D12GraphicsCommandList) {
 
 /// Whether the light of a frame has been kept: the estimate has something
 /// to begin with.
-static KEPT: AtomicBool = AtomicBool::new(false);
+static KEPT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-macro_rules! once {
-    ($($arg:tt)*) => {{
-        static ONCE: std::sync::Once = std::sync::Once::new();
-        ONCE.call_once(|| tracing::warn!($($arg)*));
-    }};
+/// What the passes read and write, as views in the heap the list has set.
+pub(crate) struct Views {
+    /// The image the title's program just wrote.
+    pub(crate) image: D3D12_GPU_DESCRIPTOR_HANDLE,
+    /// The scene's depth, for [`Role::Resolve`].
+    pub(crate) depth: D3D12_GPU_DESCRIPTOR_HANDLE,
+    /// The size of the image, and how many slices it has.
+    pub(crate) size: [u32; 2],
+    pub(crate) slices: u32,
 }
 
-/// After the title's program of that role, in `list`: `image` is what it
-/// just wrote (for the resolve, also the probes' radiance of
-/// [`INJECT`]), `depth` the scene's depth the resolve read. Replaces the
-/// list's view heap, compute root signature and pipeline; false if it
-/// recorded nothing.
-pub(crate) fn after(list: &HostList, role: Role, image: This, depth: Option<This>) -> bool {
-    if !on() {
+/// After the title's program of that role, in `list` with the program's view
+/// heap set. Replaces the list's compute root signature and pipeline; false
+/// if it recorded nothing.
+pub(crate) fn after(list: &HostList, role: Role, views: &Views) -> bool {
+    use std::sync::atomic::Ordering;
+    let Some(pass) = pass() else {
         return false;
-    }
+    };
     let (level, constant) = match set() {
         Set::Off => return false,
         Set::Estimate(level) => (level, 0.0f32),
@@ -514,99 +471,38 @@ pub(crate) fn after(list: &HostList, role: Role, image: This, depth: Option<This
     if role == Role::Air && (constant > 0.0 || air() == 0.0) {
         return false;
     }
-    let (Some(host), Some(pass)) = (host(), pass()) else {
-        return false;
-    };
-    let Some(image) = crate::resource::host_resource(image) else {
-        return false;
-    };
-    // SAFETY: a live resource.
-    let of = unsafe { image.GetDesc() };
-    // (R32_UINT holding R9G9B9E5; R11G11B10_FLOAT.)
-    let format = if role == Role::Resolve { DXGI_FORMAT_R32_UINT } else { DXGI_FORMAT_R11G11B10_FLOAT };
-    let volume = of.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D;
-    if of.Format != format || volume != (role == Role::Air) {
-        once!(?role, format = of.Format.0, "no stand-in for the indirect light: another image");
-        return false;
-    }
-    let size = [of.Width as u32, of.Height];
-    // The depth the resolve just read, in the state it read it in; of the
-    // image's size. Without it the estimate is left out, the constant
-    // unshaded.
-    let depth = depth.and_then(crate::resource::host_resource).filter(|t| {
-        // SAFETY: a live resource.
-        let t = unsafe { t.GetDesc() };
-        t.Format == DXGI_FORMAT_R32G8X24_TYPELESS && (t.Width, t.Height) == (of.Width, of.Height)
-    });
-    if role == Role::Resolve && constant == 0.0 && depth.is_none() {
-        once!("no stand-in for the indirect light: no depth");
-        return false;
-    }
     static SAID: Mutex<u32> = Mutex::new(0);
     {
         let mut said = SAID.lock().unwrap_or_else(|e| e.into_inner());
         if *said < 4 {
             *said += 1;
-            tracing::info!(?role, ?size, level, constant, "a stand-in for the indirect light");
+            tracing::info!(?role, size = ?views.size, level, constant, "a stand-in for the indirect light");
         }
-    }
-    list.keep(image);
-    if let Some(depth) = depth {
-        list.keep(depth);
     }
     list.keep(&pass.cells);
     list.keep(&pass.points);
-    let [strength, radius, near, tan_y] = shade();
-    let strength = if depth.is_some() { strength } else { 0.0 };
-    let floats = [level, constant, strength, radius, near, tan_y];
+    let [strength, radius] = shade();
+    let floats = [level, constant, strength, radius, 0.1, 0.45];
     let mut words = [0u32; 12];
     for (to, v) in words.iter_mut().zip(floats) {
         *to = v.to_bits();
     }
-    words[6] = size[0];
-    words[7] = size[1];
+    words[6] = views.size[0];
+    words[7] = views.size[1];
     words[8] = 0.04f32.to_bits();
     words[9] = 4.0f32.to_bits();
     words[10] = air().to_bits();
     words[11] = leftover();
-    let slot = pass.next.fetch_add(1, Ordering::Relaxed) % SLOTS * 2;
     let l = &list.list;
-    // SAFETY: an open list; the title's program has just used both
-    // textures, so they are in the states these views need; a pair of views
-    // no list in flight reads; resources the list keeps.
+    // SAFETY: an open list with the heap of the views set; the title's
+    // program has just used both views, so their textures are in the states
+    // these views need; buffers the list keeps.
     unsafe {
-        let cpu = pass.views.GetCPUDescriptorHandleForHeapStart().ptr + (slot * pass.step) as usize;
-        let gpu = pass.views.GetGPUDescriptorHandleForHeapStart().ptr + u64::from(slot * pass.step);
-        let mut view = D3D12_UNORDERED_ACCESS_VIEW_DESC { Format: of.Format, ..Default::default() };
-        if volume {
-            view.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE3D;
-            view.Anonymous.Texture3D = D3D12_TEX3D_UAV { MipSlice: 0, FirstWSlice: 0, WSize: u32::MAX };
-        } else {
-            view.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-        }
-        host.device.CreateUnorderedAccessView(
-            image,
-            None::<&ID3D12Resource>,
-            Some(&view),
-            D3D12_CPU_DESCRIPTOR_HANDLE { ptr: cpu },
-        );
-        // With no depth, a null view: only the resolve's passes read it.
-        let seen = D3D12_SHADER_RESOURCE_VIEW_DESC {
-            Format: DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS,
-            ViewDimension: D3D12_SRV_DIMENSION_TEXTURE2D,
-            Shader4ComponentMapping: D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
-            Anonymous: D3D12_SHADER_RESOURCE_VIEW_DESC_0 {
-                Texture2D: D3D12_TEX2D_SRV { MipLevels: 1, ..Default::default() },
-            },
-        };
-        let beside = D3D12_CPU_DESCRIPTOR_HANDLE { ptr: cpu + pass.step as usize };
-        host.device.CreateShaderResourceView(depth, Some(&seen), beside);
         uav_barrier(l);
-        l.SetDescriptorHeaps(&[Some(pass.views.clone())]);
         l.SetComputeRootSignature(&pass.root);
         l.SetComputeRoot32BitConstants(0, 12, words.as_ptr().cast(), 0);
-        l.SetComputeRootDescriptorTable(1, D3D12_GPU_DESCRIPTOR_HANDLE { ptr: gpu + u64::from(pass.step) });
-        l.SetComputeRootDescriptorTable(2, D3D12_GPU_DESCRIPTOR_HANDLE { ptr: gpu });
+        l.SetComputeRootDescriptorTable(1, views.depth);
+        l.SetComputeRootDescriptorTable(2, views.image);
         l.SetComputeRootUnorderedAccessView(3, pass.cells.GetGPUVirtualAddress());
         l.SetComputeRootUnorderedAccessView(4, pass.points.GetGPUVirtualAddress());
         let run = |pso: &ID3D12PipelineState, x, y, z| {
@@ -620,18 +516,13 @@ pub(crate) fn after(list: &HostList, role: Role, image: This, depth: Option<This
                 run(&pass.mean, 1, 1, 1);
                 KEPT.store(true, Ordering::Relaxed);
             }
-            Role::Air => run(
-                &pass.air,
-                size[0].div_ceil(8),
-                size[1].div_ceil(8),
-                u32::from(of.DepthOrArraySize).div_ceil(2),
-            ),
+            Role::Air => run(&pass.air, views.size[0].div_ceil(8), views.size[1].div_ceil(8), views.slices.div_ceil(2)),
             Role::Resolve => {
                 if constant == 0.0 {
                     run(&pass.place, 8, 9, 1);
                     run(&pass.gather, 20, 45, 1);
                 }
-                run(&pass.raise, size[0].div_ceil(8), size[1].div_ceil(8), 1);
+                run(&pass.raise, views.size[0].div_ceil(8), views.size[1].div_ceil(8), 1);
             }
         }
     }
@@ -644,7 +535,7 @@ mod tests {
 
     #[test]
     fn settings() {
-        assert_eq!(parse(""), Set::Estimate(0.8));
+        assert_eq!(parse(""), Set::Off);
         assert_eq!(parse("off"), Set::Off);
         assert_eq!(parse("0"), Set::Off);
         assert_eq!(parse("0.8"), Set::Estimate(0.8));

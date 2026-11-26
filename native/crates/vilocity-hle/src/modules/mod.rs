@@ -63,6 +63,12 @@ pub(crate) fn all() -> Vec<HleModule> {
     all.push(media::module());
     #[cfg(windows)]
     all.push(dstorage::module());
+    // (Neptune-VE) Only when asked for and the PC DLL loads: the title's
+    // own upscaler runs otherwise.
+    #[cfg(windows)]
+    if fidelityfx::enabled() {
+        all.push(fidelityfx::module());
+    }
     #[cfg(windows)]
     all.push(files::module());
     #[cfg(windows)]
@@ -74,9 +80,5 @@ pub(crate) fn all() -> Vec<HleModule> {
     all.push(xmem::module());
     #[cfg(windows)]
     all.push(xsystem::module());
-    #[cfg(windows)]
-    if fidelityfx::serving() {
-        all.push(fidelityfx::module());
-    }
     all
 }

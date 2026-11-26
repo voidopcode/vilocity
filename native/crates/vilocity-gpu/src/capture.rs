@@ -47,18 +47,8 @@ pub(crate) fn listed(n: u64) -> bool {
     });
     let first = WORLD.load(std::sync::atomic::Ordering::Relaxed);
     let after = n.wrapping_sub(first);
-    let timed = TIMED.load(std::sync::atomic::Ordering::Relaxed);
-    named
-        || timed != u64::MAX && (n == timed || n == timed + 1)
-        || first != u64::MAX && ([2, 6, 30, 80].contains(&after) || also.contains(&after))
+    named || first != u64::MAX && ([2, 6, 30, 80].contains(&after) || also.contains(&after))
 }
-
-/// `VILOCITY_CAPTURE_WORLD_SECONDS=<s>`: two frames s seconds after the world's first
-/// frame are captured too. Frame numbers land on different shots from launch to launch
-/// (each runs at its own pace); a time well past the opening cutscene lands in the
-/// same place (the prologue's cell) every time, so launches can be compared.
-static TIMED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
-static WORLD_AT: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
 /// With a capture folder, for the frames [`listed`]: `what` is added to
 /// the frame's `frame-<n>-ops.txt`, one line per draw, dispatch, copy or
@@ -130,22 +120,6 @@ fn world_on() -> bool {
     *ON.get_or_init(|| std::env::var_os("VILOCITY_CAPTURE_WORLD").is_some())
 }
 
-/// Every how many world frames a picture is saved with
-/// `VILOCITY_CAPTURE_WORLD` (`VILOCITY_CAPTURE_WORLD_EVERY`, 8 unless said).
-///
-/// A saved frame is read back at once and written as a PNG inside the
-/// present: run 225's frame log has every saved frame of the cell at 371 ms
-/// against a usual 136 (the present's own copy and show 137 ms instead of
-/// 2, and 123 ms more waiting for the card). At every 8th frame that was
-/// the regular dip of every test run, and a fifth of its time. A run that
-/// measures speed asks for 64 or more.
-fn world_every() -> u64 {
-    static EVERY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *EVERY.get_or_init(|| {
-        std::env::var("VILOCITY_CAPTURE_WORLD_EVERY").ok().and_then(|v| v.trim().parse().ok()).filter(|&n| n > 0).unwrap_or(8)
-    })
-}
-
 /// The first frame that ran 500 draws or more (`VILOCITY_CAPTURE_WORLD`).
 static WORLD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
 
@@ -154,12 +128,10 @@ pub(crate) fn frame_drew(frame: u64, drawn: u64) {
     use std::sync::atomic::Ordering::Relaxed;
     static LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let before = LAST.swap(drawn, Relaxed);
-    timed_capture(frame);
     if world_on()
         && drawn.saturating_sub(before) >= 500
         && WORLD.compare_exchange(u64::MAX, frame, Relaxed, Relaxed).is_ok()
     {
-        let _ = WORLD_AT.set(std::time::Instant::now());
         tracing::info!(frame, "the first frame of 500 draws or more: frames {} and {} are captured", frame + 2, frame + 6);
         #[cfg(feature = "diagnostics")]
         if let Some(folder) = folder() {
@@ -167,24 +139,6 @@ pub(crate) fn frame_drew(frame: u64, drawn: u64) {
             let _ = std::fs::write(folder.join("before-world-ops.txt"), lines.join("
 "));
         }
-    }
-}
-
-/// At each present: the frames `VILOCITY_CAPTURE_WORLD_SECONDS` asks for, once the time has come.
-fn timed_capture(frame: u64) {
-    use std::sync::atomic::Ordering::Relaxed;
-    static SECONDS: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
-    let Some(secs) = *SECONDS.get_or_init(|| {
-        std::env::var("VILOCITY_CAPTURE_WORLD_SECONDS").ok().and_then(|v| v.trim().parse().ok())
-    }) else {
-        return;
-    };
-    if WORLD_AT.get().is_some_and(|at| at.elapsed().as_secs() >= secs)
-        && TIMED.compare_exchange(u64::MAX, frame + 2, Relaxed, Relaxed).is_ok()
-    {
-        tracing::info!(frame = frame + 2, secs, "frames captured at VILOCITY_CAPTURE_WORLD_SECONDS");
-        #[cfg(feature = "diagnostics")]
-        crate::draw::stale_textures(frame);
     }
 }
 
@@ -197,7 +151,7 @@ pub(crate) fn wanted(n: u64) -> bool {
     // cutscene (its shots do not fall on the same frame numbers from run to
     // run, so single frames cannot be compared between runs).
     let first = WORLD.load(std::sync::atomic::Ordering::Relaxed);
-    let in_world = world_on() && first != u64::MAX && n > first && (n - first).is_multiple_of(world_every());
+    let in_world = world_on() && first != u64::MAX && n > first && (n - first).is_multiple_of(8);
     folder().is_some() && (n.is_power_of_two() || listed(n) || before_world || in_world)
 }
 
@@ -224,6 +178,27 @@ fn save_as(name: &str, width: u32, height: u32, pitch: usize, bgra: bool, rows: 
             }
         }
     }
+    let png = encode(w, h, &raw);
+    let path = folder.join(format!("{name}.png"));
+    match std::fs::write(&path, png) {
+        Ok(()) => tracing::info!(path = %path.display(), "frame saved"),
+        Err(e) => tracing::warn!(error = %e, path = %path.display(), "frame not saved"),
+    }
+}
+
+/// A PNG of `width * height` pixels of 8-bit RGB.
+pub(crate) fn png(width: u32, height: u32, rgb: &[u8]) -> Vec<u8> {
+    let row = width as usize * 3;
+    let mut raw = Vec::with_capacity((row + 1) * height as usize);
+    for line in rgb.chunks_exact(row.max(1)) {
+        raw.push(0);
+        raw.extend_from_slice(line);
+    }
+    encode(width, height, &raw)
+}
+
+/// A PNG of rows of RGB, each behind its filter byte.
+fn encode(w: u32, h: u32, raw: &[u8]) -> Vec<u8> {
     let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
     let mut header = Vec::new();
     header.extend(w.to_be_bytes());
@@ -231,15 +206,11 @@ fn save_as(name: &str, width: u32, height: u32, pitch: usize, bgra: bool, rows: 
     header.extend([8, 2, 0, 0, 0]); // 8-bit RGB
     chunk(&mut png, b"IHDR", &header);
     let mut compressed = vec![0u8; zlib_rs::compress_bound(raw.len())];
-    let (idat, rc) = zlib_rs::compress_slice(&mut compressed, &raw, zlib_rs::DeflateConfig::new(3));
+    let (idat, rc) = zlib_rs::compress_slice(&mut compressed, raw, zlib_rs::DeflateConfig::new(3));
     debug_assert_eq!(rc, zlib_rs::ReturnCode::Ok);
     chunk(&mut png, b"IDAT", idat);
     chunk(&mut png, b"IEND", &[]);
-    let path = folder.join(format!("{name}.png"));
-    match std::fs::write(&path, png) {
-        Ok(()) => tracing::info!(path = %path.display(), "frame saved"),
-        Err(e) => tracing::warn!(error = %e, path = %path.display(), "frame not saved"),
-    }
+    png
 }
 
 fn chunk(png: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
@@ -387,7 +358,7 @@ static TARGETS: std::sync::Mutex<Vec<(usize, std::sync::Arc<crate::resource::Hos
 
 fn dump_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| folder().is_some() && std::env::var_os("VILOCITY_DUMP_TARGETS").is_some())
+    *ON.get_or_init(|| folder().is_some() && crate::switch::on("VILOCITY_DUMP_TARGETS"))
 }
 
 /// Notes a title texture the frame being built renders to or writes.
@@ -418,19 +389,6 @@ pub(crate) fn dump_targets(frame: u64) {
         // Every submission has run; the dump's list moves it there and back.
         let state = copy.state.load(Relaxed);
         dump_one(host, texture, state, frame, i, *resource as crate::object::This, &d);
-    }
-    // `VILOCITY_DUMP_BUFFERS=<hex address>:<bytes>,...`: those bytes of title
-    // memory too, where shaders' writes are copied back once their
-    // submission has run (`frame-N-buf-<address>.bin`).
-    let Some(dir) = folder() else { return };
-    for spec in std::env::var("VILOCITY_DUMP_BUFFERS").unwrap_or_default().split(',') {
-        let Some((a, n)) = spec.trim().split_once(':') else { continue };
-        let (Ok(a), Ok(n)) = (u64::from_str_radix(a.trim_start_matches("0x"), 16), n.parse::<usize>()) else {
-            continue;
-        };
-        let mut bytes = vec![0u8; n];
-        crate::host::copy_mapped(bytes.as_mut_ptr(), a as *const u8, n, false);
-        let _ = std::fs::write(dir.join(format!("frame-{frame}-buf-{a:#x}.bin")), bytes);
     }
 }
 
@@ -672,8 +630,7 @@ fn to_rgba(format: u32, w: usize, h: usize, pitch: usize, rows: &[u8]) -> Option
     // lamp on black have the same highest value.
     let above = values.iter().filter(|v| v.iter().any(|c| c.is_finite() && *c > low)).count();
     let nonzero_percent = above as f32 * 100.0 / values.len().max(1) as f32;
-    let nonfinite = values.iter().flatten().filter(|c| !c.is_finite()).count();
-    tracing::info!(format, w, h, low, high, nonzero_percent, nonfinite, "target values");
+    tracing::info!(format, low, high, nonzero_percent, "target values");
     // Small float colour targets (the 1x1 luminance and exposure targets):
     // every texel's four channels as numbers. The picture has no alpha and
     // eight bits a channel.

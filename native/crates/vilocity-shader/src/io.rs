@@ -68,21 +68,8 @@ pub enum Input {
     GroupInfo,
     /// Mesh: v5, the group id times the group size (read as uniform).
     MeshGroup,
-    /// Mesh: s3, the wave's index in the group in bits 24-27. Geometry:
-    /// the group's ES vertices in bits 0-7, its primitives in bits 8-15.
+    /// Mesh: s3, the wave's index in the group in bits 24-27.
     MergedWaveInfo,
-    /// Geometry: v0, the LDS dword offsets of the triangle's first two
-    /// vertices (16 bits each).
-    GsOffsets01,
-    /// Geometry: v1, the LDS dword offset of its third vertex.
-    GsOffset2,
-    /// Geometry: s2, where the GS output area starts in LDS (bytes).
-    GsOutputBase,
-    /// Geometry: an ES input attribute (a row of the vertex shader's `ISG1`).
-    EsAttribute {
-        row: u8,
-        channel: u8,
-    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,11 +187,8 @@ pub struct Io {
     pub inputs: Vec<(Value, Input)>,
     pub interps: Vec<(Site, Interp)>,
     pub exports: Vec<Export>,
-    /// Compute and pixel: how many SGPRs the hardware initializes
-    /// ([`ComputeIo::initialized_sgprs`](crate::native::ComputeIo::initialized_sgprs);
-    /// pixel: the user SGPRs, at least the 8 ABI slots and up to the last
-    /// root parameter's, then the primitive mask and the ordered-section
-    /// (POPS) collision id, as every pixel program of the title reads them).
+    /// Compute: how many SGPRs the hardware initializes
+    /// ([`ComputeIo::initialized_sgprs`](crate::native::ComputeIo::initialized_sgprs)).
     pub initialized_sgprs: Option<u8>,
 }
 
@@ -318,21 +302,6 @@ pub fn raise(p: &Program, native: &NativeProgram) -> Result<Io, ShaderError> {
             ];
             (loaded, &[][..], &ms.outputs[..])
         }
-        (StageIo::Gs(g), HwStage::Gs) => {
-            let mut loaded = vec![
-                (Reg::V(0), Input::GsOffsets01),
-                (Reg::V(1), Input::GsOffset2),
-                (Reg::V(2), Input::PrimitiveId),
-                (Reg::S(2), Input::GsOutputBase),
-                (Reg::S(3), Input::MergedWaveInfo),
-            ];
-            for &(row, mask) in &g.es_inputs {
-                for channel in (0..4).filter(|c| mask >> c & 1 != 0) {
-                    loaded.push((Reg::V(9 + 4 * row + channel), Input::EsAttribute { row, channel }));
-                }
-            }
-            (loaded, &[][..], &[][..])
-        }
         _ => return Err(unsupported(0, "I/O of this stage")),
     };
     let inputs: Vec<(Value, Input)> = p
@@ -367,14 +336,6 @@ pub fn raise(p: &Program, native: &NativeProgram) -> Result<Io, ShaderError> {
         inputs: inputs.clone(),
         initialized_sgprs: match &native.io {
             StageIo::Cs(cs) => Some(cs.initialized_sgprs()),
-            StageIo::Ps { .. } => {
-                let user = native
-                    .layout
-                    .iter()
-                    .map(|r| u32::from(r.user_data) + r.sgprs)
-                    .max();
-                Some(user.unwrap_or(0).clamp(8, 104) as u8 + 2)
-            }
             _ => None,
         },
         ..Io::default()
@@ -408,6 +369,7 @@ pub fn raise(p: &Program, native: &NativeProgram) -> Result<Io, ShaderError> {
         defs: &defs,
         phis: &phis,
     };
+    let mut first_halves = Vec::new();
     for (b, block) in p.blocks.iter().enumerate() {
         for (i, inst) in block.insts.iter().enumerate() {
             let site = (b, i);
@@ -421,7 +383,7 @@ pub fn raise(p: &Program, native: &NativeProgram) -> Result<Io, ShaderError> {
                             io.interps
                                 .push((site, Interp::Vertex { attribute, vertex }));
                         }
-                        ("v_interp_p1_f32", _) => {}
+                        ("v_interp_p1_f32", _) => first_halves.push((site, attribute)),
                         ("v_interp_p2_f32", Operand::Vector { reg, .. }) => {
                             let Operand::Vector { reg: d, .. } = *dst else {
                                 return Err(unsupported(at, "an interpolation operand"));
@@ -441,7 +403,9 @@ pub fn raise(p: &Program, native: &NativeProgram) -> Result<Io, ShaderError> {
                     }
                 }
                 Fields::Valu(v) if name.starts_with("v_interp_") => match name {
-                    "v_interp_p1ll_f16" => {}
+                    "v_interp_p1ll_f16" => {
+                        first_halves.push((site, attribute(inst, &v.src[0])?));
+                    }
                     "v_interp_p2_f16" => {
                         let attribute = attribute(inst, &v.src[0])?;
                         let read = |k: usize| match v.src.get(k) {
@@ -497,6 +461,52 @@ pub fn raise(p: &Program, native: &NativeProgram) -> Result<Io, ShaderError> {
                 }
                 _ => {}
             }
+        }
+    }
+    if first_halves.is_empty() {
+        return Ok(io);
+    }
+    // A loaded i/j pair normally becomes one host interpolation: its first
+    // half need not be evaluated. A first half also read as data (or used
+    // without a second half) must keep P0 + i * P10. Follow phi uses too,
+    // without forcing ordinary pairs to read per-vertex attributes.
+    let folded: std::collections::HashSet<_> = io
+        .interps
+        .iter()
+        .filter_map(|(s, i)| matches!(i, Interp::Interpolated { .. }).then_some(*s))
+        .collect();
+    let mut used: std::collections::HashSet<_> = p
+        .blocks
+        .iter()
+        .enumerate()
+        .flat_map(|(b, blk)| {
+            blk.insts
+                .iter()
+                .enumerate()
+                .map(move |(i, inst)| ((b, i), inst))
+        })
+        .filter(|(s, _)| !folded.contains(s))
+        .flat_map(|(_, inst)| inst.reads.iter().map(|r| r.1))
+        .collect();
+    loop {
+        let before = used.len();
+        for phi in p.blocks.iter().flat_map(|b| &b.phis) {
+            if used.contains(&phi.value) {
+                used.extend(&phi.args);
+            }
+        }
+        if used.len() == before {
+            break;
+        }
+    }
+    for (site, attribute) in first_halves {
+        if !io.interps.iter().any(|(s, _)| *s == site)
+            && p.blocks[site.0].insts[site.1]
+                .writes
+                .iter()
+                .any(|w| used.contains(&w.1))
+        {
+            io.interps.push((site, Interp::Weighted { attribute }));
         }
     }
     Ok(io)
@@ -762,6 +772,50 @@ mod tests {
                 ((0, 2), Interp::Weighted { attribute }),
             ]
         );
+    }
+
+    #[test]
+    fn first_halves_read_through_a_phi_keep_their_partial_values() {
+        let p = program(&[
+            0xBF06_8000, // s_cmp_eq_u32 s0, 0
+            0xBF85_0002, // s_cbranch_scc1 -> second first half
+            0xC808_0000, // v_interp_p1_f32 v2, v0, attr0.x
+            0xBF82_0001, // s_branch -> export
+            0xC808_0000, // v_interp_p1_f32 v2, v0, attr0.x
+            0xF800_180F,
+            0x0202_0202, // exp mrt0, v2, v2, v2, v2 done vm
+            S_ENDPGM,
+        ]);
+        let io = raise(&p, &pixel(vec![TEXCOORD], 2)).unwrap();
+        assert_eq!(io.interps.len(), 2);
+        assert!(
+            io.interps
+                .iter()
+                .all(|(_, i)| matches!(i, Interp::Weighted { .. }))
+        );
+    }
+
+    #[test]
+    fn a_standalone_f16_first_half_is_weighted() {
+        let p = program(&[
+            0xD742_0002,
+            0x0002_0000, // v_interp_p1ll_f16 v2, v0, attr0.x
+            0xF800_180F,
+            0x0202_0202,
+            S_ENDPGM,
+        ]);
+        let io = raise(
+            &p,
+            &pixel(
+                vec![PsInput {
+                    fp16: true,
+                    ..TEXCOORD
+                }],
+                2,
+            ),
+        )
+        .unwrap();
+        assert!(matches!(&io.interps[..], [(_, Interp::Weighted { .. })]));
     }
 
     #[test]

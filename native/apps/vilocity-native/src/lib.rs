@@ -6,10 +6,13 @@
 
 mod census;
 mod inspect;
-mod prebuild;
+#[cfg(all(windows, feature = "diagnostics"))]
+mod replay;
 mod run;
 mod shader;
 mod translate;
+#[cfg(windows)]
+mod warm;
 
 use std::path::PathBuf;
 
@@ -59,21 +62,15 @@ enum Command {
         list: bool,
     },
     /// Find shader containers in files or directories (also inside engine
-    /// archives, if uncompressed) and report their layout. Shader packs
-    /// among the paths are listed last, their stages named from the
-    /// containers found.
+    /// archives, if uncompressed) and report their layout.
     ShaderInfo {
         paths: Vec<PathBuf>,
-        /// Print one line per container found (and per pack pipeline).
+        /// Print one line per container found.
         #[arg(long)]
         verbose: bool,
         /// Also list the decoded native instructions (implies --verbose).
         #[arg(long)]
         disasm: bool,
-        /// Instead list the effects of shader databases: technique, pass,
-        /// shaders (name, container hash, engine hash) and pass state.
-        #[arg(long)]
-        effects: bool,
     },
     /// Run every shader found (containers, SGD5 files) through the
     /// translator and report what it cannot handle yet.
@@ -83,10 +80,7 @@ enum Command {
         /// else the newest Windows SDK's).
         #[arg(long)]
         validate: bool,
-        /// Also create a host D3D12 pipeline for each emitted shader. With
-        /// `--cache`: then make every pipeline of the title's shader pack
-        /// into the host pipeline library `run` reads (on this GPU and
-        /// driver; a second time only what is not there yet).
+        /// Also create a host D3D12 pipeline for each emitted shader.
         #[arg(long)]
         pipelines: bool,
         /// Print one line per program and outcome.
@@ -95,18 +89,44 @@ enum Command {
         /// Worker threads (default: every logical core).
         #[arg(long)]
         jobs: Option<usize>,
-        /// Only translate into the shader cache `run` reads (the warm-up):
-        /// every container found, once, nothing else checked or listed
-        /// (with `--pipelines`, then the shader pack's pipelines).
-        #[arg(long, conflicts_with_all = ["validate", "list"])]
-        cache: bool,
         /// Warm the run's shader cache: a file of shader hashes (the 16
         /// hex digits a run's log names a shader by, anywhere in a line);
         /// the containers with those hashes are translated into the
         /// cache and nothing else is done. Set `VILOCITY_HOST_WAVE` and
         /// `VILOCITY_VIEW_LIMIT` to what the run's log says of the host.
-        #[arg(long, conflicts_with_all = ["validate", "list", "cache"])]
+        #[arg(long)]
         warm: Option<PathBuf>,
+    },
+    /// Translate every shader found (as `translate` finds them) into the
+    /// shader cache, so that no run has to: a few minutes, once per change
+    /// of the translator.
+    Shaders {
+        paths: Vec<PathBuf>,
+        /// Worker threads (default: every logical core).
+        #[arg(long)]
+        jobs: Option<usize>,
+    },
+    /// Make the host pipelines of every pipeline the title ever created
+    /// (runs with `VILOCITY_PIPELINE_BOOK=1` write them down), so that the
+    /// driver's cache on disk has them before a run needs one: once per change
+    /// of the translator or the driver. Goes on where it was stopped.
+    #[cfg(windows)]
+    Warm {
+        /// Processes at once (default: two thirds of the logical cores).
+        #[arg(long)]
+        jobs: Option<usize>,
+        /// At most this many pipelines.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Those made before too.
+        #[arg(long)]
+        again: bool,
+        /// Only the pipelines earlier runs drew with.
+        #[arg(long)]
+        used: bool,
+        /// (What the processes it starts are given.)
+        #[arg(long, hide = true)]
+        these: Option<String>,
     },
     /// Prepare, map and bind a title executable; with --execute, run it.
     Run {
@@ -128,6 +148,10 @@ enum Command {
         #[arg(last = true)]
         title_args: Vec<String>,
     },
+    /// Run a captured frame's GPU work again (diagnostics builds; see
+    /// docs/replay.md).
+    #[cfg(all(windows, feature = "diagnostics"))]
+    Replay(replay::Replay),
     /// Show the resolved configuration and check it.
     Config,
 }
@@ -169,22 +193,13 @@ pub fn main(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
             paths,
             verbose,
             disasm,
-            effects,
-        } => shader::run(paths, verbose || disasm, disasm, effects),
-        Command::Translate {
-            paths,
-            jobs,
-            pipelines,
-            cache: true,
-            ..
-        } => translate::warm(paths, jobs, pipelines),
+        } => shader::run(paths, verbose || disasm, disasm),
         Command::Translate {
             paths,
             validate,
             pipelines,
             list,
             jobs,
-            cache: false,
             warm,
         } => {
             // `VILOCITY_VIEW_LIMIT=<null slot>`: translate as on a host whose view heap is capped
@@ -196,18 +211,26 @@ pub fn main(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
                 vilocity_shader::emit::set_host_max_wave(n);
             }
             if let Some(file) = warm {
-                return translate::warm_listed(paths, &file, jobs);
+                return translate::warm(paths, &file, jobs);
             }
             translate::run(paths, validate, pipelines, list, jobs)
         }
+        Command::Shaders { paths, jobs } => translate::precompile(paths, jobs),
+        #[cfg(windows)]
+        Command::Warm { jobs, limit, again, used, these } => warm::run(jobs, limit, again, used, these),
         Command::Run {
             exe,
             unimplemented,
             strict,
             execute,
             console,
-            title_args: _,
-        } => run::run(&exe, unimplemented, strict, execute, console),
+            title_args,
+        } => {
+            vilocity_hle::runtime::set_title_args(title_args);
+            run::run(&exe, unimplemented, strict, execute, console)
+        }
+        #[cfg(all(windows, feature = "diagnostics"))]
+        Command::Replay(options) => replay::run(options),
         Command::Config => show_config(),
     }
 }
@@ -228,7 +251,6 @@ fn show_config() -> Result<()> {
     println!("game_dir    : {}", status(&cfg.game_dir));
     println!("cache_dir   : {}", cfg.cache_dir.display());
     println!("data_dir    : {}", cfg.data_dir.display());
-    println!("fidelityfx  : {}", status(&cfg.fidelityfx_dir));
     for t in &cfg.test_titles {
         println!("test_title  : {}", status(&Some(t.clone())));
     }

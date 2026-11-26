@@ -18,7 +18,7 @@
 
 use crate::ShaderError;
 use crate::gfx10::{Fields, NULL, Operand};
-use crate::ir::{Program, Reg, Value};
+use crate::ir::{self, Program, Reg, Value};
 use crate::native::{HwStage, NativeProgram, StageIo};
 
 /// The user-data index of the table's first dword.
@@ -27,8 +27,7 @@ const FIRST: u32 = 16;
 /// [`ir::build`] of `native`'s code as the hardware runs it, with the loads
 /// of a spilled user-data table rewritten ([`user_data`]).
 pub fn build(native: &NativeProgram) -> Result<Program, ShaderError> {
-    // Relative moves bounded by what their index can reach (`range`).
-    let (mut p, _) = crate::range::build(&native.patched_code(), native.wave64, native.vgprs)?;
+    let mut p = ir::build(&native.patched_code(), native.wave64, native.vgprs)?;
     user_data(&mut p, native);
     Ok(p)
 }
@@ -338,7 +337,7 @@ mod tests {
                 param(RootType::Constants, 20, 16, 2),
             ],
         );
-        let mut p = crate::ir::build(&n.code, false, 256).unwrap();
+        let mut p = ir::build(&n.code, false, 256).unwrap();
         assert_eq!(user_data(&mut p, &n), 2);
         let names: Vec<&str> = p.blocks.iter().flat_map(|b| &b.insts).map(|i| i.name()).collect();
         assert!(!names.iter().any(|n| n.starts_with("s_load_")), "{names:?}");
@@ -353,7 +352,7 @@ mod tests {
     fn parameters_in_registers_are_left_alone() {
         // The same code where s0 and s1 are a root view the layout declares.
         let n = native(&TABLE, 6, vec![param(RootType::Descriptor, 0, 2, 0)]);
-        let mut p = crate::ir::build(&n.code, false, 256).unwrap();
+        let mut p = ir::build(&n.code, false, 256).unwrap();
         let before = p.clone();
         assert_eq!(user_data(&mut p, &n), 0);
         assert_eq!(p, before);
@@ -366,7 +365,7 @@ mod tests {
         let mut words = TABLE.to_vec();
         words.insert(7, 0xBE86_0305);
         let n = native(&words, 4, vec![param(RootType::Descriptor, 16, 2, 0)]);
-        let mut p = crate::ir::build(&n.code, false, 256).unwrap();
+        let mut p = ir::build(&n.code, false, 256).unwrap();
         assert_eq!(user_data(&mut p, &n), 1);
         let loads = p
             .blocks

@@ -7,17 +7,10 @@
 //!    signature, the graphics state). The library is saved under the cache
 //!    folder; the host refuses a library of another adapter or driver, and
 //!    an entry whose description differs, so neither is ever used.
-//! 2. The title pipelines a run drew or dispatched with (made in time or
-//!    not) are listed by a key known when the title creates them (their
-//!    shader containers and graphics state); the next run hands those to
-//!    the workers at creation, during loading. A full list keeps the
-//!    latest run's first.
-//!
-//! 3. The pre-build (`vilocity translate --cache --pipelines`) lists the
-//!    title pipelines it has put in the library, by the same key, so a
-//!    second pre-build skips them without translating or loading anything.
-//!    The list holds only for the library bytes it was saved with and for
-//!    what names the pipelines (the translator, this module and `host`).
+//! 2. The title pipelines a run drew or dispatched with are listed by a key
+//!    known when the title creates them (their shader containers and
+//!    graphics state); the next run hands those to the workers at
+//!    creation, during loading.
 //!
 //! Library calls overlap: the host documents the library as safe to use
 //! from several threads ("The pipeline library is thread-safe to use, and
@@ -64,87 +57,14 @@ use windows::core::{HSTRING, Interface, PCWSTR};
 
 static DIR: OnceLock<PathBuf> = OnceLock::new();
 
-/// Pipelines whose making crashed the host's shader compiler, by name,
-/// kept in [`REFUSED_FILE`] beside the library: asked again they are not
-/// made, the compiler is not called. A compiler crash is caught inside the
-/// driver (the call returns E_OUTOFMEMORY), but the device did not stay
-/// sound: GTA VI lost the card 12 s after NVIDIA's compiler crashed on a
-/// compute pipeline in the run's process. The warm-up meets them first, so
-/// a run of the title never asks.
-// shortcut: kept across driver updates; delete the file to let a new driver try again.
-const REFUSED_FILE: &str = "refused-pipelines.txt";
-
-mod refused {
-    use std::cell::Cell;
-    use std::collections::HashSet;
-    use std::io::Write;
-    use std::sync::{Mutex, OnceLock};
-
-    use windows_sys::Win32::Foundation::EXCEPTION_ACCESS_VIOLATION;
-    use windows_sys::Win32::System::Diagnostics::Debug::{AddVectoredExceptionHandler, EXCEPTION_POINTERS};
-
-    thread_local! {
-        /// This thread is in the host's call that makes a pipeline, and
-        /// whether something in it faulted.
-        static MAKING: Cell<bool> = const { Cell::new(false) };
-        static FAULTED: Cell<bool> = const { Cell::new(false) };
-    }
-
-    unsafe extern "system" fn note(info: *mut EXCEPTION_POINTERS) -> i32 {
-        // SAFETY: the system passes valid exception pointers.
-        let code = unsafe { (*(*info).ExceptionRecord).ExceptionCode };
-        if code == EXCEPTION_ACCESS_VIOLATION && MAKING.try_with(Cell::get).unwrap_or(false) {
-            let _ = FAULTED.try_with(|f| f.set(true));
-        }
-        0 // EXCEPTION_CONTINUE_SEARCH: the driver's own handler goes on
-    }
-
-    fn names() -> &'static Mutex<HashSet<String>> {
-        static NAMES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-        NAMES.get_or_init(|| {
-            let text = super::DIR.get().and_then(|d| std::fs::read_to_string(d.join(super::REFUSED_FILE)).ok());
-            Mutex::new(text.map(|t| t.lines().map(str::to_owned).collect()).unwrap_or_default())
-        })
-    }
-
-    /// `create`, unless `name` crashed the compiler before; a crash in it
-    /// puts `name` on the list.
-    pub(super) fn make<T>(
-        name: &str,
-        create: impl FnOnce() -> windows::core::Result<T>,
-    ) -> windows::core::Result<T> {
-        if names().lock().unwrap_or_else(|e| e.into_inner()).contains(name) {
-            return Err(windows::core::Error::new(
-                windows::Win32::Foundation::E_FAIL,
-                "the host's compiler crashed on this pipeline before (refused-pipelines.txt)",
-            ));
-        }
-        static HOOK: OnceLock<()> = OnceLock::new();
-        HOOK.get_or_init(|| {
-            // SAFETY: a handler that only reads the record and sets thread-locals.
-            unsafe { AddVectoredExceptionHandler(1, Some(note)) };
-        });
-        MAKING.with(|m| m.set(true));
-        FAULTED.with(|f| f.set(false));
-        let made = create();
-        MAKING.with(|m| m.set(false));
-        if made.is_err() && FAULTED.with(Cell::get) {
-            tracing::warn!(name, "the host's compiler crashed making this pipeline: not asked for again");
-            names().lock().unwrap_or_else(|e| e.into_inner()).insert(name.to_owned());
-            if let Some(dir) = super::DIR.get() {
-                let file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join(super::REFUSED_FILE));
-                if let Ok(mut f) = file {
-                    let _ = writeln!(f, "{name}");
-                }
-            }
-        }
-        made
-    }
-}
-
 /// Keeps the pipeline library and the early list in `dir` from now on.
 pub fn use_pipeline_cache(dir: PathBuf) {
     let _ = DIR.set(dir);
+}
+
+/// The folder the library is kept in.
+pub(super) fn folder() -> Option<PathBuf> {
+    DIR.get().cloned()
 }
 
 /// Host pipelines created, loaded from the library, and title pipelines
@@ -486,10 +406,6 @@ struct Library {
     /// Stores share it and a save takes it alone: the size the library
     /// asks for must still be its size when it is written out.
     saving: RwLock<()>,
-    /// Title pipelines the pre-build put in the library or found there, by
-    /// key, and whether that list changed since the last save.
-    prebuilt: Mutex<HashSet<String>>,
-    prebuilt_changed: AtomicBool,
 }
 
 // SAFETY: D3D12 objects are free-threaded, and the library synchronises
@@ -523,9 +439,8 @@ const LIBRARY_FILE: &str = "host-pipelines.bin";
 /// start renames it over the library first ([`Blob::of`]).
 const NEXT_FILE: &str = "host-pipelines.next";
 const EARLY_FILE: &str = "early-pipelines.txt";
-const PREBUILT_FILE: &str = "prebuilt-pipelines.txt";
 /// Title pipelines listed for an early start, at most.
-const EARLY_MAX: usize = 8192;
+const EARLY_MAX: usize = 100_000;
 
 fn library() -> Option<&'static Library> {
     static LIBRARY: OnceLock<Option<Library>> = OnceLock::new();
@@ -533,16 +448,7 @@ fn library() -> Option<&'static Library> {
         .get_or_init(|| {
             let device = crate::host::host()?.device.cast::<ID3D12Device1>().ok()?;
             let blob = DIR.get().map_or(Blob::None, |d| Blob::of(d));
-            // The pre-build's list, if it was saved with these bytes.
-            let listed_keys = DIR
-                .get()
-                .and_then(|d| std::fs::read(d.join(PREBUILT_FILE)).ok())
-                .filter(|_| !blob.bytes().is_empty())
-                .map(|list| listed(&list, &tag(blob.bytes())));
             let library = open(&device, blob);
-            if let (Some(l), Some(keys)) = (&library, listed_keys) {
-                *l.prebuilt.lock().unwrap_or_else(|e| e.into_inner()) = keys;
-            }
             if library.is_none() {
                 tracing::warn!("no host pipeline library: pipelines are not kept");
             }
@@ -561,13 +467,11 @@ fn open(device: &ID3D12Device1, blob: Blob) -> Option<Library> {
         }
     };
     if !blob.bytes().is_empty() {
-        let started = std::time::Instant::now();
         match make(blob.bytes()) {
             Ok(library) => {
                 let bytes = blob.bytes().len();
                 BLOB.store(bytes as u64, Ordering::Relaxed);
-                let ms = started.elapsed().as_millis() as u64;
-                tracing::info!(bytes, ms, mapped = matches!(blob, Blob::Mapped(_)), "host pipeline library loaded");
+                tracing::info!(bytes, mapped = matches!(blob, Blob::Mapped(_)), "host pipeline library loaded");
                 if let Blob::Mapped(file) = &blob {
                     VIEW[1].store(file.len, Ordering::Relaxed);
                     VIEW[0].store(file.at.Value as usize, Ordering::Relaxed);
@@ -578,8 +482,6 @@ fn open(device: &ID3D12Device1, blob: Blob) -> Option<Library> {
                     _blob: blob,
                     added: AtomicU64::new(0),
                     saving: RwLock::new(()),
-                    prebuilt: Mutex::new(HashSet::new()),
-                    prebuilt_changed: AtomicBool::new(false),
                 });
             }
             Err(e) => tracing::info!(error = %e, "host pipeline library rejected; starting an empty one"),
@@ -596,75 +498,7 @@ fn open(device: &ID3D12Device1, blob: Blob) -> Option<Library> {
         _blob: Blob::None,
         added: AtomicU64::new(0),
         saving: RwLock::new(()),
-        prebuilt: Mutex::new(HashSet::new()),
-        prebuilt_changed: AtomicBool::new(false),
     })
-}
-
-/// What the pre-build's list holds for: the library's bytes, and what
-/// names its pipelines (the translation, as the shader cache keys it; the
-/// host descriptions).
-fn tag(blob: &[u8]) -> String {
-    let mut h = blake3::Hasher::new();
-    h.update(&(blob.len() as u64).to_le_bytes());
-    h.update(blob);
-    tag_rest(h)
-}
-
-/// [`tag`] of the library file at `path`, read in pieces (it is 1.3 GB).
-fn tag_file(path: &std::path::Path) -> std::io::Result<String> {
-    let file = std::fs::File::open(path)?;
-    let mut h = blake3::Hasher::new();
-    h.update(&file.metadata()?.len().to_le_bytes());
-    h.update_reader(std::io::BufReader::with_capacity(1 << 20, file))?;
-    Ok(tag_rest(h))
-}
-
-/// The rest of [`tag`] after the library's bytes.
-fn tag_rest(mut h: blake3::Hasher) -> String {
-    let limit = vilocity_shader::emit::loop_limit().to_le_bytes();
-    let translator = vilocity_shader::SOURCE_HASH.as_bytes();
-    for part in [
-        translator,
-        include_bytes!("../shader_cache.rs"),
-        &limit,
-        include_bytes!("host.rs"),
-        include_bytes!("library.rs"),
-    ] {
-        h.update(&(part.len() as u64).to_le_bytes());
-        h.update(part);
-    }
-    h.finalize().to_hex().to_string()
-}
-
-/// The pre-build's list as saved: the tag it holds for, then its keys.
-fn list(tag: &str, keys: &HashSet<String>) -> String {
-    let keys = keys.iter().map(String::as_str);
-    std::iter::once(tag).chain(keys).collect::<Vec<_>>().join("\n")
-}
-
-/// The keys of a saved list, if it holds for `tag` (else none).
-fn listed(list: &[u8], tag: &str) -> HashSet<String> {
-    let list = String::from_utf8_lossy(list);
-    let mut lines = list.lines();
-    match lines.next() == Some(tag) {
-        true => lines.map(str::to_owned).collect(),
-        false => HashSet::new(),
-    }
-}
-
-/// Whether the pre-build has the title pipeline `key` in the library.
-pub(crate) fn prebuilt(key: &str) -> bool {
-    library().is_some_and(|l| l.prebuilt.lock().unwrap_or_else(|e| e.into_inner()).contains(key))
-}
-
-/// The pre-build has the title pipeline `key` in the library now.
-pub(crate) fn note_prebuilt(key: String) {
-    if let Some(l) = library()
-        && l.prebuilt.lock().unwrap_or_else(|e| e.into_inner()).insert(key)
-    {
-        l.prebuilt_changed.store(true, Ordering::Relaxed);
-    }
 }
 
 /// A pipeline's name in the library: the hash of what its host
@@ -686,11 +520,9 @@ pub(crate) fn pipeline(
     create: impl FnOnce() -> windows::core::Result<ID3D12PipelineState>,
 ) -> windows::core::Result<ID3D12PipelineState> {
     let wide = HSTRING::from(name);
-    #[cfg(feature = "diagnostics")]
-    LAST.set(Some((name.to_owned(), true)));
     let Some(library) = library() else {
         MADE.fetch_add(1, Ordering::Relaxed);
-        return refused::make(name, create);
+        return create();
     };
     let began = std::time::Instant::now();
     let loaded = {
@@ -714,11 +546,9 @@ pub(crate) fn pipeline(
         Err(e) => e,
     };
     // Compiled outside any lock: compiles take up to seconds.
-    #[cfg(feature = "diagnostics")]
-    LAST.set(Some((name.to_owned(), false)));
     let pso = {
         let _call = call("make", name);
-        refused::make(name, create)?
+        create()?
     };
     MADE.fetch_add(1, Ordering::Relaxed);
     crate::host::trail(|| {
@@ -737,14 +567,6 @@ pub(crate) fn pipeline(
         library.added.fetch_add(1, Ordering::Relaxed);
     }
     Ok(pso)
-}
-
-#[cfg(feature = "diagnostics")]
-thread_local! {
-    /// This thread's last pipeline: its name, and whether it was loaded
-    /// (else made), for the pipeline log (diagnostics).
-    pub(crate) static LAST: std::cell::Cell<Option<(String, bool)>> =
-        const { std::cell::Cell::new(None) };
 }
 
 /// Writes the library and the early list if pipelines were added since the
@@ -774,8 +596,7 @@ pub(crate) fn save(now: bool) {
         // No store between asking the size and writing; loads go on.
         let _alone = library.saving.write().unwrap_or_else(|e| e.into_inner());
         let added = library.added.load(Ordering::Relaxed);
-        let prebuilt_changed = library.prebuilt_changed.swap(false, Ordering::Relaxed);
-        if !USED_CHANGED.swap(false, Ordering::Relaxed) && added == 0 && !prebuilt_changed {
+        if !USED_CHANGED.swap(false, Ordering::Relaxed) && added == 0 {
             return;
         }
         if added == 0 {
@@ -794,7 +615,9 @@ pub(crate) fn save(now: bool) {
             size
         }
     };
-    let used = USED.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(Used::list).unwrap_or_default();
+    // Through `used`: a process that asked for none yet (`vilocity shaders`)
+    // must not write the earlier runs' list over with nothing.
+    let used: Vec<String> = used().iter().flatten().cloned().collect();
     let library_written = if bytes > 0 { replace_library(dir, &tmp) } else { Ok(()) };
     if bytes > 0 && library_written.is_ok() {
         // In place unless the system refused and the new one waits beside it.
@@ -810,21 +633,10 @@ pub(crate) fn save(now: bool) {
             )
         });
     }
+    let slow: Vec<String> = slow_ones().iter().flatten().map(|(key, ms)| format!("{key} {ms}")).collect();
     let written = library_written
+        .and_then(|()| write_atomically(&dir.join(SLOW_FILE), slow.join("\n").as_bytes()))
         .and_then(|()| write_atomically(&dir.join(EARLY_FILE), used.join("\n").as_bytes()));
-    // The pre-build's list, kept beside the library bytes it holds for
-    // (also when a run adds pipelines).
-    let prebuilt = library.prebuilt.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let written = written.and_then(|()| {
-        if prebuilt.is_empty() {
-            return Ok(());
-        }
-        let file = if dir.join(NEXT_FILE).exists() { NEXT_FILE } else { LIBRARY_FILE };
-        let tag = tag_file(&dir.join(file))?;
-        write_atomically(&dir.join(PREBUILT_FILE), list(&tag, &prebuilt).as_bytes())
-    });
-    let (created, distinct) = created();
-    let (shaders_cached, shaders_translated) = crate::shader_cache::counts();
     match written {
         Ok(()) => tracing::info!(
             bytes,
@@ -832,10 +644,6 @@ pub(crate) fn save(now: bool) {
             made = MADE.load(Ordering::Relaxed),
             loaded = LOADED.load(Ordering::Relaxed),
             started_early = EARLY.load(Ordering::Relaxed),
-            created,
-            distinct,
-            shaders_cached,
-            shaders_translated,
             "host pipeline library saved"
         ),
         Err(e) => tracing::warn!(error = %e, "host pipeline library not saved"),
@@ -872,77 +680,102 @@ fn replace_library(dir: &std::path::Path, tmp: &std::path::Path) -> std::io::Res
 }
 
 /// Writes `bytes` to a temporary file beside `path`, then renames it over
-/// `path`: a reader never sees a part.
+/// `path`: a reader never sees a part. Serialised so concurrent worker and
+/// shutdown saves do not race on the same staging file or target rename.
 fn write_atomically(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path)
+    use std::sync::atomic::AtomicU64;
+    static WRITING: Mutex<()> = Mutex::new(());
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let _guard = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".tmp-{}-{n}", std::process::id()));
+    let tmp = path.with_file_name(name);
+    let res = std::fs::write(&tmp, bytes).and_then(|()| std::fs::rename(&tmp, path));
+    if res.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    res
 }
 
-/// Title pipelines created, and their distinct keys.
-static CREATED: Mutex<(u64, Option<HashSet<String>>)> = Mutex::new((0, None));
+/// How long each title pipeline that took long to make took, in ms (beside
+/// the early list; a key may be there more than once).
+const SLOW_FILE: &str = "slow-pipelines.txt";
+/// A pipeline that takes this long is one ([`slow`]).
+pub(crate) const SLOW_MS: u64 = 1000;
+static SLOW: Mutex<Option<std::collections::HashMap<String, u64>>> = Mutex::new(None);
 
-/// The title created a pipeline with `key`.
-pub(crate) fn note_created(key: &str) {
-    let mut created = CREATED.lock().unwrap_or_else(|e| e.into_inner());
-    created.0 += 1;
-    created.1.get_or_insert_with(HashSet::new).insert(key.to_owned());
+fn slow_ones() -> std::sync::MutexGuard<'static, Option<std::collections::HashMap<String, u64>>> {
+    let mut slow = SLOW.lock().unwrap_or_else(|e| e.into_inner());
+    if slow.is_none() {
+        let listed = DIR.get().and_then(|d| std::fs::read_to_string(d.join(SLOW_FILE)).ok()).unwrap_or_default();
+        *slow = Some(
+            listed
+                .lines()
+                .filter_map(|l| l.split_once(' '))
+                .filter_map(|(key, ms)| Some((key.to_owned(), ms.parse().ok()?)))
+                .collect(),
+        );
+    }
+    slow
 }
 
-/// Title pipelines created so far, and how many distinct ones.
-fn created() -> (u64, usize) {
-    let created = CREATED.lock().unwrap_or_else(|e| e.into_inner());
-    (created.0, created.1.as_ref().map_or(0, HashSet::len))
+/// Whether making the title pipeline with `key` took [`SLOW_MS`] in this or
+/// an earlier run.
+pub(crate) fn slow(key: &str) -> bool {
+    slow_ones().as_ref().is_some_and(|s| s.contains_key(key))
 }
 
-/// Title pipeline keys drawn or dispatched with: in earlier runs (the
-/// list as loaded), and in this one.
-#[derive(Default)]
-struct Used {
-    before: HashSet<String>,
-    now: HashSet<String>,
-}
-
-impl Used {
-    /// The list to keep: this run's keys, then earlier runs' others, at
-    /// most `EARLY_MAX` (the oldest go once it is full).
-    fn list(&self) -> Vec<String> {
-        let earlier = self.before.iter().filter(|k| !self.now.contains(*k));
-        self.now.iter().chain(earlier).take(EARLY_MAX).cloned().collect()
+/// The title pipeline with `key` took `ms` to make.
+pub(crate) fn note_time(key: &str, ms: u64) {
+    if ms < SLOW_MS {
+        return;
+    }
+    let mut slow = slow_ones();
+    let known = slow.get_or_insert_default().entry(key.to_owned()).or_insert(0);
+    if ms > *known {
+        *known = ms;
+        // With the next save of the early list.
+        USED_CHANGED.store(true, Ordering::Relaxed);
     }
 }
 
-static USED: Mutex<Option<Used>> = Mutex::new(None);
+/// Title pipeline keys requested by draws or dispatches (this run and the last).
+static USED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 static USED_CHANGED: AtomicBool = AtomicBool::new(false);
 
-fn used() -> std::sync::MutexGuard<'static, Option<Used>> {
+fn used() -> std::sync::MutexGuard<'static, Option<HashSet<String>>> {
     let mut used = USED.lock().unwrap_or_else(|e| e.into_inner());
     if used.is_none() {
         let listed = DIR
             .get()
             .and_then(|d| std::fs::read_to_string(d.join(EARLY_FILE)).ok())
             .unwrap_or_default();
-        let before: HashSet<String> = listed.lines().filter(|l| !l.is_empty()).map(str::to_owned).collect();
-        tracing::info!(pipelines = before.len(), "title pipelines to start early");
-        *used = Some(Used { before, now: HashSet::new() });
+        let set: HashSet<String> = listed.lines().filter(|l| !l.is_empty()).map(str::to_owned).collect();
+        tracing::info!(pipelines = set.len(), "title pipelines to start early");
+        *used = Some(set);
     }
     used
 }
 
-/// Reads the early list now if not yet, so a save keeps it (a pre-build
-/// asks for no title pipeline).
-pub(crate) fn keep_early_list() {
-    drop(used());
-}
-
 /// Whether the title pipeline with `key` was requested in this or an earlier run.
+///
+/// `VILOCITY_EARLY_ALL=1`: every title pipeline is started at creation,
+/// requested before or not, so that the driver's own cache holds it for
+/// later runs.
 pub(crate) fn wanted_early(key: &str) -> bool {
-    used().as_ref().is_some_and(|u| u.before.contains(key) || u.now.contains(key))
+    static ALL: OnceLock<bool> = OnceLock::new();
+    if *ALL.get_or_init(|| std::env::var_os("VILOCITY_EARLY_ALL").is_some_and(|v| v == "1")) {
+        return true;
+    }
+    used().as_ref().is_some_and(|s| s.contains(key))
 }
 
 /// A draw or dispatch requested the title pipeline with `key`.
 pub(crate) fn note_used(key: &str) {
-    if used().get_or_insert_with(Used::default).now.insert(key.to_owned()) {
+    let mut used = used();
+    let set = used.get_or_insert_with(HashSet::new);
+    if set.len() < EARLY_MAX && set.insert(key.to_owned()) {
         USED_CHANGED.store(true, Ordering::Relaxed);
     }
 }
@@ -961,28 +794,6 @@ mod tests {
         assert_ne!(a, name("mesh", b"root", &[b"vs", b"ps"], "state"));
         // Parts do not run into each other.
         assert_ne!(a, name("graphics", b"root", &[b"vsp", b"s"], "state"));
-    }
-
-    /// This run's keys stay in the list; earlier runs' fill it up to the cap.
-    #[test]
-    fn the_early_list_keeps_this_run_first() {
-        let keys = |r: std::ops::Range<usize>| r.map(|i| format!("{i:032x}")).collect::<HashSet<_>>();
-        let used = Used { before: keys(0..EARLY_MAX), now: keys(EARLY_MAX - 10..EARLY_MAX + 10) };
-        let list = used.list();
-        assert_eq!(list.len(), EARLY_MAX);
-        assert!(used.now.iter().all(|k| list.contains(k)));
-        assert_eq!(list.iter().collect::<HashSet<_>>().len(), EARLY_MAX, "no key twice");
-    }
-
-    /// The pre-build's list holds only for the library bytes it was
-    /// saved with.
-    #[test]
-    fn the_prebuilt_list_holds_for_its_library_only() {
-        let keys: HashSet<String> = ["a".repeat(32), "b".repeat(32)].into();
-        let saved = list(&tag(b"library"), &keys);
-        assert_eq!(listed(saved.as_bytes(), &tag(b"library")), keys);
-        assert!(listed(saved.as_bytes(), &tag(b"library2")).is_empty());
-        assert!(listed(b"", &tag(b"library")).is_empty());
     }
 
     #[test]
@@ -1096,5 +907,28 @@ mod tests {
             pattern(page * 4096, &mut expected);
             assert!(bytes == &expected[..], "page {page} of the replaced library no longer reads as the old file");
         }
+    }
+
+    #[test]
+    fn concurrent_write_atomically_never_fails_or_truncates() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("host-pipelines.bin");
+        let threads: Vec<_> = (0..4)
+            .map(|t| {
+                let target = target.clone();
+                std::thread::spawn(move || {
+                    let payload = vec![b'a' + t as u8; 4096];
+                    for _ in 0..30 {
+                        write_atomically(&target, &payload).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        let final_bytes = std::fs::read(&target).unwrap();
+        assert_eq!(final_bytes.len(), 4096);
+        assert!(final_bytes.iter().all(|&b| b == final_bytes[0]));
     }
 }

@@ -156,7 +156,7 @@ struct Checks {
 /// translated into the run's shader cache, on `jobs` threads; nothing is
 /// made on the GPU. A run of the title then finds them there instead of
 /// translating each at its first use.
-pub fn warm_listed(paths: Vec<PathBuf>, file: &Path, jobs: Option<usize>) -> Result<()> {
+pub fn warm(paths: Vec<PathBuf>, file: &Path, jobs: Option<usize>) -> Result<()> {
     // `--warm all`: every container found, whatever its hash.
     let all = file.as_os_str() == "all";
     let mut wanted: HashSet<String> = HashSet::new();
@@ -198,20 +198,7 @@ pub fn warm_listed(paths: Vec<PathBuf>, file: &Path, jobs: Option<usize>) -> Res
                             let Some(bytes) = job.bytes() else {
                                 continue;
                             };
-                            // As the title passes it, so the hash is the one a run's log names.
-                            let size = bytes.get(0x18..0x1c).map_or(0, |b| {
-                                u32::from_le_bytes(b.try_into().expect("4")) as usize
-                            });
-                            let bytes = &bytes[..size.min(bytes.len())];
-                            let hash = blake3::hash(bytes).to_hex()[..16].to_owned();
-                            // `VILOCITY_DUMP_DIR=<folder>`: each container found is written
-                            // there too (`<hash>.dxbc`), for `shader-info --disasm`.
-                            if !all
-                                && wanted.contains(&hash)
-                                && let Some(dir) = std::env::var_os("VILOCITY_DUMP_DIR")
-                            {
-                                let _ = std::fs::write(PathBuf::from(dir).join(format!("{hash}.dxbc")), bytes);
-                            }
+                            let hash = blake3::hash(&bytes).to_hex()[..16].to_owned();
                             if limit.is_some_and(|n| began.elapsed().as_secs() >= n) {
                                 counts[3].fetch_add(1, Ordering::Relaxed);
                                 break;
@@ -253,12 +240,18 @@ pub fn run(
     list: bool,
     jobs: Option<usize>,
 ) -> Result<()> {
+    // Dumped shaders and validator reports are game-derived (rule #1).
+    if let Some(dir) = std::env::var_os("VILOCITY_EMIT_DUMP") {
+        vilocity_core::ensure_outside_repo(Path::new(&dir))?;
+    }
     let paths = crate::default_paths(paths)?;
     // `VILOCITY_HOST_MAX_WAVE=32`: translate as for a host whose waves have
     // at most 32 lanes (as the runtime does on such a card).
     if let Some(n) = std::env::var("VILOCITY_HOST_MAX_WAVE").ok().and_then(|v| v.parse().ok()) {
         vilocity_shader::emit::set_host_max_wave(n);
     }
+    // `VILOCITY_HOST_RDNA=1`: as for an AMD RDNA card (`VILOCITY_RDNA_FLOAT`).
+    vilocity_shader::emit::set_host_rdna(std::env::var_os("VILOCITY_HOST_RDNA").is_some_and(|v| v == "1"));
     let dll = validate.then(Validator::default_path).flatten();
     if validate {
         Validator::load(dll.as_deref()).map_err(anyhow::Error::msg)?;
@@ -282,7 +275,6 @@ pub fn run(
         jobs.unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |n| n.get()));
     let seen = Mutex::new(HashSet::new());
     let total = Mutex::new(Tally::default());
-    let started = std::time::Instant::now();
     for root in &paths {
         for entry in walkdir::WalkDir::new(root)
             .into_iter()
@@ -297,38 +289,27 @@ pub fn run(
             let jobs = sources(&data);
             let next = AtomicUsize::new(0);
             std::thread::scope(|s| {
-                let workers: Vec<_> = (0..threads.min(jobs.len()))
-                    .map(|_| {
-                        s.spawn(|| {
-                            let mut t = Tally {
-                                list,
-                                ..Tally::default()
-                            };
-                            let mut checks = Checks {
-                                keep: (!pairs.is_empty()).then(|| kept.clone()),
-                                validator: validate
-                                    .then(|| Validator::load(dll.as_deref()).ok())
-                                    .flatten(),
-                                host: pipelines
-                                    .then(|| Host::new(false).ok().map(|h| (h, host::stub_ps())))
-                                    .flatten(),
-                            };
-                            while let Some(job) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) {
-                                translate(job, entry.path(), &seen, &mut t, &mut checks);
-                            }
-                            lock(&total).merge(t);
-                        })
-                    })
-                    .collect();
-                report(
-                    entry.path(),
-                    jobs.len(),
-                    "containers",
-                    &next,
-                    started,
-                    &workers,
-                    String::new,
-                );
+                for _ in 0..threads.min(jobs.len()) {
+                    s.spawn(|| {
+                        let mut t = Tally {
+                            list,
+                            ..Tally::default()
+                        };
+                        let mut checks = Checks {
+                            keep: (!pairs.is_empty()).then(|| kept.clone()),
+                            validator: validate
+                                .then(|| Validator::load(dll.as_deref()).ok())
+                                .flatten(),
+                            host: pipelines
+                                .then(|| Host::new(false).ok().map(|h| (h, host::stub_ps())))
+                                .flatten(),
+                        };
+                        while let Some(job) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) {
+                            translate(job, entry.path(), &seen, &mut t, &mut checks);
+                        }
+                        lock(&total).merge(t);
+                    });
+                }
             });
         }
     }
@@ -412,42 +393,19 @@ pub fn run(
     Ok(())
 }
 
-/// The warm-up (`--cache`): every distinct container found goes through
-/// the shader cache `run` reads (`<cache>/shaders`, decision 0003), by the
-/// same code, so a run finds it translated or refused. With `pipelines`,
-/// then the shader pack's pipelines go into the pipeline library
-/// (`prebuild`).
-pub fn warm(paths: Vec<PathBuf>, jobs: Option<usize>, pipelines: bool) -> Result<()> {
+/// Every shader found into the cache runs translate from.
+pub fn precompile(paths: Vec<PathBuf>, jobs: Option<usize>) -> Result<()> {
+    let cfg = vilocity_core::Config::load()?;
+    vilocity_hle::modules::d3d12x::use_shader_cache(cfg.cache_subdir("shaders")?);
     let paths = crate::default_paths(paths)?;
-    let shaders = vilocity_core::Config::load()?.cache_subdir("shaders")?;
-    let Some(dir) = vilocity_gpu::shader_cache::use_shader_cache(shaders.clone()) else {
-        anyhow::bail!("no shader cache in {}", shaders.display());
-    };
-    // Translated for this GPU's wave width, as a run on it asks for them
-    // (`VILOCITY_HOST_WAVE=<lanes>` names another GPU's instead).
-    match std::env::var("VILOCITY_HOST_WAVE").ok().and_then(|v| v.parse().ok()) {
-        Some(lanes) => vilocity_shader::emit::set_host_max_wave(lanes),
-        None => {
-            if !vilocity_gpu::shader_cache::use_host_gpu() {
-                tracing::warn!("no host GPU: shaders are translated as for a GPU of 64-lane waves");
-            }
-        }
-    }
     let threads =
         jobs.unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |n| n.get()));
-    // The pre-build's key listing (diagnostics) translates nothing.
-    if pipelines && std::env::var_os("VILOCITY_PREBUILD_KEYS").is_some() {
-        return crate::prebuild::run(&paths, threads);
-    }
     let started = std::time::Instant::now();
     let seen = Mutex::new(HashSet::new());
-    // Containers already cached, translated now, refused now.
-    let counts = [const { AtomicUsize::new(0) }; 3];
+    let done = AtomicUsize::new(0);
+    let failed = Mutex::new(BTreeMap::<String, (usize, String)>::new());
     for root in &paths {
-        for entry in walkdir::WalkDir::new(root)
-            .into_iter()
-            .filter_map(Result::ok)
-        {
+        for entry in walkdir::WalkDir::new(root).into_iter().filter_map(Result::ok) {
             if !entry.file_type().is_file() || entry.metadata().map_or(0, |m| m.len()) > MAX_FILE {
                 continue;
             }
@@ -457,134 +415,43 @@ pub fn warm(paths: Vec<PathBuf>, jobs: Option<usize>, pipelines: bool) -> Result
             let jobs = sources(&data);
             let next = AtomicUsize::new(0);
             std::thread::scope(|s| {
-                let workers: Vec<_> = (0..threads.min(jobs.len()))
-                    .map(|_| {
-                        s.spawn(|| {
-                            while let Some(job) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) {
-                                let Some(bytes) = job.bytes() else { continue };
-                                // As the title passes it: the container's own size
-                                // (a raw source runs on to the end of the file).
-                                let size = bytes.get(0x18..0x1c).map_or(0, |b| {
-                                    u32::from_le_bytes(b.try_into().expect("4")) as usize
-                                });
-                                let container = &bytes[..size.min(bytes.len())];
-                                let hash = blake3::hash(container);
-                                if !lock(&seen).insert(hash) {
-                                    continue;
-                                }
-                                let one = std::time::Instant::now();
-                                let (done, cached) =
-                                    vilocity_gpu::shader_cache::host_shader(container);
-                                let k = if cached {
-                                    0
-                                } else if done.is_ok() {
-                                    1
-                                } else {
-                                    2
-                                };
-                                counts[k].fetch_add(1, Ordering::Relaxed);
-                                // Kept beside the cache, for a fix of the translator.
-                                if done.as_ref().is_err_and(|e| e.contains(vilocity_shader::emit::PANICKED)) {
-                                    let file = dir.join(format!("panicked-{}.dxbc", &hash.to_hex()[..16]));
-                                    let _ = std::fs::write(&file, container);
-                                    println!("the translator panicked on {}", file.display());
-                                }
-                                tracing::debug!(
-                                    hash = %&hash.to_hex()[..16],
-                                    ms = one.elapsed().as_millis() as u64,
-                                    cached,
-                                    ok = done.is_ok(),
-                                    "warm-up"
-                                );
+                for _ in 0..threads.min(jobs.len()) {
+                    s.spawn(|| {
+                        while let Some(job) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) {
+                            let Some(bytes) = job.bytes() else { continue };
+                            let hash = blake3::hash(&bytes);
+                            if !lock(&seen).insert(hash) {
+                                continue;
                             }
-                        })
-                    })
-                    .collect();
-                let [c, t, r] = &counts;
-                report(
-                    entry.path(),
-                    jobs.len(),
-                    "containers",
-                    &next,
-                    started,
-                    &workers,
-                    || {
-                        let n = |a: &AtomicUsize| a.load(Ordering::Relaxed);
-                        format!(
-                            "; all files so far: {} cached, {} translated, {} refused",
-                            n(c),
-                            n(t),
-                            n(r)
-                        )
-                    },
-                );
+                            match vilocity_hle::modules::d3d12x::precompile(&bytes) {
+                                Ok(_) => {
+                                    let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                                    if n.is_multiple_of(1000) {
+                                        println!("{n} shaders in the cache, {:.0} s", started.elapsed().as_secs_f64());
+                                    }
+                                }
+                                Err(why) => {
+                                    let mut failed = lock(&failed);
+                                    failed.entry(why).or_insert_with(|| (0, hash.to_hex()[..16].to_owned())).0 += 1;
+                                }
+                            }
+                        }
+                    });
+                }
             });
         }
     }
-    let [cached, translated, refused] = counts.map(AtomicUsize::into_inner);
-    let bytes: u64 = walkdir::WalkDir::new(&dir)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter_map(|e| e.metadata().ok())
-        .filter(|m| m.is_file())
-        .map(|m| m.len())
-        .sum();
-    println!("cache        {} ({} MB)", dir.display(), bytes >> 20);
+    let failed = failed.into_inner().unwrap_or_else(|e| e.into_inner());
     println!(
-        "containers   {} in {:.1} s: {cached} already cached, {translated} translated, {refused} refused",
-        cached + translated + refused,
+        "{} shaders in the cache, {} do not translate, {:.0} s",
+        done.load(Ordering::Relaxed),
+        failed.values().map(|f| f.0).sum::<usize>(),
         started.elapsed().as_secs_f64()
     );
-    if pipelines {
-        crate::prebuild::run(&paths, threads)?;
+    for (why, (n, hash)) in failed {
+        println!("  {n:>5}  {why}  (e.g. {hash})");
     }
     Ok(())
-}
-
-/// Shows on stderr how far `workers` are through `file`'s `jobs` (`next`
-/// hands them out) until they finish: on a terminal one line rewritten
-/// every second, else a line every 10 s; then the file's last line.
-pub(crate) fn report<T>(
-    file: &Path,
-    jobs: usize,
-    what: &str,
-    next: &AtomicUsize,
-    started: std::time::Instant,
-    workers: &[std::thread::ScopedJoinHandle<'_, T>],
-    extra: impl Fn() -> String,
-) {
-    use std::io::IsTerminal;
-    if workers.is_empty() {
-        return;
-    }
-    let terminal = std::io::stderr().is_terminal();
-    let every = std::time::Duration::from_secs(if terminal { 1 } else { 10 });
-    let line = || {
-        // `next` counts jobs handed out; a worker still running holds one.
-        let busy = workers.iter().filter(|w| !w.is_finished()).count();
-        let taken = next.load(Ordering::Relaxed).min(jobs);
-        let done = taken.saturating_sub(busy);
-        format!(
-            "{}: {done} of {jobs} {what} ({}%), {:.0} s{}",
-            file.display(),
-            done * 100 / jobs.max(1),
-            started.elapsed().as_secs_f64(),
-            extra()
-        )
-    };
-    let mut shown = std::time::Instant::now();
-    while !workers.iter().all(|w| w.is_finished()) {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        if shown.elapsed() >= every {
-            shown = std::time::Instant::now();
-            if terminal {
-                eprint!("\r{}", line());
-            } else {
-                eprintln!("{}", line());
-            }
-        }
-    }
-    eprintln!("{}{}", if terminal { "\r" } else { "" }, line());
 }
 
 fn translate(
@@ -620,11 +487,7 @@ fn translate(
     let Ok(container) = Container::parse(&bytes) else {
         return t.fail("no DXIL part (SM5 or older)".into(), example);
     };
-    let Some(dxil) = container
-        .part(FourCC::DXIL)
-        .or(container.part(FourCC::ACCC))
-        .map(|p| p.data)
-    else {
+    let Some(dxil) = container.part(FourCC::DXIL).or(container.part(FourCC::ACCC)).map(|p| p.data) else {
         return t.fail("no DXIL part (SM5 or older)".into(), example);
     };
     // `~`: the hash of the code alone; containers that differ only around
@@ -683,11 +546,11 @@ fn translate_programs(container: &Container, programs: Vec<NativeProgram>, examp
         t.programs += 1;
         match vilocity_shader::spill::build(&p) {
             Ok(program) => {
-                let structured = structure::structure(&program);
                 t.translated += 1;
                 t.instructions += program.blocks.iter().map(|b| b.insts.len()).sum::<usize>();
                 // Per-lane descriptors are traced on the per-lane form; its
                 // failure is listed after the resources' and I/O's.
+                let structured = structure::structure(&program);
                 let lanes = structured.as_ref().ok();
                 let res = match resource::track(&program, &p.layout, p.stage, lanes) {
                     Ok(r) => {
@@ -822,6 +685,12 @@ fn check(
     if let Some(keep) = &checks.keep {
         lock(keep).push((label(), shader.clone()));
     }
+    // With `--list`: a hash of the module and of what the host binds for it,
+    // to show which shaders a change to the translator touches.
+    if t.list {
+        let hash = blake3::hash(format!("{shader:?}").as_bytes()).to_hex();
+        t.lines.push(format!("{}  emitted {}", label(), &hash[..16]));
+    }
     // `VILOCITY_EMIT_DUMP` with `--list`: every emitted shader as a file.
     if t.list
         && let Ok(dir) = std::env::var("VILOCITY_EMIT_DUMP")
@@ -853,6 +722,9 @@ fn check(
         }
     }
     let Some(v) = checks.validator.as_mut() else {
+        if t.list && checks.host.is_none() {
+            t.lines.push(format!("{}  emitted", label()));
+        }
         return;
     };
     match v.validate(&mut shader.dxil) {
@@ -1067,4 +939,25 @@ fn tally_structured(program: &ir::Program, s: &structure::Structured, t: &mut Ta
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    /// Shader dumps are game-derived, so a dump directory in the repo is refused.
+    #[test]
+    fn emit_dump_inside_repo_is_refused() {
+        // SAFETY: no other test in this binary touches the environment.
+        unsafe { std::env::set_var("VILOCITY_EMIT_DUMP", env!("CARGO_MANIFEST_DIR")) };
+        let missing = std::env::temp_dir().join("vilocity-translate-no-such-dir");
+        let err = super::run(vec![missing], false, false, false, Some(1)).unwrap_err();
+        // SAFETY: as above; unset so a later test's `run` is not refused.
+        unsafe { std::env::remove_var("VILOCITY_EMIT_DUMP") };
+        assert!(
+            matches!(
+                err.downcast_ref(),
+                Some(vilocity_core::PolicyError::InsideRepo { .. })
+            ),
+            "{err}"
+        );
+    }
 }

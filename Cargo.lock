@@ -808,7 +808,6 @@ name = "vilocity-game"
 version = "0.1.0"
 dependencies = [
  "memchr",
- "miniz_oxide",
  "zlib-rs",
 ]
 

@@ -16,29 +16,8 @@ public class HudWin {
   public struct RECT { public int L, T, R, B; }
 }
 '@
-$logs = Join-Path $env:LOCALAPPDATA "vilocity\logs"
 $cores = [Environment]::ProcessorCount
-$state = @{ pos = 0L; frame = ""; lastCpu = $null; lastAt = $null; started = Get-Date; seen = $false; log = $Log; hidden = $false; f8 = $false; front = $false }
-
-function Read-Frame {
-    if (-not $state.log) {
-        $state.log = Get-ChildItem $logs -Filter *.log -ErrorAction SilentlyContinue |
-            Sort-Object LastWriteTime | Select-Object -Last 1 -ExpandProperty FullName
-    }
-    if (-not $state.log -or -not (Test-Path $state.log)) { return }
-    $fs = [IO.File]::Open($state.log, 'Open', 'Read', 'ReadWrite')
-    try {
-        if ($fs.Length -lt $state.pos) { $state.pos = 0 }
-        # Only the tail matters: the newest frame line.
-        if ($fs.Length - $state.pos -gt 4MB) { $state.pos = $fs.Length - 4MB }
-        $fs.Seek($state.pos, 'Begin') | Out-Null
-        $text = (New-Object IO.StreamReader($fs)).ReadToEnd()
-        $state.pos = $fs.Length
-    } finally { $fs.Close() }
-    foreach ($line in $text -split "`r?`n") {
-        if ($line -match 'vilocity_gpu::host: ([\d.]+) fps, ([\d.]+) ms/frame') { $state.frame = "{0} fps  ({1} ms)" -f $Matches[1], $Matches[2] }
-    }
-}
+$state = @{ frame = ""; lastCpu = $null; lastAt = $null; seen = $false; hidden = $false; f8 = $false; front = $false }
 
 $form = New-Object Windows.Forms.Form
 $form.FormBorderStyle = 'None'; $form.TopMost = $true; $form.ShowInTaskbar = $false
@@ -64,7 +43,8 @@ $timer.Add_Tick({
         Where-Object CommandLine -like '*native run*' | Select-Object -First 1
     $g = if ($game) { Get-Process -Id $game.ProcessId -ErrorAction SilentlyContinue }
     if ($g) { $state.seen = $true } elseif ($state.seen) { $form.Close(); return }
-    Read-Frame
+    # The engine puts the frame rate in the window's title.
+    if ($g -and $g.MainWindowTitle -match '([\d.]+) fps ([\d.]+) ms/frame') { $state.frame = "{0} fps  ({1} ms)" -f $Matches[1], $Matches[2] }
     $mb = 1MB
     $text = @()
     $text += "FPS   " + $(if ($state.frame) { $state.frame } else { "-" })

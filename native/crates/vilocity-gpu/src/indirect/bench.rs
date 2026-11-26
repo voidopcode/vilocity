@@ -3,7 +3,7 @@
 //! back to the common state after every execution, the clamp charging the
 //! budget record by record) and as this tree does (readable until the next
 //! clamp, one charge per group). Ignored by default; run it with
-//! `cargo test -p vilocity-native-gpu --release --lib indirect::bench -- --ignored --nocapture`.
+//! `cargo test -p vilocity-gpu --release --lib indirect::bench -- --ignored --nocapture`.
 //! It needs no title files: the draws are tiny triangles of ours.
 
 use super::*;

@@ -19,6 +19,7 @@ extern "system" fn create_device(
 ) -> HRESULT {
     vilocity_gpu::resource::use_allocator(super::xmem::XMemAlloc, super::xmem::XMemFree);
     vilocity_gpu::resource::use_page_mapper(super::xmem::map_alias);
+    vilocity_gpu::resource::use_many_page_mapper(super::xmem::map_aliases);
     #[cfg(windows)]
     vilocity_gpu::on_failure(host_gpu_failed);
     device::create(adapter, parameters, iid, out)
@@ -36,11 +37,26 @@ fn host_gpu_failed(what: &str) -> ! {
     unreachable!("the process has ended")
 }
 
-/// The offline warm-up: see `vilocity_gpu::shader_cache::warm`.
+/// Translates `container` into the cache ([`use_shader_cache`]) ahead of
+/// any run: whether it was there already, or why it does not translate.
+pub fn precompile(container: &[u8]) -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        vilocity_gpu::shader_cache::precompile(container)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = container;
+        Err("no host".into())
+    }
+}
+
+/// The fork's offline warm-up (`vilocity translate --warm`), by
+/// [`precompile`]: whether it was translated now.
 pub fn warm_shader(container: &[u8]) -> Result<bool, String> {
     #[cfg(windows)]
     {
-        vilocity_gpu::shader_cache::warm(container)
+        vilocity_gpu::shader_cache::precompile(container).map(|was_there| !was_there)
     }
     #[cfg(not(windows))]
     {

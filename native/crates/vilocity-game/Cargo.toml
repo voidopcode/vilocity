@@ -9,7 +9,6 @@ publish.workspace = true
 
 [dependencies]
 memchr.workspace = true
-miniz_oxide.workspace = true
 zlib-rs.workspace = true
 
 [lints]

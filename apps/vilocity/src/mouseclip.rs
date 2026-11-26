@@ -2,8 +2,8 @@
 //! The sandboxed engine may move the cursor but not clip it (an
 //! AppContainer is refused `ClipCursor`), so this side, outside the
 //! sandbox, clips by the same rule the engine reads the mouse by
-//! (`vilocity-hle` gameinput `mouse_lock`): a click in the window takes the
-//! mouse, Esc or another window in front gives it back.
+//! (`vilocity-hle` gameinput `mouse`): a click in the window takes the
+//! mouse; Esc, left Alt or another window in front gives it back.
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -14,8 +14,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 /// Whether the mouse is the game's after this look (the engine's rule).
-fn lock(locked: bool, front: bool, click_inside: bool, esc: bool) -> bool {
-    front && !esc && (locked || click_inside)
+fn lock(locked: bool, front: bool, click_inside: bool, release: bool) -> bool {
+    front && !release && (locked || click_inside)
 }
 
 /// Clips for the game process `pid` until `done` is set; frees the cursor at the end.
@@ -36,7 +36,7 @@ pub fn watch(pid: u32, done: Arc<AtomicBool>) {
             // Inside the frame, as the engine clips (title bar and edges out of reach).
             let inner = RECT { left: r.left + 16, top: r.top + 40, right: r.right - 16, bottom: r.bottom - 16 };
             let inside = front && at.x >= inner.left && at.x < inner.right && at.y >= inner.top && at.y < inner.bottom;
-            let now = lock(locked, front, inside && GetAsyncKeyState(0x01) < 0, GetAsyncKeyState(0x1B) < 0);
+            let now = lock(locked, front, inside && GetAsyncKeyState(0x01) < 0, GetAsyncKeyState(0x1B) < 0 || GetAsyncKeyState(0xA4) < 0);
             if now {
                 ClipCursor(&inner);
             } else if locked {

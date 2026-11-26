@@ -163,7 +163,7 @@ fn play(args: &[OsString]) -> i32 {
 }
 
 /// The native engine's `run` in the sandbox: it reads the game's folder (and
-/// the FidelityFX folder, if set) and keeps its cache and data in the
+/// the folder of `VILOCITY_FSR_DLL`, if set) and keeps its cache and data in the
 /// configured folders, the only ones it may write.
 #[cfg(windows)]
 fn in_sandbox(me: &Path, run: &[OsString], exe: &Path) -> Result<i32, String> {
@@ -178,15 +178,17 @@ fn in_sandbox(me: &Path, run: &[OsString], exe: &Path) -> Result<i32, String> {
         sandbox::Grant { path: cfg.cache_dir.clone(), write: true },
         sandbox::Grant { path: cfg.data_dir.clone(), write: true },
     ];
-    let mut env = vec![
+    let env = vec![
         ("VILOCITY_CACHE_DIR", cfg.cache_dir.clone().into_os_string()),
         ("VILOCITY_DATA_DIR", cfg.data_dir.clone().into_os_string()),
         ("TEMP", tmp.clone().into_os_string()),
         ("TMP", tmp.into_os_string()),
     ];
-    if let Some(ffx) = &cfg.fidelityfx_dir {
-        grants.push(sandbox::Grant { path: ffx.clone(), write: false });
-        env.push(("VILOCITY_FIDELITYFX_DIR", ffx.clone().into_os_string()));
+    // AMD's PC upscaler, if the launcher names one: its folder is read.
+    if let Some(dll) = std::env::var_os("VILOCITY_FSR_DLL").map(PathBuf::from)
+        && let Some(dir) = dll.parent()
+    {
+        grants.push(sandbox::Grant { path: dir.to_path_buf(), write: false });
     }
     println!(
         "sandbox: no network; reads {}; writes only {} and {}",

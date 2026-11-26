@@ -1,19 +1,13 @@
 //! Translated shaders kept on disk (decision 0003): under the configured
-//! cache folder, keyed by the container's content and by what the
-//! translation depends on ([`build`]), so a changed translator never serves
-//! an old translation, while rebuilding the rest of Vilocity keeps them.
-//! Each translator's entries are in a folder of their own, named by the
-//! start of that key: older translators' folders can be deleted whole.
-//! Entries go through `vilocity-pipeline`'s content-addressed cache, which
-//! writes them atomically; an entry that does not read back is translated
-//! again. A container that does not translate is kept too, with the reason,
-//! so it is not tried again on every run.
+//! cache folder, keyed by the container's content and by the translator
+//! (the BLAKE3 of its sources) and its settings, so a changed translator
+//! never serves an old translation. Entries go through
+//! `vilocity-pipeline`'s content-addressed cache, which writes them
+//! atomically; an entry that does not read back is translated again.
 //!
-//! `vilocity translate --cache` fills the same cache ahead of a run, through
-//! [`host_shader`].
-//!
-//! The entry is our own encoding of [`HostShader`]; this file's text is part
-//! of the key, so changing the encoding invalidates every entry.
+//! The entry is our own encoding of [`HostShader`]: a field added to it
+//! must be added to `encode` and `decode` too (entries of older builds
+//! are ignored anyway).
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -28,43 +22,38 @@ static CACHE: OnceLock<Cache> = OnceLock::new();
 static HITS: AtomicU64 = AtomicU64::new(0);
 static MISSES: AtomicU64 = AtomicU64::new(0);
 
-/// Keeps translated shaders in a folder of `dir` from now on: the folder
-/// of this translator, `None` if it cannot be opened.
-pub fn use_shader_cache(dir: PathBuf) -> Option<PathBuf> {
-    let dir = dir.join(&blake3::Hash::from(*fixed()).to_hex()[..16]);
-    match Cache::open(&dir) {
+/// Keeps translated shaders in `dir` from now on.
+pub fn use_shader_cache(dir: PathBuf) {
+    match Cache::open(dir) {
         Ok(cache) => {
-            tracing::info!(dir = %dir.display(), "shader cache");
             let _ = CACHE.set(cache);
-            Some(dir)
         }
-        Err(e) => {
-            tracing::warn!(error = %e, "no shader cache");
-            None
-        }
+        Err(e) => tracing::warn!(error = %e, "no shader cache"),
     }
 }
 
-/// Opens the host GPU (once), so that translations made here take its wave
-/// width as a run's do (a 32-lane GPU gets the split form, under its own
-/// key); whether there is one.
-pub fn use_host_gpu() -> bool {
-    crate::host::host().is_some()
+/// Whether translations are kept on disk ([`use_shader_cache`]): then
+/// [`host_shader`] reads one made before instead of translating again
+/// (`crate::pipeline::drop_dxil`).
+pub(crate) fn on_disk() -> bool {
+    CACHE.get().is_some()
 }
 
 /// Shaders found in the cache and translated since the start.
-pub fn counts() -> (u64, u64) {
+pub(crate) fn counts() -> (u64, u64) {
     (HITS.load(Ordering::Relaxed), MISSES.load(Ordering::Relaxed))
 }
 
-/// What a translation depends on besides its container: the translator
-/// (`vilocity_shader::SOURCE_HASH`: its sources, manifest, the lock file and
-/// the compiler), the entry's encoding (this file's text) and the
-/// translation settings (the loop limit, which a diagnostics build can
-/// change at run time). Also names the translator's cache folder.
-fn fixed() -> &'static [u8; 32] {
-    static FIXED: OnceLock<[u8; 32]> = OnceLock::new();
-    FIXED.get_or_init(|| {
+/// What identifies a translation beside its container: the translator
+/// (the BLAKE3 of its sources, `build.rs`), the settings it runs with, and
+/// what it was told of the host. Not our executable: a rebuild of anything
+/// else used to translate every shader again.
+fn build() -> [u8; 32] {
+    // The view heap's null slot differs by host GPU: a translation cached
+    // without the clamp must not be served (`host_settings` below).
+    crate::descriptor::host::probe_view_limit();
+    static FIXED: OnceLock<Vec<u8>> = OnceLock::new();
+    let fixed = FIXED.get_or_init(|| {
         let limit = vilocity_shader::emit::loop_limit();
         if limit != vilocity_shader::emit::DEFAULT_LOOP_LIMIT {
             tracing::warn!(
@@ -72,68 +61,80 @@ fn fixed() -> &'static [u8; 32] {
                 "VILOCITY_SHADER_LOOP_LIMIT: translated loops stop sooner"
             );
         }
-        key(vilocity_shader::SOURCE_HASH, ENCODING, limit)
-    })
-}
-
-/// [`fixed`] and the translator's fingerprint: every `VILOCITY_*` switch it
-/// reads (without them here a run with `VILOCITY_WAVE_WIDE=0` was served the
-/// translations an earlier run had cached with the switch unset), the host
-/// facts the device gave it (widest wave, view heap null slot), barrier
-/// waits and clean-up passes. Worked out per lookup, so a translation made
-/// before the device said its wave size is never filed under the later key.
-fn build() -> [u8; 32] {
-    crate::descriptor::host::probe_view_limit();
-    let mut h = blake3::Hasher::new();
-    h.update(fixed());
-    h.update(&vilocity_shader::emit::translation_fingerprint());
-    *h.finalize().as_bytes()
-}
-
-/// The offline warm-up (`vilocity translate --warm`): `container` is
-/// translated into the cache unless it is there already. `Ok(true)`: it
-/// was translated now. Needs [`use_shader_cache`] and the same host facts
-/// the run will have (`vilocity_shader::emit::translation_fingerprint`).
-pub fn warm(container: &[u8]) -> Result<bool, String> {
-    CACHE.get().ok_or("no shader cache")?;
-    // The same form and key a run's lookup uses (split on 32-lane hosts).
-    let (translation, cached) = host_shader(container);
-    translation.map(|_| !cached)
-}
-
-/// This file, whose `encode` and `decode` define the entries.
-const ENCODING: &[u8] = include_bytes!("shader_cache.rs");
-
-fn key(translator: &str, encoding: &[u8], limit: u32) -> [u8; 32] {
-    let mut h = blake3::Hasher::new();
-    h.update(translator.as_bytes());
-    h.update(blake3::hash(encoding).as_bytes());
-    h.update(&limit.to_le_bytes());
-    *h.finalize().as_bytes()
-}
-
-/// The translation of a console shader container for the host GPU (its
-/// wave width: [`vilocity_shader::emit::host_wave_lanes`]), from the cache
-/// when there is one, and whether it came from there.
-pub fn host_shader(container: &[u8]) -> (Result<HostShader, String>, bool) {
-    let wave32_only = matches!(vilocity_shader::emit::host_wave_lanes(), 1..=32);
-    let translate = |c: &[u8]| {
-        vilocity_shader::emit::translate_for(c, wave32_only).map_err(|e| e.to_string())
-    };
-    match CACHE.get() {
-        // A split translation is its own entry: the same cache may serve
-        // another GPU later.
-        Some(cache) if wave32_only => {
-            let key = *blake3::hash(&[&build()[..], b"split"].concat()).as_bytes();
-            cached(cache, &key, container, translate)
+        let mut bytes = env!("VILOCITY_TRANSLATOR").as_bytes().to_vec();
+        bytes.extend_from_slice(&limit.to_le_bytes());
+        // Which group barriers wait is part of the translation too.
+        bytes.push(vilocity_shader::emit::group_sync());
+        // So are the switches that pick the form of a wave64 program:
+        // without them here a run with `VILOCITY_WAVE_WIDE=0` was
+        // served the translations an earlier run of the same
+        // executable had cached with the switch unset.
+        for name in [
+            "VILOCITY_WAVE_WIDE",
+            "VILOCITY_WAVE_DEEP_SKIPS",
+            "VILOCITY_WAVE_OWN_BITS",
+            "VILOCITY_WAVE_LOCAL",
+            "VILOCITY_F16_NEAREST",
+            "VILOCITY_HELPER_OWN",
+            "VILOCITY_FIRSTLANE_OWN",
+            "VILOCITY_FIRST_HALF",
+            "VILOCITY_STRICT_JOINS",
+            "VILOCITY_MESH_OUTPUT_STRICT",
+            "VILOCITY_BVH_FENCES",
+            "VILOCITY_BVH_BOUNDS",
+            // (Neptune-VE) The NaN guard changes colour exports and typed
+            // stores: a translation made without it must not serve a run
+            // with it, nor the other way round.
+            "VILOCITY_NAN_GUARD",
+        ] {
+            bytes.extend_from_slice(name.as_bytes());
+            bytes.push(b'=');
+            if let Some(value) = std::env::var_os(name) {
+                bytes.extend_from_slice(value.as_encoded_bytes());
+            }
+            bytes.push(0);
         }
+        // And which clean-up passes ran over the translated code.
+        bytes.extend_from_slice(&vilocity_shader::emit::shader_opt().to_le_bytes());
+        bytes
+    });
+    let mut hash = blake3::Hasher::new();
+    hash.update(fixed);
+    for value in vilocity_shader::emit::host_settings() {
+        hash.update(&value.to_le_bytes());
+    }
+    *hash.finalize().as_bytes()
+}
+
+/// What tells one set of translations from another ([`build`]).
+pub(crate) fn translation() -> [u8; 32] {
+    build()
+}
+
+/// Puts the translation of `container` into the cache before any title asks
+/// for it (`vilocity shaders`): whether it was there already, or why it does
+/// not translate. The host is opened first, as a run does: what the card
+/// can do decides the form of some programs.
+pub fn precompile(container: &[u8]) -> Result<bool, String> {
+    let _ = crate::host::host();
+    let misses = MISSES.load(Ordering::Relaxed);
+    host_shader(container)?;
+    // (Counts other threads' misses too: the caller only adds them up.)
+    Ok(MISSES.load(Ordering::Relaxed) == misses)
+}
+
+/// The translation of a console shader container, from the cache when
+/// there is one.
+pub(crate) fn host_shader(container: &[u8]) -> Result<HostShader, String> {
+    let translate = |c: &[u8]| vilocity_shader::emit::translate(c).map_err(|e| e.to_string());
+    match CACHE.get() {
         Some(cache) => cached(cache, &build(), container, translate),
-        None => (translate(container), false),
+        None => translate(container),
     }
 }
 
 /// The cache entry's converter: the build and the container in, the
-/// encoded translation (or refusal) out. `ran` tells a miss from a hit.
+/// encoded translation out. `ran` tells a miss from a hit.
 struct Translate<F> {
     translate: F,
     ran: AtomicBool,
@@ -149,7 +150,8 @@ impl<F: Fn(&[u8]) -> Result<HostShader, String> + Send + Sync> Converter for Tra
     }
     fn convert(&self, input: &[u8]) -> anyhow::Result<Vec<u8>> {
         self.ran.store(true, Ordering::Relaxed);
-        Ok(encode(&(self.translate)(&input[32..])))
+        let shader = (self.translate)(&input[32..]).map_err(anyhow::Error::msg)?;
+        Ok(encode(&shader))
     }
 }
 
@@ -158,41 +160,34 @@ fn cached(
     build: &[u8; 32],
     container: &[u8],
     translate: impl Fn(&[u8]) -> Result<HostShader, String> + Send + Sync,
-) -> (Result<HostShader, String>, bool) {
+) -> Result<HostShader, String> {
     let input = [&build[..], container].concat();
     let converter = Translate {
         translate,
         ran: AtomicBool::new(false),
     };
     for _ in 0..2 {
-        let path = match cache.get_or_convert(&converter, &input) {
-            Ok(path) => path,
-            Err(e) => {
-                tracing::warn!(error = format!("{e:#}"), "shader cache entry not written");
-                break;
-            }
-        };
+        let path = cache
+            .get_or_convert(&converter, &input)
+            .map_err(|e| format!("{e:#}"))?;
         if let Some(shader) = std::fs::read(&path).ok().and_then(|b| decode(&b)) {
-            let hit = !converter.ran.load(Ordering::Relaxed);
-            let (counter, what) = if hit {
-                (&HITS, "from the cache")
-            } else {
+            let (counter, what) = if converter.ran.load(Ordering::Relaxed) {
                 (&MISSES, "translated and cached")
+            } else {
+                (&HITS, "from the cache")
             };
             counter.fetch_add(1, Ordering::Relaxed);
             tracing::debug!(path = %path.display(), "shader {what}");
-            return (shader, hit);
+            return Ok(shader);
         }
         tracing::debug!(path = %path.display(), "unreadable shader cache entry; translating again");
         let _ = std::fs::remove_file(&path);
     }
     MISSES.fetch_add(1, Ordering::Relaxed);
-    ((converter.translate)(container), false)
+    (converter.translate)(container)
 }
 
 const MAGIC: &[u8; 4] = b"VSH1";
-/// A container that does not translate: the reason follows.
-const REFUSED: &[u8; 4] = b"VSHE";
 const STAGES: [HwStage; 8] = [
     HwStage::Ls,
     HwStage::Hs,
@@ -228,47 +223,28 @@ fn root_type(code: u32) -> RootType {
     }
 }
 
-/// Little-endian words and length-prefixed lists; a refusal is its
-/// reason's text.
-fn encode(translation: &Result<HostShader, String>) -> Vec<u8> {
-    let s = match translation {
-        Ok(s) => s,
-        Err(reason) => return [REFUSED.as_slice(), reason.as_bytes()].concat(),
-    };
-    // Every field by name: a field added to `HostShader` must be added here
-    // (and to `decode`).
-    let HostShader {
-        stage,
-        dxil,
-        user_data,
-        samplers,
-        static_samplers,
-        root_cbvs,
-        root_srvs,
-        root_uavs,
-        root_indexed_views,
-        half_views,
-    } = s;
+/// Little-endian words and length-prefixed lists.
+fn encode(s: &HostShader) -> Vec<u8> {
     let mut out = MAGIC.to_vec();
     let word = |out: &mut Vec<u8>, v: u32| out.extend(v.to_le_bytes());
-    let stage = STAGES.iter().position(|x| x == stage).unwrap_or(0) as u32;
+    let stage = STAGES.iter().position(|&x| x == s.stage).unwrap_or(0) as u32;
     word(&mut out, stage);
-    word(&mut out, dxil.len() as u32);
-    out.extend(dxil);
-    word(&mut out, user_data.len() as u32);
-    for u in user_data {
+    word(&mut out, s.dxil.len() as u32);
+    out.extend(&s.dxil);
+    word(&mut out, s.user_data.len() as u32);
+    for u in &s.user_data {
         for v in [u.index, u32::from(u.slot), root_code(u.root), u.dword] {
             word(&mut out, v);
         }
     }
-    word(&mut out, samplers.len() as u32);
-    for sampler in samplers {
+    word(&mut out, s.samplers.len() as u32);
+    for sampler in &s.samplers {
         for &v in sampler {
             word(&mut out, v);
         }
     }
-    word(&mut out, static_samplers.len() as u32);
-    for t in static_samplers {
+    word(&mut out, s.static_samplers.len() as u32);
+    for t in &s.static_samplers {
         let [u, v, w] = t.address;
         let words = [
             t.filter,
@@ -286,12 +262,12 @@ fn encode(translation: &Result<HostShader, String>) -> Vec<u8> {
             word(&mut out, v);
         }
     }
-    for slots in [root_cbvs, root_srvs, root_uavs] {
+    for slots in [&s.root_cbvs, &s.root_srvs, &s.root_uavs] {
         word(&mut out, slots.len() as u32);
         out.extend(slots);
     }
-    word(&mut out, root_indexed_views.len() as u32);
-    for view in root_indexed_views {
+    word(&mut out, s.root_indexed_views.len() as u32);
+    for view in &s.root_indexed_views {
         for value in [
             u32::from(view.table_slot),
             u32::from(view.constant_slot),
@@ -302,16 +278,15 @@ fn encode(translation: &Result<HostShader, String>) -> Vec<u8> {
             word(&mut out, value);
         }
     }
-    // Ported from Op-lite/victory-scarlett (GPL-3.0), fxceless #927: the halves places.
-    word(&mut out, half_views.len() as u32);
-    for &(slot, dword) in half_views {
+    word(&mut out, s.half_views.len() as u32);
+    for &(slot, dword) in &s.half_views {
         word(&mut out, u32::from(slot));
         word(&mut out, dword);
     }
     out
 }
 
-fn decode(bytes: &[u8]) -> Option<Result<HostShader, String>> {
+fn decode(bytes: &[u8]) -> Option<HostShader> {
     struct Reader<'a>(&'a [u8]);
     impl<'a> Reader<'a> {
         fn take(&mut self, n: usize) -> Option<&'a [u8]> {
@@ -326,9 +301,6 @@ fn decode(bytes: &[u8]) -> Option<Result<HostShader, String>> {
             let n = self.word()? as usize;
             Some(self.take(n)?.to_vec())
         }
-    }
-    if let Some(reason) = bytes.strip_prefix(REFUSED) {
-        return Some(Err(String::from_utf8(reason.to_vec()).ok()?));
     }
     let mut r = Reader(bytes);
     if r.take(4)? != MAGIC {
@@ -384,7 +356,7 @@ fn decode(bytes: &[u8]) -> Option<Result<HostShader, String>> {
     for _ in 0..n {
         half_views.push((u8::try_from(r.word()?).ok()?, r.word()?));
     }
-    r.0.is_empty().then_some(Ok(HostShader {
+    r.0.is_empty().then_some(HostShader {
         stage,
         dxil,
         user_data,
@@ -395,7 +367,7 @@ fn decode(bytes: &[u8]) -> Option<Result<HostShader, String>> {
         root_uavs,
         root_indexed_views,
         half_views,
-    }))
+    })
 }
 
 #[cfg(test)]
@@ -444,70 +416,26 @@ mod tests {
             runs.fetch_add(1, Ordering::Relaxed);
             Ok(shader())
         };
-        assert_eq!(
-            cached(&cache, &build, container, translate),
-            (Ok(shader()), false)
-        );
-        assert_eq!(
-            cached(&cache, &build, container, translate),
-            (Ok(shader()), true)
-        );
+        assert_eq!(cached(&cache, &build, container, translate), Ok(shader()));
+        assert_eq!(cached(&cache, &build, container, translate), Ok(shader()));
         assert_eq!(runs.load(Ordering::Relaxed), 1, "the second came from disk");
 
         // Another build translates again.
-        assert_eq!(
-            cached(&cache, &[8; 32], container, translate).0,
-            Ok(shader())
-        );
+        assert_eq!(cached(&cache, &[8; 32], container, translate), Ok(shader()));
         assert_eq!(runs.load(Ordering::Relaxed), 2);
 
         // A damaged entry is a miss, translated and stored again.
         for e in walk(dir.path()) {
             std::fs::write(e, b"VSH1 broken").unwrap();
         }
-        assert_eq!(
-            cached(&cache, &build, container, translate),
-            (Ok(shader()), false)
-        );
+        assert_eq!(cached(&cache, &build, container, translate), Ok(shader()));
         assert_eq!(runs.load(Ordering::Relaxed), 3);
-        assert_eq!(
-            cached(&cache, &build, container, translate),
-            (Ok(shader()), true)
-        );
+        assert_eq!(cached(&cache, &build, container, translate), Ok(shader()));
         assert_eq!(runs.load(Ordering::Relaxed), 3);
 
-        // Refusals are stored with their reason, and not tried again.
-        let fails = AtomicU64::new(0);
-        let fail = |_: &[u8]| {
-            fails.fetch_add(1, Ordering::Relaxed);
-            Err::<HostShader, _>("unsupported".to_owned())
-        };
-        let refused = (Err("unsupported".to_owned()), false);
-        assert_eq!(cached(&cache, &build, b"other", fail), refused);
-        assert_eq!(cached(&cache, &build, b"other", fail), (refused.0, true));
-        assert_eq!(fails.load(Ordering::Relaxed), 1);
-    }
-
-    /// The key's parts: a change to any of them (the translator's sources,
-    /// this file's encoding, the loop limit) makes another key, so no entry
-    /// written before it is read.
-    #[test]
-    fn the_key_covers_translator_encoding_and_settings() {
-        let k = key("0123456789abcdef", b"encoding", 1 << 20);
-        assert_eq!(k, key("0123456789abcdef", b"encoding", 1 << 20));
-        assert_ne!(k, key("0123456789abcdee", b"encoding", 1 << 20));
-        assert_ne!(k, key("0123456789abcdef", b"encoding.", 1 << 20));
-        assert_ne!(k, key("0123456789abcdef", b"encoding", 1 << 19));
-        // `build` adds the wave64 switches and the clean-up passes on top.
-        let mut h = blake3::Hasher::new();
-        h.update(&key(vilocity_shader::SOURCE_HASH, ENCODING, vilocity_shader::emit::loop_limit()));
-        assert_ne!(build(), *h.finalize().as_bytes(), "the switches are part of the key");
-        // The encoding part is this file as built.
-        assert!(
-            std::str::from_utf8(ENCODING)
-                .unwrap()
-                .contains("fn encode(translation: &Result<HostShader, String>)")
-        );
+        // Failures are not stored.
+        let fail = |_: &[u8]| Err::<HostShader, _>("unsupported".to_owned());
+        assert!(cached(&cache, &build, b"other", fail).is_err());
     }
 
     fn walk(dir: &std::path::Path) -> Vec<PathBuf> {
@@ -524,13 +452,10 @@ mod tests {
 
     #[test]
     fn entries_round_trip_and_reject_damage() {
-        let bytes = encode(&Ok(shader()));
-        assert_eq!(decode(&bytes), Some(Ok(shader())));
+        let bytes = encode(&shader());
+        assert_eq!(decode(&bytes), Some(shader()));
         assert_eq!(decode(&bytes[..bytes.len() - 1]), None);
         assert_eq!(decode(&[bytes.as_slice(), &[0]].concat()), None);
         assert_eq!(decode(b"VSH0"), None);
-        let refusal = Err("GFX10 code at 0x10: x is not supported".to_owned());
-        assert_eq!(decode(&encode(&refusal)), Some(refusal));
-        assert_eq!(decode(&[b"VSHE".as_slice(), &[0xff]].concat()), None);
     }
 }

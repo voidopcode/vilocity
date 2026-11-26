@@ -138,6 +138,9 @@ pub struct RootIndexedView {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Resources {
+    /// Scalar values saved to a constant VGPR lane and restored within one
+    /// block, even if that VGPR is also used in ordinary vector operations.
+    pub(crate) restored_lanes: std::collections::HashMap<Site, Moved>,
     /// Every scalar memory access by address (`s_load_*`, `s_store_*`), and
     /// every global memory access (`global_*`, the dynamic term per lane).
     pub scalar: Vec<(Site, Address)>,
@@ -227,6 +230,9 @@ pub fn track(
         for (i, inst) in block.insts.iter().enumerate() {
             let site = (b, i);
             t.at.set(Some(site));
+            if let Some(value) = t.restored(inst, Some(b)) {
+                out.restored_lanes.insert(site, value);
+            }
             let fail = |what| ShaderError::Unsupported {
                 offset: inst.machine.offset,
                 what,
@@ -514,7 +520,7 @@ impl<'a> Tracer<'a> {
                 }
                 for inst in &block.insts {
                     for (k, &(_, v)) in inst.writes.iter().enumerate() {
-                        let new = match copy_source(inst, k).or_else(|| self.restored(inst)) {
+                        let new = match copy_source(inst, k).or_else(|| self.restored(inst, None)) {
                             Some(Moved::Const(c)) => Some(Term::Const(c)),
                             Some(Moved::Value(s)) => o[s.0 as usize],
                             None => Some(Term::Value(v)),
@@ -1123,7 +1129,7 @@ impl<'a> Tracer<'a> {
             .collect::<Option<Vec<_>>>()
             .ok_or("a descriptor not in SGPRs")?;
         // A byte access through a buffer descriptor made raw reads what the
-        // descriptor's view does with a raw host view.
+        // descriptor's view does with a raw host view (VIctory upstream 0b35b7f).
         if !inst.name().contains("format")
             && let Some(raw) = self.made_raw(&words)
         {
@@ -1516,6 +1522,7 @@ impl<'a> Tracer<'a> {
         };
         (x == d1).then_some([w0, d1, d2, d3])
     }
+
 
     /// For a `v_readfirstlane_b32` result: the VGPR value it reads.
     fn first_lane_source(&self, v: Value) -> Option<Value> {
@@ -2300,41 +2307,64 @@ impl<'a> Tracer<'a> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Moved {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Moved {
     Const(u32),
     Value(Value),
+}
+
+fn plain_lane(v: &crate::gfx10::Valu) -> bool {
+    v.abs == 0
+        && v.neg == 0
+        && v.opsel == 0
+        && !v.clamp
+        && v.omod == 0
+        && v.sdwa.is_none()
+        && v.dpp.is_none()
 }
 
 impl Tracer<'_> {
     /// For `v_readlane_b32` of a constant lane: the SGPR spilled to that
     /// lane, found by following the VGPR's `v_writelane_b32` writes.
-    fn restored(&self, inst: &Inst) -> Option<Moved> {
+    fn restored(&self, inst: &Inst, block: Option<usize>) -> Option<Moved> {
         let Fields::Valu(v) = &inst.fields else {
             return None;
         };
-        if inst.name() != "v_readlane_b32" {
+        if inst.name() != "v_readlane_b32" || !plain_lane(v) {
             return None;
         }
         let [Operand::Vector { reg, .. }, lane] = v.src[..] else {
             return None;
         };
-        self.spilled(inst.read(Reg::V(reg))?, lane_of(lane)?, &mut Vec::new())
+        let lane = lane_of(lane)?;
+        if lane >= if self.p.wave64 { 64 } else { 32 } {
+            return None;
+        }
+        self.spilled(inst.read(Reg::V(reg))?, lane, block, &mut Vec::new())
             .ok()
             .flatten()
     }
 
     /// What lane `lane` of VGPR value `v` holds: `Ok(None)` for a phi in
     /// `seen` (already being resolved), `Err` if not a spilled SGPR.
-    fn spilled(&self, v: Value, lane: u32, seen: &mut Vec<Value>) -> Result<Option<Moved>, ()> {
+    fn spilled(
+        &self,
+        v: Value,
+        lane: u32,
+        block: Option<usize>,
+        seen: &mut Vec<Value>,
+    ) -> Result<Option<Moved>, ()> {
         if let Some((b, i)) = self.phis[v.0 as usize] {
+            if block.is_some() {
+                return Err(());
+            }
             if seen.contains(&v) {
                 return Ok(None);
             }
             seen.push(v);
             let mut found = None;
             for &a in &self.p.blocks[b].phis[i].args {
-                if let Some(m) = self.spilled(a, lane, seen)? {
+                if let Some(m) = self.spilled(a, lane, block, seen)? {
                     if found.is_some_and(|f| f != m) {
                         return Err(());
                     }
@@ -2343,18 +2373,26 @@ impl Tracer<'_> {
             }
             return Ok(found);
         }
-        let inst = self.def(v).ok_or(())?;
+        let site = self.defs[v.0 as usize].ok_or(())?;
+        if block.is_some_and(|b| site.0 != b) {
+            return Err(());
+        }
+        let inst = self.inst(site);
         let Fields::Valu(w) = &inst.fields else {
             return Err(());
         };
         let (Some(Operand::Vector { reg, .. }), [value, at]) = (w.dst, &w.src[..]) else {
             return Err(());
         };
-        if inst.name() != "v_writelane_b32" {
+        if inst.name() != "v_writelane_b32" || !plain_lane(w) {
             return Err(());
         }
-        if lane_of(*at).ok_or(())? != lane {
-            return self.spilled(inst.read(Reg::V(reg)).ok_or(())?, lane, seen);
+        let written = lane_of(*at).ok_or(())?;
+        if written >= if self.p.wave64 { 64 } else { 32 } {
+            return Err(());
+        }
+        if written != lane {
+            return self.spilled(inst.read(Reg::V(reg)).ok_or(())?, lane, block, seen);
         }
         match *value {
             Operand::Scalar { code, .. } if code != NULL => {
@@ -2370,7 +2408,7 @@ impl Tracer<'_> {
 }
 
 /// A lane select given as a constant.
-pub(crate) fn lane_of(op: Operand) -> Option<u32> {
+fn lane_of(op: Operand) -> Option<u32> {
     match op {
         Operand::Const(c) => inline(c),
         Operand::Literal(x) => Some(x),
@@ -2617,6 +2655,94 @@ pub(crate) mod tests {
             HwStage::Ps,
         );
         assert_eq!(r.scalar, [((0, 3), at(0, 0x20))]);
+    }
+
+    /// A VGPR a wave reduction used is free again after it: from the first
+    /// save on it holds parked scalars alone (an upscaler program parks a
+    /// constant buffer's descriptor that way).
+    #[test]
+    fn a_vgpr_used_before_holds_spilled_sgprs_from_its_first_save() {
+        let before = [
+            0x7E00_0281, // v_mov_b32 v0, 1
+            0x7E02_0300, // v_mov_b32 v1, v0
+        ];
+        let park = [
+            0xD761_0000,
+            0x0001_0609, // v_writelane_b32 v0, s9, 3
+            0xD760_0002,
+            0x0001_0700, // v_readlane_b32 s2, v0, 3
+            0xBE83_0380, // s_mov_b32 s3, 0
+        ];
+        let load = [
+            0xF40C_0001,
+            0xFA00_0020, // s_load_dwordx8 s[0:7], s[2:3], 0x20
+            S_ENDPGM,
+        ];
+        let words = [&before[..], &park, &load].concat();
+        let r = track_words(&words, &[param(Table, 9, 1)], HwStage::Ps);
+        assert_eq!(r.scalar, [((0, 5), at(0, 0x20))]);
+        // Still lane reads: a lane restored before it is saved, and a
+        // register with an ordinary use after the first save.
+        let restored_first = [&before[..], &park[2..4], &park[..2], &load].concat();
+        let used_after = [&before[..], &park, &before[1..], &load].concat();
+        for words in [restored_first, used_after] {
+            let code: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+            let p = crate::ir::build(&code, true, 8).unwrap();
+            let insts = p.blocks.iter().flat_map(|b| &b.insts);
+            assert_eq!(insts.filter(|i| i.name() == "v_readlane_b32").count(), 1);
+        }
+    }
+
+    /// Two lanes hold a pair (a lane mask, say) and later one of them a
+    /// scalar, as in a water volume program that parks more than the lanes
+    /// of one VGPR hold: the pair still moves as one.
+    #[test]
+    fn a_lane_spilled_to_again_later_does_not_split_an_earlier_pair() {
+        let pair = [
+            0xD761_0000u32,
+            0x0001_0004, // v_writelane_b32 v0, s4, 0
+            0xD761_0000,
+            0x0001_0205, // v_writelane_b32 v0, s5, 1
+            0xBE84_0380, // s_mov_b32 s4, 0
+            0xBE85_0380, // s_mov_b32 s5, 0
+            0xD760_0004,
+            0x0001_0100, // v_readlane_b32 s4, v0, 0
+            0xD760_0005,
+            0x0001_0300, // v_readlane_b32 s5, v0, 1
+        ];
+        let scalar = [
+            0xD761_0000u32,
+            0x0001_0006, // v_writelane_b32 v0, s6, 0
+            0xBE86_0380, // s_mov_b32 s6, 0
+            0xD760_0006,
+            0x0001_0100, // v_readlane_b32 s6, v0, 0
+            S_ENDPGM,
+        ];
+        let moves = |words: &[u32]| {
+            let code: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+            let p = crate::ir::build(&code, true, 8).unwrap();
+            let names: Vec<_> = p.blocks[0].insts.iter().map(|i| i.name()).collect();
+            assert!(!names.iter().any(|n| n.contains("lane")));
+            names.iter().filter(|n| **n == "s_mov_b64").count()
+        };
+        assert_eq!(moves(&[&pair[..], &scalar].concat()), 2);
+        // A restore both saves reach keeps the lane one scalar.
+        let joined = [
+            &pair[..4],
+            &[0xBF84_0002], // s_cbranch_scc0 past the second save
+            &scalar[..2],
+            &pair[4..],
+            &scalar[2..],
+        ]
+        .concat();
+        assert_eq!(moves_anywhere(&joined), 0);
+    }
+
+    fn moves_anywhere(words: &[u32]) -> usize {
+        let code: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+        let p = crate::ir::build(&code, true, 8).unwrap();
+        let insts = p.blocks.iter().flat_map(|b| &b.insts);
+        insts.filter(|i| i.name() == "s_mov_b64").count()
     }
 
     #[test]
@@ -2897,6 +3023,7 @@ pub(crate) mod tests {
         assert_eq!(value(2, 0), Term::Const(0x1850_0000));
         assert_eq!(value(2, 1), Term::Const(0));
     }
+
 
     #[test]
     fn a_selection_that_mixes_two_descriptors_fails() {
@@ -3987,24 +4114,23 @@ pub(crate) mod tests {
         // directly to the join block without initializing the immediate
         // sampler `s[8:11]`. The join's `image_sample_lz` is guarded by EXEC,
         // so only the arm where `s[8:11]` was built can execute it.
-        // (cool_fox f4b48ad, VIctory family.)
         let code: Vec<u8> = [
             0xBE84_0300u32, // s_mov_b32 s4, s0
             0xBE85_0380,    // s_mov_b32 s5, 0
             0xF40C_0302,
-            0xFA00_0000, // s_load_dwordx8 s[12:19], s[4:5], 0x0
-            0x7E04_0D00, // v_cvt_f32_u32 v2, v0
-            0x7E06_0302, // v_mov_b32 v3, v2
-            0x7D88_0090, // v_cmp_gt_u32 vcc_lo, 16, v0
-            0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
-            0x877E_6A7E, // s_and_b32 exec_lo, exec_lo, vcc_lo
-            0xBF88_0004, // s_cbranch_execz -> join (skips 4 dwords)
-            0xBE88_0380, // s_mov_b32 s8, 0
-            0xBE89_0380, // s_mov_b32 s9, 0
-            0xBE8A_0380, // s_mov_b32 s10, 0
-            0xBE8B_0380, // s_mov_b32 s11, 0
+            0xFA00_0000,    // s_load_dwordx8 s[12:19], s[4:5], 0x0
+            0x7E04_0D00,    // v_cvt_f32_u32 v2, v0
+            0x7E06_0302,    // v_mov_b32 v3, v2
+            0x7D88_0090,    // v_cmp_gt_u32 vcc_lo, 16, v0
+            0xBF8C_C07F,    // s_waitcnt lgkmcnt(0)
+            0x877E_6A7E,    // s_and_b32 exec_lo, exec_lo, vcc_lo
+            0xBF88_0004,    // s_cbranch_execz -> join (skips 4 dwords)
+            0xBE88_0380,    // s_mov_b32 s8, 0
+            0xBE89_0380,    // s_mov_b32 s9, 0
+            0xBE8A_0380,    // s_mov_b32 s10, 0
+            0xBE8B_0380,    // s_mov_b32 s11, 0
             0xF09C_0F08,
-            0x0043_0C02, // image_sample_lz v[12:15], v[2:3], s[12:19], s[8:11]
+            0x0043_0C02,    // image_sample_lz v[12:15], v[2:3], s[12:19], s[8:11]
             S_ENDPGM,
         ]
         .iter()

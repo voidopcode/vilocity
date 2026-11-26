@@ -226,9 +226,6 @@ pub(crate) struct Module {
     named: Vec<(String, Vec<Md>)>,
     /// See [`Tag`]: by instruction.
     tags: HashMap<u32, Tag>,
-    /// Structures chosen between by a condition: `(cond, other)` by the
-    /// one taken where `cond` holds. [`Module::extract`] chooses the field.
-    pub chosen: HashMap<V, (V, V)>,
 }
 
 impl Module {
@@ -440,14 +437,7 @@ impl Module {
             TypeDef::Array(_, t) => *t,
             t => panic!("extractvalue from {t:?}"),
         };
-        let x = self.push(block, ty, Op::Extract(agg, index));
-        match self.chosen.get(&agg).copied() {
-            Some((cond, other)) => {
-                let y = self.push(block, ty, Op::Extract(other, index));
-                self.select(block, cond, x, y)
-            }
-            None => x,
-        }
+        self.push(block, ty, Op::Extract(agg, index))
     }
     pub fn call(&mut self, block: usize, f: V, args: Vec<V>) -> V {
         let V::Func(i) = f else {
@@ -737,7 +727,7 @@ impl Module {
             let blk = &self.blocks[b];
             if let (Some(Term::Br(h)), true, [p]) = (
                 blk.term,
-                blk.phis.is_empty() && blk.body.is_empty(),
+                blk.phis.iter().all(|&i| !live[i as usize]) && blk.body.is_empty(),
                 &preds[b][..],
             ) && pos[h] < pos[b]
                 && !succs(*p).contains(&h)
@@ -1207,6 +1197,45 @@ mod tests {
     }
 
     #[test]
+    fn empty_latch_with_dead_phis_is_folded() {
+        // Two identical loops except one has an unread phi in its empty latch;
+        // both must fold the latch and emit identical bitcode.
+        let build = |with_dead_phi: bool| {
+            let mut m = Module::default();
+            let i32t = m.int(32);
+            let void = m.void();
+            let fty = m.func_ty(void, vec![i32t]);
+            let f = m.function("sink", fty, Some(Attr::NoUnwind), false);
+            let main_ty = m.func_ty(void, vec![]);
+            m.function("main", main_ty, None, true);
+            let (entry, head, body, latch, exit) = (
+                m.new_block(),
+                m.new_block(),
+                m.new_block(),
+                m.new_block(),
+                m.new_block(),
+            );
+            let (z, one, ten) = (m.i32(0), m.i32(1), m.i32(10));
+            m.terminate(entry, Term::Br(head));
+            let i = m.phi(head, i32t);
+            m.terminate(head, Term::Br(body));
+            let next = m.bin(body, Bin::Add, i, one);
+            let cond = m.cmp(body, pred::IULT, next, ten);
+            m.terminate(body, Term::CondBr(cond, latch, exit));
+            if with_dead_phi {
+                let dead = m.phi(latch, i32t);
+                m.set_phi(dead, vec![(next, body)]);
+            }
+            m.terminate(latch, Term::Br(head));
+            m.set_phi(i, vec![(z, entry), (next, latch)]);
+            let _ = m.call(exit, f, vec![next]);
+            m.terminate(exit, Term::Ret);
+            m.write()
+        };
+        assert_eq!(build(false), build(true));
+    }
+
+    #[test]
     fn successors_of_each_terminator() {
         assert!(successors(None).is_empty());
         assert!(successors(Some(Term::Ret)).is_empty());
@@ -1228,7 +1257,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "benchmark: cargo test --release -p vilocity-native-shader bitcode -- --ignored --nocapture"]
+    #[ignore = "benchmark: cargo test --release -p vilocity-shader bitcode -- --ignored --nocapture"]
     fn bench_write() {
         for (regs, stages, read) in [(64, 64, 64), (128, 256, 32), (256, 512, 256)] {
             let m = synthetic(regs, stages, read);

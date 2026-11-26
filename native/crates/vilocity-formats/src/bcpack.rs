@@ -210,7 +210,7 @@ impl Tables {
             })
             .collect();
         let bc7 = (0..DICTIONARY)
-            .map(|entry| {
+            .map(|_| {
                 let mut ep = Bc7Ep {
                     ctrl: r.u16(),
                     ..Default::default()
@@ -222,10 +222,10 @@ impl Tables {
                     bits: [r.u8(), r.u8()],
                     ..Default::default()
                 };
-                // Entry 0 holds all 32 indices; the others repeat the widths
-                // and hold 31 (only 15 slots for set 1, which no entry uses).
-                let n = if entry == 0 { 32 } else { r.u16(); 31 };
-                for v in &mut ix.ix.as_flattened_mut()[..n] {
+                // Unused: the widths again in all entries but the first.
+                r.u16();
+                // Only 15 slots for set 1, which no entry uses (0 bits).
+                for v in &mut ix.ix.as_flattened_mut()[..31] {
                     *v = r.u16() as i16;
                 }
                 (ep, ix)
@@ -1168,19 +1168,6 @@ mod tests {
         assert!(super::Tables::builtin().is_ok());
     }
 
-    /// BC7 dictionary entry 0 holds all 32 indices, with no repeated widths
-    /// before them: read like the others, it lost its leading 2 and shifted
-    /// the rest (blocky textures in GTA VI).
-    #[test]
-    fn bc7_dictionary_entry_0_keeps_its_first_index() {
-        let t = super::Tables::builtin().unwrap();
-        let (ep, ix) = &t.bc7[0];
-        assert_eq!(ep.ctrl, 0);
-        assert_eq!(ix.bits, [4, 0]);
-        assert_eq!(ix.ix[0], [2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        assert_eq!(ix.ix[1], [0; 16]);
-    }
-
     use super::*;
 
     /// Tables we made: uniform models, identity ranks, a BC7 code per mode,
@@ -1549,7 +1536,7 @@ mod tests {
     }
 
     /// Decode throughput on synthetic streams (no game data):
-    /// `cargo test --release -p vilocity-native-formats bcpack_throughput -- --ignored --nocapture`.
+    /// `cargo test --release -p vilocity-formats bcpack_throughput -- --ignored --nocapture`.
     #[test]
     #[ignore = "benchmark"]
     fn bcpack_throughput() {

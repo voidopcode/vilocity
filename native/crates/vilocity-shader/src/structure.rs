@@ -11,14 +11,6 @@
 //! lane that reaches it; what it cannot prove stays as the instruction's
 //! guard, a per-lane `if` around it.
 //!
-//! A pixel's discard (`s_andn2 live, live, exec`, then "no lane is left":
-//! the exit) is the exception: on the console a discarded lane whose quad
-//! has a live lane stays in EXEC (`s_wqm` of the live mask), a helper of
-//! the quad's derivatives, and no lane takes the exit while its wave has a
-//! live lane. Here it runs on as a live lane and is discarded at that point
-//! ([`Structured::discards`]): the host's `discard` keeps it as a helper
-//! (derivatives read it) and drops its outputs and stores.
-//!
 //! The control-flow graph keeps its shape and must be reducible (DXIL's
 //! only requirement). Helper lanes of a pixel shader count as live: on PC
 //! their side effects are dropped too, and what they compute is only read
@@ -30,7 +22,6 @@ use std::hash::{BuildHasherDefault, Hasher};
 use crate::ShaderError;
 use crate::gfx10::{Fields, NULL, Operand};
 use crate::ir::{EXEC, Exit, Inst, Program, Reg, VCC, Value};
-use crate::resource::lane_of;
 
 /// A per-lane boolean: a node of [`Bools`]. Equal functions are equal nodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -341,20 +332,6 @@ impl Bools {
         found
     }
 
-    /// The value `atom` has in every lane meeting `facts` (as [`Bools::meet`]
-    /// takes them), if they decide it.
-    pub fn decides(&self, facts: &[(Bool, bool)], atom: Atom) -> Option<bool> {
-        let x = *self
-            .unique
-            .get(&(*self.ids.get(&atom)?, Bool::FALSE, Bool::TRUE))?;
-        let can = |value| self.meet(&[facts, &[(x, value)]].concat());
-        match (can(false), can(true)) {
-            (false, true) => Some(true),
-            (true, false) => Some(false),
-            _ => None,
-        }
-    }
-
     fn implies(&mut self, a: Bool, b: Bool) -> bool {
         let nb = self.not(b);
         self.and(a, nb) == Bool::FALSE
@@ -454,13 +431,6 @@ pub struct Structured {
     /// ballot there gives the mask as data. No split low dword, as in
     /// `masks`.
     pub active: HashSet<Value>,
-    /// Per block and instruction: the lane's EXEC bit there, in full
-    /// (`guards` keeps only what reaching it does not already imply).
-    /// For code that runs every lane through every block (split wave64).
-    pub execs: Vec<Vec<Option<Bool>>>,
-    /// Per block: the lane's own condition for its closing branch, in full
-    /// (`exits` keeps only what reaching the block does not imply).
-    pub whens: Vec<Option<Bool>>,
     /// Incoming lane boolean per predecessor edge (in block predecessor order)
     /// for each [`Atom::Phi`] id.
     pub phi_masks: HashMap<Value, Vec<Bool>>,
@@ -473,12 +443,6 @@ pub struct Structured {
     /// SCC values a mask operation sets when some lane's bit of its result is set, with that
     /// lane bit: as data such an SCC is "some lane of the wave has it".
     pub scc_some: HashMap<Value, Bool>,
-    /// `v_readlane_b32` results of a constant lane: the SGPR value that
-    /// `v_writelane_b32` spilled to that lane, the same along every path.
-    pub restored: HashMap<Value, Value>,
-    /// A pixel's discards, by block and instruction: the lanes (EXEC there)
-    /// the instruction takes out of the live mask, which here stay in it.
-    pub discards: HashMap<(usize, usize), Bool>,
 }
 
 impl Structured {
@@ -505,27 +469,8 @@ pub fn structure(program: &Program) -> Result<Structured, ShaderError> {
 /// run as two host waves, which exchange that decision and can then meet (a group barrier)
 /// inside the branch.
 pub fn structure_wide(program: &Program, wide: &HashSet<usize>) -> Result<Structured, ShaderError> {
-    structure_as(program, wide, true)
-}
-
-/// The per-lane form with a pixel's discarded lanes taken out of the live
-/// mask, as the console does: wrong for derivatives after a discard, but
-/// what a program needs whose discarded lanes would read values no
-/// surviving lane does (see [`Structured::discards`]).
-pub fn killing(program: &Program) -> Result<Structured, ShaderError> {
-    structure_as(program, &HashSet::new(), false)
-}
-
-fn structure_as(
-    program: &Program,
-    wide: &HashSet<usize>,
-    helpers: bool,
-) -> Result<Structured, ShaderError> {
     let mut l = Lanes::new(program)?;
     l.wide = wide.clone();
-    if !helpers {
-        l.kills.clear();
-    }
     loop {
         let execs = l.masks_in_order();
         let cond = l.paths()?;
@@ -592,11 +537,6 @@ struct Lanes<'a> {
     scc_every: HashSet<Value>,
     /// See [`Structured::wave_any`].
     wave_any: Vec<Option<bool>>,
-    /// See [`Structured::restored`].
-    restored: Map<Value, Value>,
-    /// A pixel's discards (see [`Structured::discards`]) by block and
-    /// instruction.
-    kills: HashSet<(usize, usize)>,
 }
 
 /// A mask join taken as `value` in every lane that reaches `block`: each
@@ -654,7 +594,7 @@ impl<'a> Lanes<'a> {
                 }
             }
         }
-        let mut l = Lanes {
+        Ok(Lanes {
             p,
             order,
             index,
@@ -677,73 +617,7 @@ impl<'a> Lanes<'a> {
             wide: HashSet::new(),
             scc_every: HashSet::new(),
             wave_any: vec![None; blocks.len()],
-                    restored: Map::default(),
-            kills: HashSet::new(),
-        };
-        for block in blocks {
-            if let Exit::Branch { taken, not_taken } = block.exit
-                && let Some(last) = block.insts.last()
-                && l.discards(last)
-                && (l.kill_exit(taken) || l.kill_exit(not_taken))
-                && let Some(def) = last.read(Reg::Scc).and_then(|v| l.defs.get(&v))
-            {
-                l.kills.insert(*def);
-            }
-        }
-        for inst in blocks.iter().flat_map(|b| &b.insts) {
-            if let Fields::Valu(v) = &inst.fields
-                && inst.name() == "v_readlane_b32"
-                && let [Operand::Vector { reg, .. }, lane] = v.src[..]
-                && let Some(lane) = lane_of(lane)
-                && let Some(spill) = inst.read(Reg::V(reg))
-                && let Ok(Some(s)) = l.spilled(spill, lane, &mut Vec::new())
-                && let Some(&(_, r)) = inst.writes.first()
-            {
-                l.restored.insert(r, s);
-            }
-        }
-        Ok(l)
-    }
-
-    /// What lane `lane` of VGPR value `v` holds when `v_writelane_b32` put
-    /// an SGPR there: `Ok(None)` for a phi in `seen` (being resolved).
-    fn spilled(&self, v: Value, lane: u32, seen: &mut Vec<Value>) -> Result<Option<Value>, ()> {
-        if let Some(&(b, i)) = self.phis.get(&v) {
-            if seen.contains(&v) {
-                return Ok(None);
-            }
-            seen.push(v);
-            let mut found = None;
-            for &a in &self.p.blocks[b].phis[i].args {
-                if let Some(s) = self.spilled(a, lane, seen)? {
-                    if found.is_some_and(|f| f != s) {
-                        return Err(());
-                    }
-                    found = Some(s);
-                }
-            }
-            return Ok(found);
-        }
-        let &(b, i) = self.defs.get(&v).ok_or(())?;
-        let inst = &self.p.blocks[b].insts[i];
-        let Fields::Valu(w) = &inst.fields else {
-            return Err(());
-        };
-        let (Some(Operand::Vector { reg, .. }), [value, at]) = (w.dst, &w.src[..]) else {
-            return Err(());
-        };
-        if inst.name() != "v_writelane_b32" {
-            return Err(());
-        }
-        if lane_of(*at).ok_or(())? != lane {
-            return self.spilled(inst.read(Reg::V(reg)).ok_or(())?, lane, seen);
-        }
-        match *value {
-            Operand::Scalar { code, .. } if code != NULL => {
-                inst.read(Reg::S(code)).map(Some).ok_or(())
-            }
-            _ => Err(()),
-        }
+        })
     }
 
     fn reset(&mut self) {
@@ -804,44 +678,14 @@ impl<'a> Lanes<'a> {
                     now = Some(e);
                 }
                 self.step(inst, now);
-                if self.kills.contains(&(b, i))
-                    && let Fields::Sop {
-                        dst: Some(Operand::Scalar { code, .. }),
-                        ..
-                    } = inst.fields
-                    && let (Some(old), Some(new)) = (
-                        self.key(|r| inst.read(r), code),
-                        self.key(|r| inst.write(r), code),
-                    )
-                {
-                    let m = self.mask(old).0;
-                    self.masks.insert(new, m);
-                    if let Some(scc) = inst.write(Reg::Scc) {
-                        self.scc_lane.insert(scc, m);
-                    }
-                }
                 if let Some(k) = self.key(|r| inst.write(r), EXEC) {
                     now = self.masks.get(&k).or(self.other.get(&k)).copied();
                 }
             }
-            if let Exit::Branch { taken, not_taken } = p.blocks[b].exit
+            if let Exit::Branch { .. } = p.blocks[b].exit
                 && let Some(last) = p.blocks[b].insts.last()
             {
-                let mut w = self.branch(last);
-                // A discard's "no lane is left" exit: no lane takes it (the
-                // live mask keeps every lane, see `kills`).
-                if last
-                    .read(Reg::Scc)
-                    .and_then(|v| self.defs.get(&v))
-                    .is_some_and(|d| self.kills.contains(d))
-                {
-                    if self.kill_exit(taken) {
-                        w = Bool::FALSE;
-                    } else if self.kill_exit(not_taken) {
-                        w = Bool::TRUE;
-                    }
-                }
-                self.when[b] = Some(w);
+                self.when[b] = Some(self.branch(last));
                 self.wave_any[b] = self.wave_kind(last);
             }
         }
@@ -948,6 +792,9 @@ impl<'a> Lanes<'a> {
             .iter()
             .enumerate()
             .map(|(n, block)| {
+                // Reachability is fixed within the block. Vector instructions
+                // with the same EXEC therefore need the same guard.
+                let mut last_guard = None;
                 block
                     .insts
                     .iter()
@@ -957,8 +804,16 @@ impl<'a> Lanes<'a> {
                         | (_, Fields::Sop { .. } | Fields::Sopp { .. } | Fields::Smem { .. }) => {
                             None
                         }
-                        (&Some(e), _) if b.implies(cond[n], e) => None,
-                        (&Some(e), _) => Some(b.given(e, cond[n])),
+                        (&Some(e), _) => {
+                            if let Some((prev, guard)) = last_guard
+                                && prev == e
+                            {
+                                return guard;
+                            }
+                            let guard = (!b.implies(cond[n], e)).then(|| b.given(e, cond[n]));
+                            last_guard = Some((e, guard));
+                            guard
+                        }
                     })
                     .collect()
             })
@@ -1013,18 +868,10 @@ impl<'a> Lanes<'a> {
                 .map(|(&scc, &m)| (scc, m))
                 .collect(),
             phi_masks,
-            restored: self.restored.into_iter().collect(),
-            discards: self
-                .kills
-                .iter()
-                .filter_map(|&(b, i)| execs[b][i].map(|e| ((b, i), e)))
-                .collect(),
             bools: self.b,
             exits,
             guards,
             reach: cond.to_vec(),
-            execs: execs.to_vec(),
-            whens: self.when.clone(),
         })
     }
 
@@ -1062,15 +909,9 @@ impl<'a> Lanes<'a> {
             return (m, false);
         }
         let p = self.p;
-        let restored = (
-            self.restored.get(&k.0).copied(),
-            self.restored.get(&k.1).copied(),
-        );
-        let (m, derived) = match (self.join(k), restored) {
-            (Some(join), _) => join,
-            // A mask spilled to VGPR lanes and read back: the same mask.
-            (None, (Some(lo), Some(hi))) => self.mask((lo, hi)),
-            (None, _) => {
+        let (m, derived) = match self.join(k) {
+            Some(join) => join,
+            None => {
                 let (lo, hi) = (self.defs.get(&k.0).copied(), self.defs.get(&k.1).copied());
                 let def = |d: Option<(usize, usize)>| d.map(|(b, i)| &p.blocks[b].insts[i]);
                 let m = match (lo, hi) {
@@ -1361,8 +1202,7 @@ impl<'a> Lanes<'a> {
                         && let Some(k) = self.key(|r| inst.read(r), code)
                     {
                         let phi = self.phis.contains_key(&k.0) || self.phis.contains_key(&k.1);
-                        takes_mask |= self.masks.contains_key(&k)
-                            || phi && !self.joins_loaded(k) && self.mask(k).1;
+                        takes_mask |= self.masks.contains_key(&k) || phi && self.mask(k).1;
                     }
                 }
                 let touches_exec =
@@ -1470,68 +1310,6 @@ impl<'a> Lanes<'a> {
             }
             _ => {}
         }
-    }
-
-    /// Whether a join takes a value loaded from memory on some edge: data
-    /// that the other paths leave a stale lane mask in place of (a register
-    /// reused after a branch), so operations on it are no mask operations.
-    fn joins_loaded(&self, k: Key) -> bool {
-        [k.0, k.1].iter().any(|v| {
-            self.phis.get(v).is_some_and(|&(b, i)| {
-                self.p.blocks[b].phis[i].args.iter().any(|a| {
-                    self.defs.get(a).is_some_and(|&(db, di)| {
-                        matches!(self.p.blocks[db].insts[di].fields, Fields::Smem { .. })
-                    })
-                })
-            })
-        })
-    }
-
-    /// Whether `inst` branches on the SCC of `s_andn2 X, X, exec`: whether
-    /// any lane is left in a pixel's live mask after a discard.
-    fn discards(&self, inst: &Inst) -> bool {
-        if !inst.name().starts_with("s_cbranch_scc") {
-            return false;
-        }
-        let Some(&(db, di)) = inst.read(Reg::Scc).and_then(|v| self.defs.get(&v)) else {
-            return false;
-        };
-        let def = &self.p.blocks[db].insts[di];
-        let Fields::Sop {
-            dst: Some(d), src, ..
-        } = &def.fields
-        else {
-            return false;
-        };
-        matches!(def.name(), "s_andn2_b32" | "s_andn2_b64")
-            && src.first() == Some(d)
-            && matches!(src.get(1), Some(Operand::Scalar { code: EXEC, .. }))
-    }
-
-    /// Whether a lane entering block `b` leaves the program doing nothing but
-    /// scalar work and a `done` export to `null` (a discard's exit).
-    fn kill_exit(&self, mut b: usize) -> bool {
-        for _ in 0..8 {
-            let block = &self.p.blocks[b];
-            let mut null_done = false;
-            for inst in &block.insts {
-                match inst.fields {
-                    Fields::Exp {
-                        target: 9,
-                        done: true,
-                        ..
-                    } => null_done = true,
-                    Fields::Sop { .. } | Fields::Sopp { .. } => {}
-                    _ => return false,
-                }
-            }
-            match block.exit {
-                Exit::End => return null_done,
-                Exit::Jump(next) if !null_done => b = next,
-                _ => return false,
-            }
-        }
-        false
     }
 
     /// The per-lane condition under which a block's closing branch is taken.
@@ -1795,74 +1573,6 @@ mod tests {
     }
 
     #[test]
-    fn a_mask_spilled_to_a_vgpr_lane_comes_back_as_itself() {
-        let p = build(
-            &[
-                0x7D84_0080, // v_cmp_eq_u32 vcc, 0, v0
-                0xBE80_036A, // s_mov_b32 s0, vcc_lo
-                0xD761_0001,
-                0x0001_0600, // v_writelane_b32 v1, s0, 3
-                0xD760_0005,
-                0x0001_0701, // v_readlane_b32 s5, v1, 3
-                0xBE86_3C05, // s_and_saveexec_b32 s6, s5
-                0xBF88_0001, // s_cbranch_execz -> end
-                0x7E06_0280, // v_mov_b32 v3, 0
-                S_ENDPGM,
-            ],
-            false,
-        );
-        let s = structure(&p).unwrap();
-        let insts = &p.blocks[0].insts;
-        // (The fork's `ir::unspill` already turns the spill back into the
-        // SGPR value it saved, so `restored` has nothing left to map here.)
-        let _ = insts;
-        // Skipped exactly where the compare fails, as without the spill.
-        let LaneExit::Branch { when, .. } = s.exits[0] else {
-            panic!("{:?}", s.exits)
-        };
-        let cmp = insts[0].write(Reg::S(VCC)).unwrap();
-        assert_eq!(
-            s.bools.node(when),
-            Some((Atom::Lane(cmp), Bool::TRUE, Bool::FALSE))
-        );
-    }
-
-    #[test]
-    fn data_loaded_where_a_mask_was_is_no_mask() {
-        // s1 holds a mask on one path and a loaded value on the other; the
-        // bit test after the join is data (wave32: `_b32` operations would
-        // otherwise read as mask operations).
-        let p = build(
-            &[
-                0x7D84_0080, // v_cmp_eq_u32 vcc, 0, v0
-                0xBE81_036A, // s_mov_b32 s1, vcc_lo
-                0xBF06_8004, // s_cmp_eq_u32 s4, 0
-                0xBF85_0002, // s_cbranch_scc1 -> join
-                0xF400_0041,
-                0xFA00_0000, // s_load_dword s1, s[2:3], 0
-                0x8702_FF01,
-                0x0010_0000, // join: s_and_b32 s2, s1, 0x100000
-                0xBF06_8002, // s_cmp_eq_u32 s2, 0
-                0xBF85_0001, // s_cbranch_scc1 -> end
-                0x7E06_0280, // v_mov_b32 v3, 0
-                S_ENDPGM,
-            ],
-            false,
-        );
-        let s = structure(&p).unwrap();
-        let join = p
-            .blocks
-            .iter()
-            .position(|b| b.insts.iter().any(|i| i.name() == "s_and_b32"))
-            .unwrap();
-        let LaneExit::Branch { when, .. } = s.exits[join] else {
-            panic!("{:?}", s.exits)
-        };
-        let scc = p.blocks[join].insts[1].write(Reg::Scc).unwrap();
-        assert_eq!(s.bools.support(when), vec![Atom::Uniform(scc)]);
-    }
-
-    #[test]
     fn exec_narrowed_without_a_branch_leaves_a_guard() {
         let p = build(
             &[
@@ -1876,6 +1586,37 @@ mod tests {
         assert_eq!(s.guards[0][0], None, "the compare runs in every lane");
         let g = s.guards[0][1].expect("guard");
         assert!(matches!(s.bools.support(g)[..], [Atom::Lane(_)]));
+    }
+
+    #[test]
+    fn guards_follow_exec_and_block_reachability() {
+        let p = build(
+            &[
+                0x7DA4_0080, // v_cmpx_eq_u32 exec, 0, v0
+                0x7E02_0280, // v_mov_b32 v1, 0
+                0x7E04_0280, // v_mov_b32 v2, 0
+                0xBF88_0005, // s_cbranch_execz -> end
+                0x7E06_0280, // v_mov_b32 v3, 0
+                0x7DA4_0880, // v_cmpx_eq_u32 exec, 0, v4
+                0x7E06_0280, // v_mov_b32 v3, 0
+                0xBE82_0480, // s_mov_b64 s[2:3], 0
+                0x7E0A_0280, // v_mov_b32 v5, 0
+                S_ENDPGM,
+            ],
+            true,
+        );
+        let s = structure(&p).unwrap();
+        let lane = |block: usize, i: usize| {
+            Atom::Lane(p.blocks[block].insts[i].write(Reg::S(EXEC)).unwrap())
+        };
+        let a = s.guards[0][1].unwrap();
+        let b = s.guards[1][2].unwrap();
+        assert_eq!(s.bools.node(a), Some((lane(0, 0), Bool::FALSE, Bool::TRUE)));
+        assert_eq!(s.guards[0], [None, Some(a), Some(a), None]);
+        // The fallthrough already implies the first compare. Only the second
+        // compare needs testing, and the scalar move never needs a guard.
+        assert_eq!(s.bools.node(b), Some((lane(1, 1), Bool::FALSE, Bool::TRUE)));
+        assert_eq!(s.guards[1], [None, None, Some(b), None, Some(b)]);
     }
 
     #[test]

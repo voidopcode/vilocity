@@ -3,7 +3,7 @@
 //!
 //! `VILOCITY_SHADER_CENSUS` (any value) turns the counting on; the counts of
 //! the module a thread wrote last are read with [`take`]. The `translate`
-//! command writes them as a table (see `apps/vilocity-native/src/translate.rs`).
+//! command writes them as a table (see `apps/vilocity/src/translate.rs`).
 
 use super::{Cast, Module, Op, Tag, Term, V};
 use std::cell::RefCell;

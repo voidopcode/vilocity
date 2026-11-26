@@ -1,3 +1,6 @@
+//! Cube samples with gradients select their level by the footprint (after
+//! DexNom/VIctory 921d8d3b).
+
 use super::host::{Dispatch, Host, Root, View};
 use super::intersect_tests::build_compute_shader;
 use crate::native::{
@@ -121,7 +124,7 @@ fn guest_cube_gradient_selects_mip_by_footprint() {
                         Root::Constants(vec![0; shader.user_data_dwords() as usize]),
                     )],
                     views: &[
-                        View::MippedCube(SIZE as u32, u32::from(MIPS), &texels),
+                        View::Cube(SIZE as u32, MIPS, &texels),
                         View::RawUav(cases.len() as u32),
                     ],
                     samplers: &[sampler],

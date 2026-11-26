@@ -2,8 +2,6 @@
 //! format load of whole dwords whose result the program reads only one
 //! half of, as a half float, moves 16-bit integers, like a d16 access
 //! ([`super::super::HostShader::half_views`]).
-//!
-//! Ported from Op-lite/victory-scarlett (GPL-3.0), fxceless #927 via trustno1 77e13a9.
 
 use std::collections::HashSet;
 
