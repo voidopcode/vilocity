@@ -417,6 +417,104 @@ pub(crate) static HEAP_BUFFER_MICROS: AtomicU64 = AtomicU64::new(0);
 /// picked by index that runs inside it (`heap_textures`), and the buffer
 /// slots the pass over buffer views looked at; since the last frame line.
 pub(crate) static HEAP_PASS_PARTS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+
+/// The key ([`HostList::first_use`]) of a list that runs a shader picking
+/// buffers from the view heap ([`State::heap_buffers`]): one per list, as
+/// textures have; no title resource is there.
+pub(crate) const PICKS: usize = usize::MAX - 0x5e;
+
+/// Per title slot, the host copy and range its buffer view reads.
+type Ranges = std::collections::HashMap<u32, (std::sync::Arc<crate::shadow::Shadow>, u64, u64)>;
+
+/// Per host heap: the passes over it and its [`Ranges`], kept from pass to
+/// pass. Only the slots written since the last pass are looked at again
+/// (83,000 slots a pass otherwise, 0.1 s at best); all of them every 16
+/// passes, because a view of a released resource goes stale without a
+/// write, and a slot written before its memory had a host copy is only
+/// made then.
+static RANGES: std::sync::Mutex<Option<std::collections::HashMap<usize, (u64, Ranges)>>> =
+    std::sync::Mutex::new(None);
+
+/// Makes the host slots of title slots `slots` from the buffer views they
+/// hold, noting in `ranges` the host copy and range each reads.
+fn make_picked(
+    heap: &crate::descriptor::Heap,
+    host: &crate::descriptor::host::HostHeap,
+    slots: &[u32],
+    ranges: &mut Ranges,
+) {
+    // Whether the device was there before the pass: a view that removes
+    // it is named below.
+    static GONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let mut alive = !GONE.load(Ordering::Relaxed) && crate::descriptor::host::device_removed().is_none();
+    for (n, &index) in slots.iter().enumerate() {
+        ranges.remove(&index);
+        let Some(handle) = heap.handle(index) else {
+            continue;
+        };
+        let Some(view) = host.mirror(index, handle, true) else {
+            continue;
+        };
+        // Every 64 views while the device lives (a cheap query).
+        if alive
+            && n % 64 == 63
+            && let Some(why) = crate::descriptor::host::device_removed()
+        {
+            alive = false;
+            GONE.store(true, Ordering::Relaxed);
+            let last: Vec<String> = slots[n - 63..=n]
+                .iter()
+                .filter_map(|&i| crate::descriptor::view(heap.handle(i)?).map(|v| format!("{i}: {v:?}")))
+                .map(|s| s.chars().take(200).collect())
+                .collect();
+            tracing::error!(why, slot = index, "the host device went while buffer views of the heap were made; one of: {last:#?}");
+            crate::host::log_removal_context();
+        }
+        // The copy the slot shows (`buffer_copy`), not the one the
+        // view's range alone would find.
+        let Some((shadow, address, len)) = crate::descriptor::host::buffer_copy(&view) else {
+            continue;
+        };
+        #[cfg(feature = "diagnostics")]
+        if host.shows(index, &shadow.buffer) == Some(false) {
+            HEAP_VIEWS_ELSEWHERE.fetch_add(1, Ordering::Relaxed);
+        }
+        ranges.insert(index, (shadow, address, address + len));
+    }
+}
+
+/// At submission, after the heaps' byte copies are mirrored
+/// (`crate::descriptor::sync_heaps`): the buffer views written into the
+/// view heaps since [`State::heap_buffers`] last looked are made, and what
+/// they read brought up to date, in the first of `runs` that picks buffers
+/// by index. A title write of a buffer view leaves its host slot null until
+/// a pass makes it (`HostHeap::mirror`), and the pass runs once a frame:
+/// a view written after it read zeros through a null slot for the rest of
+/// the frame, while the table of strides already called it a buffer. The
+/// ped skinning dispatches pick their vertex buffers so, by an index from
+/// constant data, and drew faces and arms black (VIctory issue 1567).
+pub(crate) fn heap_buffers_written(runs: &[&HostList]) {
+    let Some(list) = runs.iter().find(|l| l.used(PICKS)) else {
+        return;
+    };
+    crate::descriptor::each_view_heap(|heap, host| {
+        let slots = host.buffer_changes();
+        if slots.is_empty() {
+            return;
+        }
+        let mut kept = RANGES.lock().unwrap_or_else(|e| e.into_inner());
+        let (_, ranges) = kept
+            .get_or_insert_with(Default::default)
+            .entry(std::ptr::from_ref(host) as usize)
+            .or_insert_with(|| (0, Ranges::new()));
+        make_picked(heap, host, &slots, ranges);
+        for index in &slots {
+            if let Some((shadow, from, to)) = ranges.get(index) {
+                shadow.refresh(list, *from, to - from);
+            }
+        }
+    });
+}
 /// Textures brought up to date for shaders that pick them by index
 /// ([`State::heap_textures`]), the bytes of their memory, and the slots
 /// still waiting.
@@ -1477,9 +1575,7 @@ impl State {
             .find(|h| !h.samplers())?;
         let host = heap.host()?;
         let gpu = host.strides_gpu()?;
-        // One key per list, as textures have: no title resource is there.
-        const ONCE: usize = usize::MAX - 0x5e;
-        if !list.first_use(ONCE) {
+        if !list.first_use(PICKS) {
             return Some(gpu);
         }
         // The list may outlive the title's heap object, which owns the table.
@@ -1497,15 +1593,6 @@ impl State {
             return Some(gpu);
         }
         let started = std::time::Instant::now();
-        // Per host heap: the host copy and range each slot's buffer view
-        // reads, kept from pass to pass. Only the slots written since the
-        // last pass are looked at again (83,000 slots a pass otherwise, 0.1 s
-        // at best); all of them every 16 passes, because a view of a
-        // released resource goes stale without a write, and a slot written
-        // before its memory had a host copy is only made then.
-        type Ranges = std::collections::HashMap<u32, (std::sync::Arc<crate::shadow::Shadow>, u64, u64)>;
-        static RANGES: std::sync::Mutex<Option<std::collections::HashMap<usize, (u64, Ranges)>>> =
-            std::sync::Mutex::new(None);
         let mut kept = RANGES.lock().unwrap_or_else(|e| e.into_inner());
         let (passes, ranges) = kept
             .get_or_insert_with(Default::default)
@@ -1519,45 +1606,8 @@ impl State {
             changed
         };
         *passes += 1;
-        // Whether the device was there before the pass: a view that removes
-        // it is named below.
-        static GONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-        let mut alive = !GONE.load(Ordering::Relaxed) && crate::descriptor::host::device_removed().is_none();
         HEAP_PASS_PARTS[1].fetch_add(slots.len() as u64, Ordering::Relaxed);
-        for (n, &index) in slots.iter().enumerate() {
-            ranges.remove(&index);
-            let Some(handle) = heap.handle(index) else {
-                continue;
-            };
-            let Some(view) = host.mirror(index, handle, true) else {
-                continue;
-            };
-            // Every 64 views while the device lives (a cheap query).
-            if alive
-                && n % 64 == 63
-                && let Some(why) = crate::descriptor::host::device_removed()
-            {
-                alive = false;
-                GONE.store(true, Ordering::Relaxed);
-                let last: Vec<String> = slots[n - 63..=n]
-                    .iter()
-                    .filter_map(|&i| crate::descriptor::view(heap.handle(i)?).map(|v| format!("{i}: {v:?}")))
-                    .map(|s| s.chars().take(200).collect())
-                    .collect();
-                tracing::error!(why, slot = index, "the host device went while buffer views of the heap were made; one of: {last:#?}");
-                crate::host::log_removal_context();
-            }
-            // The copy the slot shows (`buffer_copy`), not the one the
-            // view's range alone would find.
-            let Some((shadow, address, len)) = crate::descriptor::host::buffer_copy(&view) else {
-                continue;
-            };
-            #[cfg(feature = "diagnostics")]
-            if host.shows(index, &shadow.buffer) == Some(false) {
-                HEAP_VIEWS_ELSEWHERE.fetch_add(1, Ordering::Relaxed);
-            }
-            ranges.insert(index, (shadow, address, address + len));
-        }
+        make_picked(heap, host, &slots, ranges);
         let views = ranges.len() as u32;
         // Per host copy, the span its picked views cover.
         let mut spans: std::collections::HashMap<usize, (std::sync::Arc<crate::shadow::Shadow>, u64, u64)> =

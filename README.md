@@ -50,18 +50,30 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-26 19:35, game build Series 1.0.2.1
+**Latest test run:** 2026-11-26 19:47, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 30.0 fps |
-| Median frame time | 287 ms |
-| Last frame | 2.5 fps, 397 ms, 4674 draws, 394 dropped without a pipeline |
+| Best frame rate (menus included) | 31.5 fps |
+| Median frame time | 34 ms |
+| Last frame | 2.1 fps, 484 ms, 735 draws, 991 dropped without a pipeline |
 | Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: loading into the world no longer stalls on texture reads. While the
+Latest: the intro movie plays (the animated title sequence and the Rockstar
+logo were black): movie frames the title writes with the processor get an upload
+buffer of their own per command list (RyanLockwoood/VIctory-cool_fox-LockWood
+8cc31ab3). From the same fork, the XMA audio fixes (rings that wrap instead of
+writing past their end, frames that end at their data, voices that restart when
+refilled), fence waits that really wait, and a 256 MB DirectStorage staging floor
+(`VILOCITY_DSTORAGE_STAGING_MB`). Faces in the cell and diner cutscenes are lit
+more often: textures uploaded before their bytes landed are uploaded again
+(`VILOCITY_PAGE_WRITES`, fxceless/victory-fork e4245f3), and buffer views written
+after the frame's pass are made at submit instead of reading zeros. The mouse
+stays inside the game's window while it is in front.
+
+Before that: loading into the world no longer stalls on texture reads. While the
 title remaps its memory a texture is now read through the kernel, and only one
 whose pages are not all there yet waits as before (`VILOCITY_TEXTURE_NO_WAIT=2`,
 the launcher's default): the wait went from 140-700 to 3-19 ms a frame, and the

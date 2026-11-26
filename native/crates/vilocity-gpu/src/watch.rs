@@ -868,24 +868,34 @@ pub fn writing(at: usize, len: usize) {
 /// 1, the guarded blocks under it are opened and count as written (host
 /// copies of buffers and textures read through tables take them again);
 /// 2, the placed textures picked by index that lie under it are due again;
-/// 4, both also for reads to plain addresses when they have finished.
-/// Unset or `guards`: bit 1 alone. `0`: nothing, counted only (the default
-/// until run 199). `1`: bits 1 and 2. `slots`: bit 2 alone. `all`:
-/// everything.
+/// 4, both also for reads to plain addresses when they have finished;
+/// 8, for reads to plain addresses the textures alone (bit 2's look).
+/// Unset: bits 1, 2 and 8. `guards`: bit 1 alone (the default until
+/// 2026-11-26). `0`: nothing, counted only (the default until run 199).
+/// `1`: bits 1 and 2. `slots`: bit 2 alone. `all`: everything.
 /// (Bit 1 by default: in every run 10,000 to 50,000 guarded blocks of host
 /// copies lay under such writes and kept the bytes from before; runs 197
 /// and 198 opened them, 9,766 and 10,796 blocks, with nothing worse for
-/// it. Bit 2 makes texture slots due and is the one that flooded the
-/// queue in an earlier form: still asked for by name.)
+/// it. Bits 2 and 8 by default, from fxceless/victory-fork e4245f3 (the
+/// black faces of the opening cutscene): every launch left 3,700-5,500
+/// slots of placed textures uploaded before the bytes landed "as they
+/// were", zeros for the rest of the run. Only those slots are made due
+/// again (`HostHeap::texture_slots_page_written`).)
 pub(crate) fn page_writes() -> u8 {
     static MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-    *MODE.get_or_init(|| match std::env::var("VILOCITY_PAGE_WRITES").as_deref().map(str::trim) {
-        Ok("0") => 0,
-        Ok("1") => 3,
-        Ok("slots") => 2,
-        Ok("all") => 7,
-        _ => 1,
-    })
+    *MODE.get_or_init(|| page_writes_mode(std::env::var("VILOCITY_PAGE_WRITES").ok().as_deref()))
+}
+
+/// [`page_writes`] for the switch's value.
+fn page_writes_mode(value: Option<&str>) -> u8 {
+    match value.map(str::trim) {
+        Some("0") => 0,
+        Some("1") => 3,
+        Some("guards") => 1,
+        Some("slots") => 2,
+        Some("all") => 15,
+        _ => 1 | 2 | 8,
+    }
 }
 
 /// Since the start: writes into physical pages through the runtime's own
@@ -922,6 +932,10 @@ pub fn title_memory_written(at: usize, len: usize, pages: bool) {
     } else {
         WRITTEN[3].fetch_add(1, Relaxed);
         if mode & 4 == 0 {
+            if mode & 8 != 0 {
+                // Bit 8 alone: the placed textures under it, not the guards.
+                crate::descriptor::host::page_written(at, len);
+            }
             return;
         }
     }
@@ -1115,6 +1129,18 @@ mod tests {
         MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc, VirtualFree,
     };
     const MEM_WRITE_WATCH: u32 = 0x20_0000;
+
+    /// Unset, the textures under writes the guards miss (DirectStorage's
+    /// and plain reads) are made due again; `guards` is the old default.
+    #[test]
+    fn page_writes_default_takes_textures_under_late_writes() {
+        assert_eq!(page_writes_mode(None), 1 | 2 | 8);
+        assert_eq!(page_writes_mode(Some("guards")), 1);
+        assert_eq!(page_writes_mode(Some(" 0 ")), 0);
+        assert_eq!(page_writes_mode(Some("1")), 3);
+        assert_eq!(page_writes_mode(Some("slots")), 2);
+        assert_eq!(page_writes_mode(Some("all")), 15);
+    }
 
     #[test]
     fn written_pages_are_reported_to_every_asker() {

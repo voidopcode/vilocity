@@ -102,6 +102,25 @@ impl Cursor<'_> {
     fn bits(&mut self, n: u32) -> Option<u32> {
         (0..n).try_fold(0, |v, _| Some(v << 1 | self.bit()?))
     }
+
+    /// A payload byte, MSB first. At a packet edge the individual bits
+    /// may be separated by a header and other streams' packets.
+    fn byte(&mut self) -> Option<u8> {
+        let in_packet = self.pos % PACKET_BITS;
+        if in_packet == 0 || in_packet > PACKET_BITS - 8 {
+            return self.bits(8).map(|v| v as u8);
+        }
+        let at = self.pos / 8;
+        let shift = self.pos % 8;
+        let first = *self.data.get(at)?;
+        let byte = if shift == 0 {
+            first
+        } else {
+            (first << shift) | (self.data.get(at + 1)? >> (8 - shift))
+        };
+        self.pos += 8;
+        Some(byte)
+    }
 }
 
 /// Reads the frame starting at bit `start` (a frame start inside a packet's
@@ -112,10 +131,15 @@ pub fn read_frame(data: &[u8], start: usize) -> Option<Frame> {
     if bits <= LENGTH_BITS as usize || bits == 0x7fff {
         return None;
     }
-    let mut out = vec![0u8; bits.div_ceil(8)];
+    // Payload bytes read directly (from VIctory-cool_fox-LockWood ae0952d7).
+    let mut out = Vec::with_capacity(bits.div_ceil(8));
     let mut cursor = Cursor { data, pos: start };
-    for i in 0..bits {
-        out[i / 8] |= (cursor.bit()? as u8) << (7 - i % 8);
+    for _ in 0..bits / 8 {
+        out.push(cursor.byte()?);
+    }
+    let tail = (bits % 8) as u32;
+    if tail != 0 {
+        out.push((cursor.bits(tail)? << (8 - tail)) as u8);
     }
     let end = cursor.pos;
     let next = next_frame(data, start, end);
@@ -149,10 +173,24 @@ fn next_frame(data: &[u8], start: usize, end: usize) -> Option<usize> {
     }
     let last = number + 1 >= header.frames;
     let mut end = end;
-    if end.is_multiple_of(PACKET_BITS) || (last && end / PACKET_BITS == index) {
-        // The next frame begins in the next packet of this stream.
-        let next = (end - 1) / PACKET_BITS + 1 + packet(data, (end - 1) / PACKET_BITS)?.skip as usize;
-        let header = packet(data, next)?;
+    // A frame that ends in a packet where no frame begins (the tail of a frame
+    // that crossed packets, then padding) is the last one before the next
+    // packet that has frames (from VIctory-cool_fox-LockWood 32f970ca).
+    let ends_in_packet_without_frames = end / PACKET_BITS != index
+        && !end.is_multiple_of(PACKET_BITS)
+        && packet(data, end / PACKET_BITS)?.frames == 0;
+    if end.is_multiple_of(PACKET_BITS)
+        || (last && end / PACKET_BITS == index)
+        || ends_in_packet_without_frames
+    {
+        // The next frame begins in the next packet of this stream that has one;
+        // a packet with none (a frame spans all of it) holds no start.
+        let mut next = (end - 1) / PACKET_BITS + 1 + packet(data, (end - 1) / PACKET_BITS)?.skip as usize;
+        let mut header = packet(data, next)?;
+        while header.frames == 0 {
+            next += 1 + header.skip as usize;
+            header = packet(data, next)?;
+        }
         end = next * PACKET_BITS + HEADER_BITS + header.first_frame_bit as usize;
     }
     (end / 8 < data.len()).then_some(end)
@@ -493,7 +531,11 @@ impl Decoder {
         let mut b = Bits {
             data,
             pos: 0,
-            end: bits,
+            // Past the data there are only zeros to read. A count beyond it
+            // would never let a stereo tile header overread, and its loop
+            // takes no subframe on zero bits, so it would spin for good
+            // (from VIctory-cool_fox-LockWood 717b3e81).
+            end: bits.min(data.len().saturating_mul(8)),
         };
         let len = b.read(LENGTH_BITS) as usize;
         let result = self.frame(&mut b, len);
@@ -1120,6 +1162,90 @@ mod tests {
     }
 
     #[test]
+    fn payload_bytes_match_bit_reads_at_packet_edges() {
+        let mut data: Vec<u8> = (0..3 * PACKET_BYTES).map(|i| (i * 37 + 11) as u8).collect();
+        data[..4].copy_from_slice(&1u32.to_be_bytes()); // packet 1 belongs to another stream
+        data[PACKET_BYTES..2 * PACKET_BYTES].fill(0xee);
+        for edge in [HEADER_BITS + 8, PACKET_BITS, 3 * PACKET_BITS] {
+            for pos in edge - 8..=edge {
+                let mut bytes = Cursor { data: &data, pos };
+                let mut bits = Cursor { data: &data, pos };
+                let expected = bits.bits(8).map(|v| v as u8);
+                assert_eq!(bytes.byte(), expected, "bit {pos}");
+                if expected.is_some() {
+                    assert_eq!(bytes.pos, bits.pos);
+                }
+            }
+        }
+    }
+
+    /// A frame that crosses a packet where no frame begins (a full
+    /// continuation) and ends in another such packet, followed by padding: the
+    /// next frame is the first one of the next packet that has frames, not the
+    /// padding the frame ended in.
+    #[test]
+    fn the_frame_after_continuation_packets_starts_in_the_next_packet_with_frames() {
+        let mut data = vec![0u8; 4 * PACKET_BYTES];
+        let header = |frames: u32, first: u32| (frames << 26) | (first << 11);
+        put_bits(&mut data, 0, 32, header(2, 0));
+        // Packet 1 is all of one frame; packet 2 holds only its last 64 bits.
+        put_bits(&mut data, PACKET_BITS, 32, header(0, 0x7fff));
+        put_bits(&mut data, 2 * PACKET_BITS, 32, header(0, 64));
+        put_bits(&mut data, 3 * PACKET_BITS, 32, header(1, 0));
+        // A first frame of 16000 bits, then one from the end of its payload
+        // through packets 1 and 2.
+        let second = HEADER_BITS + 16000;
+        put_bits(&mut data, HEADER_BITS, LENGTH_BITS, 16000);
+        let tail = PACKET_BITS - second;
+        let bits = tail + (PACKET_BITS - HEADER_BITS) + 64;
+        put_bits(&mut data, second, LENGTH_BITS, bits as u32);
+        put_bits(&mut data, 3 * PACKET_BITS + HEADER_BITS, LENGTH_BITS, 100);
+        let first = read_frame(&data, HEADER_BITS).unwrap();
+        assert_eq!(first.next, Some(second));
+        let frame = read_frame(&data, second).unwrap();
+        assert_eq!(frame.bits, bits);
+        assert_eq!(frame.next, Some(3 * PACKET_BITS + HEADER_BITS));
+        assert_eq!(read_frame(&data, 3 * PACKET_BITS + HEADER_BITS).unwrap().next, None);
+    }
+
+    /// Bit counts past the end of a frame's data, up to `usize::MAX`: the
+    /// decoding ends, with a frame of samples. A stereo tile header that ran
+    /// out of data used to loop on the zeros past it for good.
+    #[test]
+    fn frames_with_bit_counts_past_the_data_end() {
+        // xorshift64 noise.
+        let mut state = 0xd1b5_4a32_d192_ed03u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for channels in [1, 2] {
+            let mut decoder = Decoder::new(channels, 48_000);
+            let mut pcm = Vec::new();
+            for round in 0..48 {
+                let len = [0, 1, 2, 3, 5, 8, 40, 300][round % 8];
+                let data: Vec<u8> = (0..len)
+                    .map(|_| {
+                        let r = next();
+                        let (a, b, c) = (r as u8, (r >> 8) as u8, (r >> 16) as u8);
+                        [a, a, a & b & c, a | b | c][round / 8 % 4]
+                    })
+                    .collect();
+                let bits = match round % 3 {
+                    0 => data.len() * 8 + 1 + (next() % (1 << 16)) as usize,
+                    1 => usize::MAX / 2 + (next() % (1 << 20)) as usize,
+                    _ => usize::MAX,
+                };
+                pcm.clear();
+                let _ = decoder.decode(&data, bits, &mut pcm);
+                assert_eq!(pcm.len(), FRAME_SAMPLES * channels, "{channels} channels, round {round}");
+            }
+        }
+    }
+
+    #[test]
     fn packet_headers_and_frame_walk() {
         // Two packets: frame A (100 bits) and B (16300 bits, crossing into
         // packet 1 by 48 bits), then C (60 bits) in packet 1; the rest is
@@ -1147,6 +1273,7 @@ mod tests {
         assert_eq!((b.bits, b.next), (16300, Some(c_start)));
         // Its last bits come from after packet 1's header.
         assert_eq!(b.data.len(), 16300usize.div_ceil(8));
+        assert_eq!(b.data.last(), Some(&0xf0)); // unused bits stay zero
         let c = read_frame(&data, c_start).unwrap();
         assert_eq!(c.bits, 60);
         // C was packet 1's only frame: the next would be in packet 2.

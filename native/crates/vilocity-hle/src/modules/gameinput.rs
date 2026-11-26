@@ -1103,7 +1103,8 @@ mod host {
     };
     use windows_sys::Win32::Foundation::{POINT, RECT};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetCursorPos, GetForegroundWindow, GetWindowRect, GetWindowThreadProcessId, SetCursorPos,
+        ClipCursor, GetCursorPos, GetForegroundWindow, GetWindowRect, GetWindowThreadProcessId,
+        SetCursorPos,
     };
 
     use super::*;
@@ -1223,15 +1224,27 @@ mod host {
             }) else {
                 return Mouse::default();
             };
+            // The cursor is held inside the game's window while it is in
+            // front (a fast move between polls left it, onto other
+            // windows), and let go as soon as another window is.
+            static CLIPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
             if !focused() {
+                if CLIPPED.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                    // SAFETY: a null rectangle frees the cursor.
+                    unsafe { ClipCursor(std::ptr::null()) };
+                }
                 return Mouse::default();
             }
             let (mut at, mut window) = (POINT { x: 0, y: 0 }, RECT { left: 0, top: 0, right: 0, bottom: 0 });
-            // SAFETY: plain queries and a cursor move, on valid out-structs.
+            // SAFETY: plain queries, a cursor move and a clip, on valid structs.
             unsafe {
                 if GetCursorPos(&mut at) == 0 || GetWindowRect(GetForegroundWindow(), &mut window) == 0 {
                     return Mouse::default();
                 }
+                // Inside the frame, so the title bar and edges stay out of reach.
+                let inner = RECT { left: window.left + 16, top: window.top + 40, right: window.right - 16, bottom: window.bottom - 16 };
+                ClipCursor(&inner);
+                CLIPPED.store(true, std::sync::atomic::Ordering::Relaxed);
                 let (cx, cy) = ((window.left + window.right) / 2, (window.top + window.bottom) / 2);
                 SetCursorPos(cx, cy);
                 Mouse {

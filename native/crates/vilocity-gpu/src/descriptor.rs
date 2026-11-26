@@ -305,6 +305,22 @@ fn changed_slots(
     first.min(last)..last
 }
 
+/// `work` for each shader-visible view heap that has a host heap, under the
+/// registry's lock (`Heap::drop` waits for it).
+#[cfg(windows)]
+pub(crate) fn each_view_heap(mut work: impl FnMut(&Heap, &host::HostHeap)) {
+    let heaps = SHADER_HEAPS.read().unwrap_or_else(|e| e.into_inner());
+    for &(_, _, at) in heaps.iter() {
+        // SAFETY: registered heaps are live (removed when dropped).
+        let heap = unsafe { &*(at as *const Heap) };
+        if !heap.samplers()
+            && let Some(Some(host)) = heap.host.get()
+        {
+            work(heap, host);
+        }
+    }
+}
+
 /// Gives back dynamic slots of the host heap behind the title heap at
 /// `heap`, if that heap still exists.
 #[cfg(windows)]
@@ -1253,6 +1269,49 @@ mod tests {
         assert_eq!(increment_size(null, 9), 0);
         let bad = HeapDesc { kind: 9, ..desc };
         assert_eq!(create(bad, none, &mut h), E_INVALIDARG);
+    }
+
+    /// A buffer view the title writes after the frame's pass over the
+    /// heap's buffer views (its host slot left null) is made at the
+    /// submission of a list that picks buffers by index, not of one that
+    /// does not (VIctory issue 1567: ped skinning read zeros).
+    #[cfg(windows)]
+    #[test]
+    fn buffer_views_written_after_the_pass_are_made_for_lists_that_pick() {
+        use windows_sys::Win32::System::Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc};
+        let Some(device) = crate::host::host() else {
+            return;
+        };
+        const LEN: usize = 64 << 10;
+        // SAFETY: a plain allocation of our own.
+        let title = unsafe { VirtualAlloc(std::ptr::null(), LEN, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) } as u64;
+        assert_ne!(title, 0);
+        crate::shadow::register(0x1567_0001, title, LEN as u64);
+        let desc = HeapDesc {
+            kind: VIEWS_KIND,
+            count: 8,
+            flags: SHADER_VISIBLE,
+            nodes: 0,
+        };
+        let mut h: This = std::ptr::null();
+        assert_eq!(create(desc, Placement { address: 0, size: 0 }, &mut h), S_OK);
+        let host = heap(h).host().expect("a host view heap");
+        // A placed raw view (R32_TYPELESS, RAW) of 64 dwords of the buffer.
+        let mut resource = [0u32; 14];
+        (resource[0], resource[4]) = (1, LEN as u32);
+        let mut view = [0u32; 16];
+        (view[0], view[1], view[2], view[6], view[8]) = (39, 1, 0x1688, 64, 1);
+        (view[10], view[11]) = (title as u32, (title >> 32) as u32);
+        let _ = host.buffer_changes();
+        create_placed_srv(std::ptr::null(), &resource, &view, heap(h).handle(3).expect("slot 3"));
+        assert!(!host.made(3), "a title write leaves the slot to a pass");
+        let other = device.new_list().expect("a host list");
+        crate::draw::heap_buffers_written(&[&other]);
+        assert!(!host.made(3), "not for a list that picks nothing");
+        let picks = device.new_list().expect("a host list");
+        assert!(picks.first_use(crate::draw::PICKS));
+        crate::draw::heap_buffers_written(&[&other, &picks]);
+        assert!(host.made(3), "made before the picking list runs");
     }
 
     /// A descriptor copied into a placed heap as bytes is mirrored before

@@ -693,6 +693,33 @@ pub(crate) fn upload(list: &HostList, resource: This, texture: &ID3D12Resource) 
             }
         }
     }
+    // Movie planes: each list copies the plane into upload memory of its own
+    // at submission, held until the list is reset, so frames neither share
+    // the staging buffer nor wait on its check (from VIctory-cool_fox-LockWood 8cc31ab3).
+    if !staging.on_demand
+        && let Some(bytes) = plane_bytes(&staging.layout, &staging.footprints, &staging.rows)
+        && let Some(host) = host()
+        && let Some((buffer, data)) = list.upload(host, bytes as u64)
+    {
+        crate::framelog::add(crate::framelog::T::Uploads, 1);
+        list.defer_fill(data, staging.memory, bytes);
+        crate::list::ensure_state(list, resource, 0x400 /* COPY_DEST */);
+        let to = D3D12_TEXTURE_COPY_LOCATION {
+            // SAFETY: a borrowed pointer the location never releases.
+            pResource: unsafe { std::mem::transmute_copy(texture) },
+            Type: D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
+            Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 { SubresourceIndex: 0 },
+        };
+        let from = D3D12_TEXTURE_COPY_LOCATION {
+            // SAFETY: as above; the list holds the buffer until it is reset.
+            pResource: unsafe { std::mem::transmute_copy(&buffer) },
+            Type: D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
+            Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 { PlacedFootprint: staging.footprints[0] },
+        };
+        // SAFETY: an open list; both locations name live resources.
+        unsafe { list.list.CopyTextureRegion(&to, 0, 0, 0, &from, None) };
+        return;
+    }
     // The host texture has the staging buffer's contents: only the check
     // at submission is left, and what it finds changed the next list that
     // samples the texture uploads (a frame late where every list of the
@@ -789,6 +816,35 @@ pub(crate) fn upload(list: &HostList, resource: This, texture: &ID3D12Resource) 
             crate::descriptor::host::levels_waiting(staging.memory as u64);
         }
     });
+}
+
+/// A movie plane (single-level linear R8 2D texture): the bytes of its
+/// title rows, if they lie exactly as its upload footprint (offset 0, same
+/// row pitch), so one copy of title memory fills a list's upload.
+fn plane_bytes(
+    layout: &vilocity_formats::texture::Layout,
+    footprints: &[D3D12_PLACED_SUBRESOURCE_FOOTPRINT],
+    rows: &[u32],
+) -> Option<usize> {
+    use vilocity_formats::texture::{Dimension, Swizzle};
+    use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8_UNORM;
+    let ([f], [rows], [mip]) = (footprints, rows, &layout.mips[..]) else {
+        return None;
+    };
+    let d = &layout.desc;
+    let pitch = f.Footprint.RowPitch as usize;
+    let bytes = pitch * *rows as usize;
+    (d.dimension == Dimension::Tex2d
+        && d.swizzle == Swizzle::LINEAR
+        && d.depth == 1
+        && d.samples == 1
+        && f.Offset == 0
+        && f.Footprint.Format == DXGI_FORMAT_R8_UNORM
+        && f.Footprint.Depth == 1
+        && mip.offset == 0
+        && mip.pitch as usize * d.element_bytes as usize == pitch
+        && bytes <= layout.size as usize)
+        .then_some(bytes)
 }
 
 /// Levels on demand: the levels a list claimed for its zeros
@@ -1587,6 +1643,38 @@ mod title_memory_tests {
         assert_eq!(super::subresource_len(0, 256, 4, 1, 784), 784);
         assert_eq!(super::subresource_len(512, 256, 4, 1, 784), 272);
         assert_eq!(super::subresource_len(0, 256, 4, 1, 2048), 1024);
+    }
+
+    #[test]
+    fn movie_plane_is_one_copy_of_its_linear_rows() {
+        use vilocity_formats::texture::{Desc, Dimension, Layout, Swizzle};
+        use windows::Win32::Graphics::Direct3D12::*;
+        use windows::Win32::Graphics::Dxgi::Common::*;
+        let desc = |mips, swizzle| Desc {
+            dimension: Dimension::Tex2d,
+            width: 640,
+            height: 360,
+            depth: 1,
+            mips,
+            element_bytes: 1,
+            block: 1,
+            samples: 1,
+            swizzle,
+        };
+        // 640 wide: both sides pad rows to 768 bytes.
+        let footprint = |format| D3D12_PLACED_SUBRESOURCE_FOOTPRINT {
+            Offset: 0,
+            Footprint: D3D12_SUBRESOURCE_FOOTPRINT { Format: format, Width: 640, Height: 360, Depth: 1, RowPitch: 768 },
+        };
+        let linear = Layout::new(&desc(1, Swizzle::LINEAR)).unwrap();
+        let plane = [footprint(DXGI_FORMAT_R8_UNORM)];
+        assert_eq!(super::plane_bytes(&linear, &plane, &[360]), Some(768 * 360));
+        assert_eq!(super::plane_bytes(&linear, &[footprint(DXGI_FORMAT_R8G8_UNORM)], &[360]), None);
+        let tiled = Layout::new(&desc(1, Swizzle::SW_64KB_S)).unwrap();
+        assert_eq!(super::plane_bytes(&tiled, &plane, &[360]), None);
+        let levels = Layout::new(&desc(2, Swizzle::LINEAR)).unwrap();
+        let two = [plane[0], plane[0]];
+        assert_eq!(super::plane_bytes(&levels, &two, &[360, 180]), None);
     }
 
     #[test]
