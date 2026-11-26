@@ -35,7 +35,6 @@ macro_rules! once {
 pub(crate) struct Staging {
     buffer: ID3D12Resource,
     /// Its bytes.
-    #[cfg(feature = "diagnostics")]
     size: u64,
     data: *mut u8,
     footprints: Vec<D3D12_PLACED_SUBRESOURCE_FOOTPRINT>,
@@ -1169,8 +1168,9 @@ impl Staging {
             let (mip, slice) = (i as u32 % self.mips, i as u32 / self.mips);
             let f = footprint.Footprint;
             let pitch = f.RowPitch as usize;
-            let len = pitch * rows as usize * f.Depth as usize;
-            // SAFETY: the subresource's part of the mapped staging buffer.
+            let len = subresource_len(footprint.Offset, pitch, rows, f.Depth, self.size);
+            // SAFETY: the subresource's part of the mapped staging buffer,
+            // clamped to its end (`subresource_len`).
             let linear = unsafe {
                 std::slice::from_raw_parts_mut(self.data.add(footprint.Offset as usize), len)
             };
@@ -1268,6 +1268,15 @@ pub(crate) fn staged(resource: This) -> Option<(u64, bool)> {
     Some((size as u64, committed(s.memory, size)))
 }
 
+/// Bytes of the staging buffer for a subresource at `offset`:
+/// `GetCopyableFootprints` does not pad the last row of the last
+/// subresource to its pitch, so `pitch * rows * depth` can run past
+/// `total - offset`.
+fn subresource_len(offset: u64, pitch: usize, rows: u32, depth: u32, total: u64) -> usize {
+    let padded = pitch.saturating_mul(rows as usize).saturating_mul(depth as usize);
+    padded.min(usize::try_from(total.saturating_sub(offset)).unwrap_or(usize::MAX))
+}
+
 /// Whether `[at, at + len)` is committed memory (streamed textures may be
 /// unmapped until their pages arrive).
 pub(crate) fn committed(at: *const u8, len: usize) -> bool {
@@ -1342,19 +1351,63 @@ fn readable(at: usize, len: usize, all: bool) -> (usize, usize) {
     (there, of)
 }
 
+/// Whether the first page of any 64 KiB block of `[start, end)` (cut to
+/// the range, as [`mapped_bytes`] counts them) is in the working set.
+/// shortcut: a mapped page trimmed from the working set is not seen, so
+/// such a texture stays away as before; ask by kernel read if one is missed.
+fn any_block_in_working_set(start: usize, end: usize) -> bool {
+    use windows_sys::Win32::System::ProcessStatus::{K32QueryWorkingSetEx, PSAPI_WORKING_SET_EX_INFORMATION};
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    const BLOCK: usize = 64 << 10;
+    let mut block = start & !(BLOCK - 1);
+    // SAFETY: plain data.
+    let mut info: [PSAPI_WORKING_SET_EX_INFORMATION; 256] = unsafe { std::mem::zeroed() };
+    while block < end {
+        let mut n = 0;
+        while n < info.len() && block < end {
+            info[n].VirtualAddress = block.max(start) as *mut _;
+            n += 1;
+            block = block.saturating_add(BLOCK);
+        }
+        // SAFETY: `n` entries of the size given; our own process.
+        let asked = unsafe {
+            K32QueryWorkingSetEx(
+                GetCurrentProcess(),
+                info.as_mut_ptr().cast(),
+                (n * size_of::<PSAPI_WORKING_SET_EX_INFORMATION>()) as u32,
+            )
+        } != 0;
+        // Bit 0 of the answer: the page is in the working set.
+        // SAFETY: plain data the query filled in.
+        if asked && info[..n].iter().any(|e| unsafe { e.VirtualAttributes.Flags } & 1 != 0) {
+            return true;
+        }
+    }
+    false
+}
+
 fn committed_by_query(at: *const u8, len: usize) -> bool {
-    use windows_sys::Win32::System::Memory::{MEM_COMMIT, MEMORY_BASIC_INFORMATION, VirtualQuery};
+    use windows_sys::Win32::System::Memory::{
+        MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_GUARD, PAGE_NOACCESS, VirtualQuery,
+    };
     let mut p = at as usize;
-    let end = p + len;
+    let Some(end) = p.checked_add(len) else {
+        return false;
+    };
     while p < end {
         // SAFETY: plain data filled in by the query.
         let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
         // SAFETY: a valid out pointer of the right size.
         let n = unsafe { VirtualQuery(p as *const _, &mut info, size_of_val(&info)) };
-        if n == 0 || info.State != MEM_COMMIT {
+        let unreadable = info.Protect == 0 || info.Protect & (PAGE_NOACCESS | PAGE_GUARD) != 0;
+        if n == 0 || info.State != MEM_COMMIT || unreadable {
             return false;
         }
-        p = info.BaseAddress as usize + info.RegionSize;
+        let next = (info.BaseAddress as usize).saturating_add(info.RegionSize);
+        if next <= p {
+            return false;
+        }
+        p = next;
     }
     true
 }
@@ -1362,9 +1415,11 @@ fn committed_by_query(at: *const u8, len: usize) -> bool {
 /// How many bytes of `[at, at + len)` are committed memory: all of a
 /// texture that is there, some of one streaming in (its smaller mips lie
 /// at the start of its memory, and their pages are mapped first), none of
-/// one not there. With neither the first nor the last page committed the
-/// answer is none without a look at the pages between (two queries for the
-/// slots whose texture is away, which are asked again and again).
+/// one not there. A streamed texture can also have only middle mips' pages
+/// mapped: with neither the first nor the last page committed, the 64 KiB
+/// blocks between are asked of the working set in one question per 256
+/// (the slots whose texture is away are asked again and again), and only
+/// a block found there leads to the count below.
 pub(crate) fn mapped_bytes(at: *const u8, len: usize) -> u64 {
     use windows_sys::Win32::System::Memory::{MEM_COMMIT, MEMORY_BASIC_INFORMATION, VirtualQuery};
     if len == 0 {
@@ -1372,7 +1427,10 @@ pub(crate) fn mapped_bytes(at: *const u8, len: usize) -> u64 {
     }
     let start = at as usize;
     let end = start.saturating_add(len);
-    if !committed(at, 1) && !committed((end - 1) as *const u8, 1) {
+    if !committed(at, 1)
+        && !committed((end - 1) as *const u8, 1)
+        && ((end - 1) / 4096 - start / 4096 <= 1 || (!by_query() && !any_block_in_working_set(start, end)))
+    {
         return 0;
     }
     if !by_query() {
@@ -1479,7 +1537,6 @@ fn staging(resource: This, texture: &ID3D12Resource) -> Option<Arc<Staging>> {
     STAGED[1].fetch_add(total, std::sync::atomic::Ordering::Relaxed);
     let s = Arc::new(Staging {
         buffer,
-        #[cfg(feature = "diagnostics")]
         size: total,
         data,
         footprints,
@@ -1505,6 +1562,55 @@ fn staging(resource: This, texture: &ID3D12Resource) -> Option<Arc<Staging>> {
 #[cfg(test)]
 mod title_memory_tests {
     use super::with_title;
+
+    #[test]
+    fn subresource_len_stays_inside_staging_total() {
+        // 4x4 RGBA8: pitch 256, 4 rows, the last row 16 bytes: 784 in all.
+        assert_eq!(super::subresource_len(0, 256, 4, 1, 784), 784);
+        assert_eq!(super::subresource_len(512, 256, 4, 1, 784), 272);
+        assert_eq!(super::subresource_len(0, 256, 4, 1, 2048), 1024);
+    }
+
+    #[test]
+    fn committed_rejects_overflow_and_noaccess_pages() {
+        use windows_sys::Win32::System::Memory::*;
+        for committed in [super::committed, super::committed_by_query] {
+            assert!(!committed(usize::MAX as *const u8, 16));
+            // SAFETY: private pages of the test, freed below.
+            unsafe {
+                let noaccess = VirtualAlloc(std::ptr::null(), 4096, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS);
+                assert!(!noaccess.is_null());
+                assert!(!committed(noaccess.cast(), 4096));
+                assert_ne!(VirtualFree(noaccess, 0, MEM_RELEASE), 0);
+                let rw = VirtualAlloc(std::ptr::null(), 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+                assert!(!rw.is_null());
+                assert!(committed(rw.cast(), 4096));
+                assert_ne!(VirtualFree(rw, 0, MEM_RELEASE), 0);
+            }
+        }
+    }
+
+    /// A streamed texture with only a middle block mapped (and written, as
+    /// streamed pages are) counts that block, not none.
+    #[test]
+    fn a_texture_with_only_interior_pages_counts_its_resident_bytes() {
+        use windows_sys::Win32::System::Memory::*;
+        const BLOCK: usize = 64 << 10;
+        // SAFETY: this private reservation is ours throughout the test.
+        unsafe {
+            let base = VirtualAlloc(std::ptr::null(), 5 * BLOCK, MEM_RESERVE, PAGE_NOACCESS).cast::<u8>();
+            assert!(!base.is_null());
+            let middle = base.add(2 * BLOCK);
+            assert_eq!(VirtualAlloc(middle.cast(), BLOCK, MEM_COMMIT, PAGE_READWRITE), middle.cast());
+            middle.write_bytes(0x5a, BLOCK);
+            assert_eq!(super::mapped_bytes(base, 5 * BLOCK), BLOCK as u64);
+            assert_eq!(super::mapped_bytes(base.add(BLOCK - 3), 2 * BLOCK + 9), BLOCK as u64);
+            assert_eq!(super::mapped_bytes(base, 2 * BLOCK), 0);
+            assert_ne!(VirtualFree(middle.cast(), BLOCK, MEM_DECOMMIT), 0);
+            assert_eq!(super::mapped_bytes(base, 5 * BLOCK), 0);
+            assert_ne!(VirtualFree(base.cast(), 0, MEM_RELEASE), 0);
+        }
+    }
 
     /// Title memory whose tail is reserved and not committed reads through
     /// the copy as its bytes and then zeros, without a fault; so does

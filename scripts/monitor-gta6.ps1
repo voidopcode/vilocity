@@ -51,6 +51,36 @@ while ($true) {
     $gpu = (nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw --format=csv,noheader,nounits 2>$null) -split ',\s*'
     $os = Get-CimInstance Win32_OperatingSystem
 
+    # The HUD block: frame rate and what the game and the PC use.
+    $mb = 1MB
+    $gpuName = if (-not $script:gpuName) { $script:gpuName = (nvidia-smi --query-gpu=name --format=csv,noheader 2>$null) -replace 'NVIDIA GeForce ', ''; $script:gpuName } else { $script:gpuName }
+    $hud = @()
+    $fps = if ($frame -match '^([\d.]+) fps, ([\d.]+) ms/frame') { "{0} fps  ({1} ms a frame)" -f $Matches[1], $Matches[2] } else { "-" }
+    $pcCpu = (Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average
+    $gameCpu = "-"; $vGame = "-"; $vShared = "-"; $ramGame = "-"; $commitGame = "-"
+    if ($g) {
+        if ($lastCpu) { $gameCpu = "{0:N1}%" -f (($g.TotalProcessorTime - $lastCpu).TotalSeconds / ((Get-Date) - $lastAt).TotalSeconds / $cores * 100) }
+        $ramGame = "{0:N0} MB" -f ($g.WorkingSet64 / $mb)
+        $commitGame = "{0:N0} MB" -f ($g.PrivateMemorySize64 / $mb)
+        $pidTag = "pid_$($g.Id)_*"
+        $vm = Get-CimInstance Win32_PerfRawData_GPUPerformanceCounters_GPUProcessMemory -ErrorAction SilentlyContinue | Where-Object Name -like $pidTag
+        if ($vm) {
+            $vGame = "{0:N0} MB" -f (($vm | Measure-Object DedicatedUsage -Sum).Sum / $mb)
+            $vShared = "{0:N0} MB" -f (($vm | Measure-Object SharedUsage -Sum).Sum / $mb)
+        }
+    }
+    $hud += , @("VILOCITY HUD ($gpuName)  {0:N0}s" -f ((Get-Date) - $started).TotalSeconds, 'Cyan')
+    $hud += , @("FPS:        $fps", 'Green')
+    $hud += , @("CPU:        Game $gameCpu | PC $pcCpu%", 'Cyan')
+    if ($gpu.Count -ge 5) { $hud += , @(("VRAM GPU:   {0}/{1} MB ({2:N1}%)" -f $gpu[1], $gpu[2], ($gpu[1] / $gpu[2] * 100)), 'Yellow') }
+    $hud += , @("VRAM Game:  $vGame | Shrd: $vShared", 'Yellow')
+    $hud += , @("RAM Game:   $ramGame", 'Cyan')
+    $hud += , @("Commit Game: $commitGame", 'Yellow')
+    $used = ($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1KB; $total = $os.TotalVisibleMemorySize / 1KB
+    $hud += , @(("PC RAM:     {0:N0}/{1:N0} MB ({2:N1}%)" -f $used, $total, ($used / $total * 100)), $(if ($used / $total -gt 0.9) { 'Red' } else { 'Cyan' }))
+    $cUsed = ($os.TotalVirtualMemorySize - $os.FreeVirtualMemory) / 1KB; $cTotal = $os.TotalVirtualMemorySize / 1KB
+    $hud += , @(("PC Commit:  {0:N0}/{1:N0} MB ({2:N1}%)" -f $cUsed, $cTotal, ($cUsed / $cTotal * 100)), 'Cyan')
+
     $out = New-Object System.Text.StringBuilder
     $add = { param($s) [void]$out.AppendLine($s) }
     & $add ("VILOCITY MONITOR   {0:HH:mm:ss}   up {1:hh\:mm\:ss}   log {2}" -f (Get-Date), ((Get-Date) - $started), (Split-Path $Log -Leaf))
@@ -85,6 +115,8 @@ while ($true) {
         & $add ("  {0} {1,-5} x{2,-6} {3}" -f $v[1], $v[2], $v[0], $_.Key)
     }
     Clear-Host
+    foreach ($h in $hud) { Write-Host $h[0] -ForegroundColor $h[1] }
+    Write-Host ""
     Write-Host $out.ToString()
     Start-Sleep -Seconds 2
 }

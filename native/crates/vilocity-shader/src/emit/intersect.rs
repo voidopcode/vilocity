@@ -37,6 +37,27 @@ thread_local! {
     /// and their directory.)
     pub(in crate::emit) static TEST_MEMORY: std::cell::Cell<Option<(u32, u64)>> =
         const { std::cell::Cell::new(None) };
+    /// The tests' way to translate as with `VILOCITY_BVH_NO_HIT=1` ([`no_hit`]).
+    pub(in crate::emit) static TEST_NO_HIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether a node test answers "no hit" and reads nothing
+/// (`VILOCITY_BVH_NO_HIT=1`; never with `VILOCITY_BVH_BUILDER=1`, which has
+/// the structures built). The title's structure builder does not run here,
+/// yet its ray passes do: each node test then reads whatever bytes lie where
+/// a structure would be, in a walk bounded at 65,535 steps a wave, and what
+/// comes back differs from launch to launch (rainbow speckles). With the
+/// switch a box node enters no child and any other node is missed, as in an
+/// empty scene: every ray leaves at its first test, shadow rays find no
+/// occluder, and the answer is the same in every run. From
+/// fxceless/victory-fork 96ff135 (the idea of its PR #994).
+fn no_hit() -> bool {
+    #[cfg(test)]
+    if TEST_NO_HIT.get() {
+        return true;
+    }
+    std::env::var_os("VILOCITY_BVH_NO_HIT").is_some_and(|v| v == "1")
+        && std::env::var_os("VILOCITY_BVH_BUILDER").is_none_or(|v| v != "1")
 }
 
 /// Where the instruction's node is.
@@ -134,6 +155,21 @@ impl<'a> Lower<'a> {
             inverse: [f[7], f[8], f[9]],
         };
         let c = self.cur;
+        if no_hit() {
+            // No structures: a box enters no child, anything else is missed
+            // ([`no_hit`]); nothing is read or asked of the directory.
+            let _ = &ray;
+            let (k4, k6) = (self.s.m.i32(4), self.s.m.i32(6));
+            let pair = self.s.m.bin(c, Bin::And, pointer, k6);
+            let is_box = self.s.m.cmp(c, pred::EQ, pair, k4);
+            let none = self.s.m.i32(bvh::NONE);
+            for (k, miss) in bvh::MISS.into_iter().enumerate() {
+                let miss = self.s.m.i32(miss.to_bits());
+                let r = self.s.m.select(c, is_box, none, miss);
+                self.write(inst, Reg::V(dst + k as u8), r, guard);
+            }
+            return Ok(());
+        }
         let at = match nodes {
             BvhNodes::Resource => {
                 let src = self

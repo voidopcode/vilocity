@@ -50,18 +50,31 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-26 18:22, game build Series 1.0.2.1
+**Latest test run:** 2026-11-26 18:56, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
 | Best frame rate (menus included) | 30.0 fps |
-| Median frame time | 95 ms |
-| Last frame | 11.7 fps, 85 ms, 4934 draws, 534 dropped without a pipeline |
+| Median frame time | 54 ms |
+| Last frame | 5.8 fps, 171 ms, 4584 draws, 263 dropped without a pipeline |
 | Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: three picture fixes from the codec-d/cool_fox snapshot (the build
+Latest: Lucia's hair shows, a long ponytail: the hair strand programs, left
+out until now because they did not translate or drew streaks, run by default
+(`VILOCITY_HAIR=0` leaves them out). The title's ray passes that still run walk
+no structure: every node test answers "no hit" (`VILOCITY_BVH_NO_HIT`, from
+fxceless/victory-fork 96ff135) instead of reading garbage for up to 65,535 steps
+a wave: 71-85 ms against 85-117 ms a frame. The title's GPU-only view of its
+24 GB reservation now shows the same pages as the CPU one (from xcl 94bfcf0;
+the opening is still black until the characters show: not fixed yet). From
+DexNom/VIctory: textures with mapped middle blocks are uploaded (they were taken
+as not there), a staging overrun and a depth-pitch overlap fixed, layout tests
+against AMD's addrlib (they pass). And a small in-game HUD on the right of the
+game's window: frame rate, CPU, video memory and RAM (`VILOCITY_HUD=0`: none).
+
+Before that: three picture fixes from the codec-d/cool_fox snapshot (the build
 PortWatch verified at 25 fps): the shader translator dropped programs whose
 descriptor read sat behind a lane condition at a join (their transmission
 prefilter: black squares, broken eyes); decoration bakes are found by any stage

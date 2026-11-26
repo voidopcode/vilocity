@@ -92,6 +92,7 @@ pub extern "system" fn XMemVirtualAlloc(
     protect: u32,
 ) -> *mut c_void {
     let (lowest, highest) = address_range(flags);
+    let console_protect = protect;
     let mut requirements = MEM_ADDRESS_REQUIREMENTS {
         LowestStartingAddress: lowest as *mut c_void,
         HighestEndingAddress: highest as *mut c_void,
@@ -162,7 +163,74 @@ pub extern "system" fn XMemVirtualAlloc(
             "XMemVirtualAlloc"
         );
     }
+    if placeholder && constrained && !at.is_null() && gpu_alias_enabled() {
+        gpu_views().reserved(at as usize, size, console_protect);
+    }
     at
+}
+
+/// `PAGE_GRAPHICS_NOACCESS`, a console bit above the host's protections.
+const GRAPHICS_NOACCESS: u32 = 0x800;
+
+/// GPU-only views of CPU memory. The title reserves 24 GB of 64 KiB pages
+/// twice in a row: once readable, once `PAGE_NOACCESS |
+/// PAGE_GRAPHICS_NOACCESS` (0x801). It maps physical pages only into the
+/// first, yet places GPU resources at the same offset in the second (its
+/// Bink video planes: decoded into the first, sampled from the second; the
+/// intro was black). On the console the second is a GPU view of the first,
+/// so pages mapped into the first are mapped at the second too
+/// (`XMemMapPhysicalPages`), as views of the same section. Upstream xcl
+/// #283 pairs them the same way. `VILOCITY_GPU_ALIAS=0` turns it off.
+#[derive(Default)]
+struct GpuViews {
+    /// Readable reservations of 64 KiB pages not yet paired: (base, size).
+    cpu: Vec<(usize, usize)>,
+    /// CPU view base -> (size, GPU view base).
+    pairs: BTreeMap<usize, (usize, usize)>,
+}
+
+// shortcut: a released reservation is not forgotten (the title frees them
+// through the host's `VirtualFree`, and the 24 GB pair lives as long as the
+// title); a mapping mirrored into a GPU view that is no longer a placeholder
+// fails with a warning. Hook the release if a title frees and reserves again.
+impl GpuViews {
+    /// A placeholder reservation of `size` bytes at `base`, with the
+    /// title's console protection `protect`.
+    fn reserved(&mut self, base: usize, size: usize, protect: u32) {
+        if protect & GRAPHICS_NOACCESS != 0 && protect & 0xff == PAGE_NOACCESS {
+            // The most recent readable reservation of the same size.
+            if let Some(i) = self.cpu.iter().rposition(|&(_, n)| n == size) {
+                let (cpu, _) = self.cpu.remove(i);
+                self.pairs.insert(cpu, (size, base));
+                tracing::info!(
+                    gpu = format_args!("{base:#x}"),
+                    cpu = format_args!("{cpu:#x}"),
+                    size,
+                    "XMemVirtualAlloc: GPU-only view of a CPU reservation"
+                );
+            }
+        } else if protect & 0xff != PAGE_NOACCESS && protect & 0xff != 0 {
+            self.cpu.push((base, size));
+        }
+    }
+
+    /// Where `[at, at + len)` of a CPU view shows in its GPU view.
+    fn gpu_address(&self, at: usize, len: usize) -> Option<usize> {
+        let (&cpu, &(size, gpu)) = self.pairs.range(..=at).next_back()?;
+        (at + len <= cpu + size).then(|| gpu + (at - cpu))
+    }
+}
+
+static GPU_VIEWS: LazyLock<Mutex<GpuViews>> = LazyLock::new(Default::default);
+
+fn gpu_views() -> MutexGuard<'static, GpuViews> {
+    GPU_VIEWS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn gpu_alias_enabled() -> bool {
+    static ON: LazyLock<bool> =
+        LazyLock::new(|| std::env::var("VILOCITY_GPU_ALIAS").as_deref().map(str::trim) != Ok("0"));
+    *ON
 }
 
 /// `MEMORY_BASIC_INFORMATION` (the console's first 0x30 bytes are the
@@ -668,6 +736,16 @@ pub extern "system" fn XMemMapPhysicalPages(
     n: usize,
     pages: *const usize,
 ) -> *mut c_void {
+    let done = map_pages(address, n, pages);
+    // The GPU view of this CPU memory, if it has one, shows the same pages.
+    let gpu = gpu_views().gpu_address(address as usize, n * PAGE);
+    if let Some(gpu) = gpu.filter(|_| !done.is_null()) {
+        map_pages(gpu as *mut c_void, n, pages);
+    }
+    done
+}
+
+fn map_pages(address: *mut c_void, n: usize, pages: *const usize) -> *mut c_void {
     let base = address as usize;
     let mut physical = physical();
     // Until the pages are mapped again: `unmap` takes whole views away and
@@ -1315,6 +1393,40 @@ mod tests {
         assert_eq!(query(second).host.State, MEM_RESERVE);
         assert_eq!(query(a).host.State, MEM_COMMIT);
         assert_eq!(XMemMapPhysicalPages(a, 1, std::ptr::null()), a);
+        assert_eq!(XMemFreePhysicalPages(2, pages.as_ptr()), 1);
+    }
+
+    /// A no-access graphics reservation is the GPU view of the readable one
+    /// of its size before it: pages mapped into the CPU view show there too
+    /// (the title's Bink planes), and leave it when unmapped.
+    #[test]
+    fn gpu_only_reservation_shows_the_cpu_views_pages() {
+        let pages = allocate(2);
+        let size = 7 * PAGE; // a size no other test reserves
+        let reserve = |protect| {
+            XMemVirtualAlloc(std::ptr::null_mut(), size, MEM_RESERVE | PAGES_64K, 0, protect) as usize
+        };
+        let cpu = reserve(PAGE_READWRITE);
+        let gpu = reserve(PAGE_NOACCESS | GRAPHICS_NOACCESS);
+        assert!(cpu != 0 && gpu != 0);
+        assert_eq!(gpu_views().gpu_address(cpu + PAGE, 2 * PAGE), Some(gpu + PAGE));
+        assert_eq!(gpu_views().gpu_address(cpu + 6 * PAGE, 2 * PAGE), None, "past its end");
+        assert_eq!(gpu_views().gpu_address(gpu, PAGE), None, "the GPU view is no CPU view");
+
+        let at = cpu + PAGE;
+        assert_eq!(XMemMapPhysicalPages(at as *mut c_void, 2, pages.as_ptr()), at as *mut c_void);
+        // SAFETY: both views are mapped read-write.
+        unsafe {
+            ((at + PAGE + 3) as *mut u8).write(0x5a);
+            assert_eq!(((gpu + 2 * PAGE + 3) as *const u8).read(), 0x5a);
+        }
+        assert_eq!(query((gpu + PAGE) as *const c_void).host.State, MEM_COMMIT);
+        assert_eq!(query(gpu as *const c_void).host.State, MEM_RESERVE, "nothing mapped there");
+
+        // Unmapping the CPU view unmaps the GPU view.
+        XMemMapPhysicalPages(at as *mut c_void, 2, std::ptr::null());
+        assert_eq!(query((gpu + PAGE) as *const c_void).host.State, MEM_RESERVE);
+        gpu_views().pairs.remove(&cpu);
         assert_eq!(XMemFreePhysicalPages(2, pages.as_ptr()), 1);
     }
 
