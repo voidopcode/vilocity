@@ -46,8 +46,13 @@ if (-not $Defaults) {
     # 203 ms of card time a frame (timing run gta6-20261125-155709); without
     # them the frame went from 300-410 to 207 ms and the glitter they spread
     # over heads is gone (run gta6-20261125-160106).
+    # CS_ScreenProbes_EvaluateRayRequests*, CS_SortRayTiles and
+    # CS_Primary_RegisterAllocationRequests only prepare work for the ray
+    # passes above: some 10 ms of card time a frame (timing run
+    # gta6-20261125-234649); the picture the same without them (run
+    # gta6-20261125-235928).
     if (-not $env:VILOCITY_LEAVE_OUT) {
-        $env:VILOCITY_LEAVE_OUT = "TraceRays_BVH,RTShadowTrace,RTDistantShadowTrace,RTDistantLODLightShadow,TraceShadowRays,RaytraceShadows,RaytraceVBuffer,IrradianceCache_ShadowTrace,ShadowRaytracing,CollisionRaytraced,PPR_Raytrace,CS_SpatialFilter,CS_BilateralBlur"
+        $env:VILOCITY_LEAVE_OUT = "TraceRays_BVH,RTShadowTrace,RTDistantShadowTrace,RTDistantLODLightShadow,TraceShadowRays,RaytraceShadows,RaytraceVBuffer,IrradianceCache_ShadowTrace,ShadowRaytracing,CollisionRaytraced,PPR_Raytrace,CS_SpatialFilter,CS_BilateralBlur,CS_ScreenProbes_EvaluateRayRequests,CS_SortRayTiles,CS_Primary_RegisterAllocationRequests"
     }
     # Left out, CS_CombinedReflections's outputs kept whatever their memory
     # held (glitter on some runs, none on others): cleared, the lighting
