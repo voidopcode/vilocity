@@ -50,18 +50,24 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-26 01:46, game build Series 1.0.2.1
+**Latest test run:** 2026-11-26 02:01, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 31.0 fps |
-| Median frame time | 86 ms |
-| Last frame | 11.5 fps, 87 ms, 4291 draws, 462 dropped without a pipeline |
+| Best frame rate (menus included) | 30.0 fps |
+| Median frame time | 87 ms |
+| Last frame | 10.9 fps, 92 ms, 4214 draws, 467 dropped without a pipeline |
 | Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: about half the launches used to fall into a slow mode (3-5 fps,
+Latest: the card memory kept for copies of the title's buffers (6 GB, of
+which some 660 MB are used) counted as taken when the texture queue asked
+for room, and 16,000 textures waited while the card was half empty. With
+1.5 GB kept the "INMATE" print, the inmate's hair and the faces in the
+prologue cutscenes all show, at the same 11 fps.
+
+Before that: about half the launches used to fall into a slow mode (3-5 fps,
 black faces, a bald dark head, red jumpsuits): there the title's card
 memory defragmenter, `CS_DefragHeap_ComputeRelocations`, took 230 ms of card
 time a frame. It is cleared now (`VILOCITY_ZERO_OUT`); four launches in a

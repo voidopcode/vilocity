@@ -44,7 +44,12 @@ if (-not $Defaults) {
     $env:VILOCITY_WIDE_REFRESH = "1"
     $env:VILOCITY_WIDE_MERGE = "1"
     $env:VILOCITY_JOIN_COPIES = "1"
-    $env:VILOCITY_CARD_BUFFERS_MB = "6144"
+    # Room on the card kept for copies of title buffers counts as used when
+    # the texture queue asks whether the card has room: 6,144 MB kept, of
+    # which some 660 MB are ever made, held 16,000 textures back while the
+    # card was half empty (the "INMATE" print, faces in the cutscenes).
+    # 1,536 MB: all of them shown, 11 fps (run gta6-20261126-015721).
+    if (-not $env:VILOCITY_CARD_BUFFERS_MB) { $env:VILOCITY_CARD_BUFFERS_MB = "1536" }
     # Ray passes trace a structure that is never built and write garbage:
     # rainbow speckles, black walls (list from puffnfresh/rebox's fast.c;
     # 2026-11-25 runs s15/s16: walls lit, fewer speckles without them).
