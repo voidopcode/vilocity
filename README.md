@@ -50,25 +50,21 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-26 08:22, game build Series 1.0.2.1
+**Latest test run:** 2026-11-26 10:10, game build Series 1.0.2.1
 
 | Measure | Value |
 |---------|-------|
 | Best frame rate (menus included) | 30.0 fps |
-| Median frame time | 72 ms |
-| Last frame | 11.3 fps, 89 ms, 4374 draws, 498 dropped without a pipeline |
+| Median frame time | 89 ms |
+| Last frame | 11.2 fps, 89 ms, 4396 draws, 496 dropped without a pipeline |
 | Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: the light-list program `CS_PrescalarizeLightLoop` (the card's most
-expensive, up to 10 ms in one dispatch) loops over light indices one at a
-time. On NVIDIA each 64-thread console wave runs as two 32-thread halves,
-and in that form the loop served only the first thread's index and ran to
-its 4096-pass limit. It now runs each half on its own: right for every
-thread (a new GPU test), 3.25 ms → under 0.2 ms of card time a frame in a
-timing run. The same bug can hit other programs with this loop shape; not
-fixed in general yet.
+Latest: running the light-list program `CS_PrescalarizeLightLoop` as two
+separate 32-thread halves (commit 3b62842) cut its card time from about 3 ms
+to under 0.2 ms, but blacked out faces and walls in 16-pixel tiles in the diner
+cutscene. Reverted; the faces are lit again with the old form.
 
 Before that: the card memory kept for copies of the title's buffers (6 GB, of
 which some 660 MB are used) counted as taken when the texture queue asked

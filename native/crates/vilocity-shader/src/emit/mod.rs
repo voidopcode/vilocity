@@ -391,11 +391,6 @@ fn sync_full(container: &[u8]) -> bool {
         let set = std::env::var("VILOCITY_GROUP_SYNC_FULL").unwrap_or_else(|_| "CS_Shadow,RasterClassification,Skinning,BatchCull,CS_HairTile,CS_SSS,Blendshape,StickyLips,EyeCap".to_owned());
         set.split(',').map(str::trim).filter(|n| !n.is_empty() && *n != "none").map(str::to_owned).collect()
     });
-    named(container, names)
-}
-
-/// Whether the program's name (before `_Wrapped`) holds one of `names`.
-fn named(container: &[u8], names: &[String]) -> bool {
     if names.is_empty() {
         return false;
     }
@@ -414,34 +409,9 @@ fn named(container: &[u8], names: &[String]) -> bool {
 /// such a driver refuses.
 pub fn translate_for(container: &[u8], wave32_only: bool) -> Result<HostShader, ShaderError> {
     let was = SYNC_FULL.replace(sync_full(container));
-    let was_local = LOCAL_FIRST.replace(local_first(container));
     let r = translate_for_mode(container, wave32_only);
     SYNC_FULL.set(was);
-    LOCAL_FIRST.set(was_local);
     r
-}
-
-thread_local! {
-    /// The program being translated tries local waves first ([`local_first`]).
-    static LOCAL_FIRST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// `VILOCITY_WAVE_LOCAL_FIRST=a,b`: programs (by name, as
-/// `VILOCITY_GROUP_SYNC_FULL`) whose lanes never look at each other's data, so each
-/// 32-lane half of a console wave may take its branches and waterfall loops on its
-/// own, before the split form and its group barrier at every lane-mask branch.
-/// `CS_PrescalarizeLightLoop` (per pixel: a light mask, a waterfall over a
-/// register array), the default: in the split form its waterfall served only
-/// the first lane's index and ran to the loop limit (10 ms of the card in one
-/// dispatch, 39 barriers; `a_waterfall_over_a_register_array_is_exact_per_half_wave`).
-/// `none`: no program.
-fn local_first(container: &[u8]) -> bool {
-    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-    let names = NAMES.get_or_init(|| {
-        let set = std::env::var("VILOCITY_WAVE_LOCAL_FIRST").unwrap_or_else(|_| "CS_PrescalarizeLightLoop".to_owned());
-        set.split(',').map(str::trim).filter(|n| !n.is_empty() && *n != "none").map(str::to_owned).collect()
-    });
-    named(container, names)
 }
 
 fn translate_for_mode(container: &[u8], wave32_only: bool) -> Result<HostShader, ShaderError> {
@@ -514,19 +484,6 @@ pub fn emit_for(
     res: &resource::Resources,
     wave32_only: bool,
 ) -> Result<HostShader, ShaderError> {
-    // Named lane-independent programs: each host wave on its own first ([`local_first`]).
-    if wave32_only && LOCAL_FIRST.with(std::cell::Cell::get) {
-        lower::take_needs();
-        let local = lower::with_local_waves(|| emit_program(c, native, p, st, io, res, false));
-        if std::env::var_os("VILOCITY_WAVE_WHY").is_some() {
-            eprintln!("WAVE-LOCAL-FIRST: {:?}", local.as_ref().map(|r| r.1));
-        }
-        if let Ok((shader, wave)) = local
-            && wave != Some(64)
-        {
-            return Ok(shader);
-        }
-    }
     // A 32-lane host: the split form first (exact); the fork's ladder of
     // other forms if it fails.
     if wave32_only && let Ok((shader, _)) = emit_program(c, native, p, st, io, res, true) {
@@ -2307,12 +2264,6 @@ mod sync_full_tests {
         assert!(!super::sync_full(b"x CS_GenerateShadowMasks_Checkerboard_NoHair_5e982407_Wrapped"));
         assert!(!super::sync_full(b"\0CS_FinalGather_0_1_1_0_a1d0fa7d_Wrapped\0"));
         assert!(!super::sync_full(b"no name here"));
-    }
-
-    #[test]
-    fn the_light_loop_takes_local_waves_first() {
-        assert!(super::local_first(b"x CS_PrescalarizeLightLoop_68be7063_Wrapped"));
-        assert!(!super::local_first(b"x CS_ShadowRenderTiledMiscCB_9945271c_Wrapped"));
     }
 }
 

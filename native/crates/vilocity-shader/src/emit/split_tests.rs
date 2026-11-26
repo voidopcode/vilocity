@@ -235,86 +235,35 @@ pub(super) fn check_in(native: &NativeProgram, want: impl Fn(u32) -> u32) {
         let form = if split { "split" } else { "wave64" };
         let label = format!("{} ({min}..{max} lanes), {form}", host.adapter());
         let shader = lower(native, split);
-        run_checked(&host, &shader, n, &label, &want);
+        let (root, pso) = host
+            .compute_pipeline(&shader)
+            .unwrap_or_else(|e| panic!("{label}: compute_pipeline failed: {e}"));
+        let mut ud = vec![0u32; shader.user_data_dwords().max(1) as usize];
+        for u in &shader.user_data {
+            ud[u.index as usize] = match (u.root, u.slot) {
+                (RootType::Constants, 0) => 0,
+                (RootType::Table, 1) => 0,
+                other => panic!("unexpected user data {other:?}"),
+            };
+        }
+        let out = host
+            .dispatch(
+                &root,
+                &pso,
+                &Dispatch {
+                    roots: vec![(0, Root::Constants(ud))],
+                    views: &[View::RawUav(n.max(64))],
+                    samplers: &[],
+                    groups: [1, 1, 1],
+                },
+            )
+            .unwrap_or_else(|e| panic!("{label}: dispatch failed: {e}"));
+        let len = n.max(64);
+        let expected: Vec<u32> = (0..len).map(|t| if t < n { want(t) } else { 0 }).collect();
+        assert_eq!(out[0][..len as usize], expected[..], "{label}");
         ran += 1;
     }
     assert!(ran > 0, "the GPU runs neither 64- nor 32-lane waves ({min}..{max})");
-}
-
-/// Dispatches one group of `shader` (a program of [`program_in`]'s layout) and checks each
-/// of the `n` threads' dwords against `want(thread)`.
-fn run_checked(host: &Host, shader: &HostShader, n: u32, label: &str, want: &impl Fn(u32) -> u32) {
-    let (root, pso) = host
-        .compute_pipeline(shader)
-        .unwrap_or_else(|e| panic!("{label}: compute_pipeline failed: {e}"));
-    let mut ud = vec![0u32; shader.user_data_dwords().max(1) as usize];
-    for u in &shader.user_data {
-        ud[u.index as usize] = match (u.root, u.slot) {
-            (RootType::Constants, 0) => 0,
-            (RootType::Table, 1) => 0,
-            other => panic!("unexpected user data {other:?}"),
-        };
-    }
-    let out = host
-        .dispatch(
-            &root,
-            &pso,
-            &Dispatch {
-                roots: vec![(0, Root::Constants(ud))],
-                views: &[View::RawUav(n.max(64))],
-                samplers: &[],
-                groups: [1, 1, 1],
-            },
-        )
-        .unwrap_or_else(|e| panic!("{label}: dispatch failed: {e}"));
-    let len = n.max(64);
-    let expected: Vec<u32> = (0..len).map(|t| if t < n { want(t) } else { 0 }).collect();
-    assert_eq!(out[0][..len as usize], expected[..], "{label}");
-}
-
-/// The waterfall of `CS_PrescalarizeLightLoop` (`VILOCITY_WAVE_LOCAL_FIRST`): each lane
-/// reads `v[4 + index]` through M0, one distinct index per pass, until no lane is left.
-/// With each 32-lane half as a wave of its own (no exchange, no barrier) every lane
-/// still gets its own register. The split form gets this wrong (2026-11-26): its loop
-/// keeps every lane, the first-lane read takes lane 0 on every pass, and the loop runs
-/// to its iteration limit with the other indices never served.
-#[test]
-fn a_waterfall_over_a_register_array_is_exact_per_half_wave() {
-    const V_CMP_EQ_U32: u16 = 0x0C2;
-    const S_XOR_B64: u8 = 0x13;
-    const S_CBRANCH_EXECNZ: u8 = 0x09;
-    const V_MOVRELS_B32: u16 = 0x043;
-    const M0: u8 = 124;
-    // index = thread id & 3, but 2 for the whole upper half (one pass there)
-    let mut body = vec![vop2(V_AND_B32, 1, k(3), 0)];
-    body.extend_from_slice(&vop3(V_CMP_GT_U32, VCC, k(32), vgpr(0)));
-    body.push(vop2(0x01, 1, k(2), 1)); // v_cndmask_b32 v1, 2, v1, vcc: below 32 keeps v1
-    body.extend([10, 20, 30, 40].iter().enumerate().map(|(i, &x)| vop1(V_MOV_B32, 4 + i as u8, k(x))));
-    body.push(vop1(V_MOV_B32, 3, k(64))); // a lane no pass reaches keeps 64
-    body.push(sop1(S_MOV_B64, 20, EXEC));
-    let top = body.len();
-    body.push(vop1(V_READFIRSTLANE_B32, 22, vgpr(1)));
-    body.push(vopc(V_CMP_EQ_U32, 22, 1));
-    body.push(sop1(S_AND_SAVEEXEC_B64, 24, VCC));
-    body.push(sop1(S_MOV_B32, M0, 22));
-    body.push(vop1(V_MOVRELS_B32, 3, vgpr(4)));
-    body.push(sop2(S_XOR_B64, EXEC, EXEC, 24));
-    let back = top as i32 - (body.len() as i32 + 1);
-    body.push(sopp(S_CBRANCH_EXECNZ, back as i16 as u16));
-    body.push(sop1(S_MOV_B64, EXEC, 20));
-    body.push(vop1(V_MOV_B32, 1, vgpr(3)));
-    let native = program(&body);
-    let want = |t: u32| if t < 32 { [10, 20, 30, 40][(t & 3) as usize] } else { 30 };
-    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
-    let Ok(host) = Host::new(false) else {
-        return;
-    };
-    let (min, max) = host.wave_lanes().expect("wave sizes");
-    if min <= 32 && 32 <= max {
-        let shader = lower::with_local_waves(|| try_lower(&native, false)).expect("local waves");
-        let label = format!("{} ({min}..{max} lanes), local waves", host.adapter());
-        run_checked(&host, &shader, 64, &label, &want);
-    }
 }
 
 #[test]
