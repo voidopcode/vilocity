@@ -50,18 +50,31 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 04:41
+**Latest test run:** 2026-11-27 05:04
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 25.6 fps, 39 ms a frame |
-| Best while playing | 36.7 fps |
-| Last frame | 28.8 fps, 35 ms, 6500 draws, 92 dropped without a pipeline |
+| Frame rate while playing (typical) | 25.1 fps, 40 ms a frame |
+| Best while playing | 29.0 fps |
+| Last frame | 29.0 fps, 35 ms, 4504 draws, 173 dropped without a pipeline |
 | Shaders that failed to translate | compute 5 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: moving through the world no longer drops to half the frame rate. Measured by
+Latest: the frame rate panel is new: the frame rate in the colour of how it plays,
+the frame's time and draws, the processor, the card and memory with bars. It shows
+whenever the game's picture is seen at that corner, whichever window has the keyboard,
+and goes when another window covers the game or the game is minimised (F8 hides it).
+A compute dispatch now waits for its pipeline instead of being dropped when the
+pipeline takes longer than the frame's half second (Exopus, DoubleGhosty/cool_fox
+2a1965f): a dropped one ran only once and left what it bakes wrong for the whole
+scene (seen here: a shirt in blocks of black and white). Tried and not kept: the
+game's own ray tracing runs on this engine with an RTX 5080, at 3-5 fps; the five
+lighting programs in the wide form (the launcher's option, removed) drew black blocks
+on water in daylight; keeping the game's leftover sky light (`VILOCITY_AMBIENT_LEFTOVER`)
+put white blocks on hair and fences.
+
+Earlier: moving through the world no longer drops to half the frame rate. Measured by
 walking, then running through the day scene with scripted keys (Ryzen 9 9950X3D, RTX
 5080, Series S picture, 6,300-8,700 draws a frame): 24-29 fps with no freezes, where
 it was 11-18 fps with freezes of up to half a second. The cause was the game's own
@@ -92,7 +105,7 @@ fast before and hid it: tests move the character from now on. Also new:
 Not fixed yet: shade is too dark in daylight (the stand-in for the traced light),
 water, and 30 fps is not held everywhere (20-30 while driving).
 
-Earlier: every key of the keyboard does something now (the number pad, the function
+Before that: every key of the keyboard does something now (the number pad, the function
 keys and the punctuation keys too; Ctrl crouches, E interacts, M is the map, T the
 phone), and every key can be named in the keys file. The two pictures measured in
 the same night street, with runs that take no keys (`VILOCITY_KEYS_ONLY=1`), on a

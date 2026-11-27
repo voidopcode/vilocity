@@ -1,100 +1,173 @@
-# In-game HUD for a Vilocity GTA VI run: a small see-through panel on the right
-# of the game's window with the frame rate and what the game and the PC use.
-# It stays on top, lets clicks through to the game, follows the window, and
-# closes with the game.   scripts\hud-gta6.ps1 [-Log <file>]
+# In-game panel for a Vilocity GTA VI run: the frame rate, and what the game and
+# the PC use, in the upper right corner of the game's window.
+# It goes with the game's window: shown whenever the game's picture is seen at that
+# corner (whichever window has the keyboard), gone when another window covers it or
+# the game is minimised, and closed with the game. Clicks go through it to the
+# game, and it never takes the keyboard. (Not the game window's owned window:
+# Windows joins the input queues of an owner and what it owns, and the game then
+# got no key and no mouse while this script was busy.)
+# F8 (while the game is in front) hides and shows it.   scripts\hud-gta6.ps1 [-Log <file>]
 param([string]$Log)
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-Add-Type @'
-using System; using System.Runtime.InteropServices;
+Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing @'
+using System; using System.Runtime.InteropServices; using System.Windows.Forms;
+// A window that is never made the active one, and lets clicks through
+// (layered, transparent to the mouse, not activated, no button in Alt+Tab).
+public class HudForm : Form {
+  public HudForm() { DoubleBuffered = true; }
+  protected override bool ShowWithoutActivation { get { return true; } }
+  protected override CreateParams CreateParams { get { CreateParams p = base.CreateParams; p.ExStyle |= 0x80000 | 0x20 | 0x08000000 | 0x80 | 0x8; return p; } }
+}
 public class HudWin {
-  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i);
-  [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr h, int i, int v);
-  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h, uint cmd);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int height, uint flags);
+  [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint process);
+  // Whether the window the user sees at this point of the screen is one of the game's
+  // process; the panel itself lets the mouse through, so it is not what is found there.
+  public static bool Seen(IntPtr game, int x, int y) {
+    POINT p = new POINT(); p.X = x; p.Y = y; IntPtr w = WindowFromPoint(p);
+    uint its, games; GetWindowThreadProcessId(w, out its); GetWindowThreadProcessId(game, out games);
+    return w != IntPtr.Zero && its == games;
+  }
+  [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
+  [DllImport("kernel32.dll")] public static extern bool GlobalMemoryStatusEx(ref MEMORY m);
   public struct RECT { public int L, T, R, B; }
+  public struct POINT { public int X, Y; }
+  [StructLayout(LayoutKind.Sequential)] public struct MEMORY { public uint Size, Load; public ulong Total, Free, PageTotal, PageFree, VirtualTotal, VirtualFree, Extended; }
+  // Used and all of the PC's memory, in GB.
+  public static double[] Ram() { MEMORY m = new MEMORY(); m.Size = 64; GlobalMemoryStatusEx(ref m); return new double[] { (m.Total - m.Free) / 1073741824.0, m.Total / 1073741824.0 }; }
 }
 '@
 $cores = [Environment]::ProcessorCount
-$state = @{ frame = ""; lastCpu = $null; lastAt = $null; seen = $false; hidden = $false; f8 = $false; front = $false }
+# (Names differ by more than their case: PowerShell takes $H and $h for one variable,
+# and the panel's height was the game's window handle inside a function that took one.)
+# What the panel shows; $null: not known (yet).
+$s = @{ fps = $null; ms = $null; draws = $null; gameCpu = $null; pcCpu = $null; gpu = $null; vramUsed = $null; vramAll = $null
+        gameVram = $null; gameShared = $null; gameRam = $null; gameCommit = $null; ram = $null; ramAll = $null }
+$state = @{ id = 0; owner = [IntPtr]::Zero; lastCpu = $null; lastAt = $null; seen = $false; hidden = $false; f8 = $false; tick = 0 }
+$pc = try { New-Object Diagnostics.PerformanceCounter('Processor', '% Processor Time', '_Total') } catch { $null }
 
-$form = New-Object Windows.Forms.Form
+$PW = 250; $PH = 132
+$form = New-Object HudForm
 $form.FormBorderStyle = 'None'; $form.TopMost = $true; $form.ShowInTaskbar = $false
-$form.BackColor = [Drawing.Color]::FromArgb(12, 14, 20); $form.Opacity = 0.7
-$form.StartPosition = 'Manual'; $form.AutoSize = $true; $form.AutoSizeMode = 'GrowAndShrink'
-$form.Padding = New-Object Windows.Forms.Padding(4, 3, 4, 3)
-$label = New-Object Windows.Forms.Label
-$label.Font = New-Object Drawing.Font("Consolas", 8.5)
-$label.AutoSize = $true; $label.ForeColor = [Drawing.Color]::FromArgb(150, 230, 150)
-$label.Location = New-Object Drawing.Point(4, 3); $form.Controls.Add($label)
-# Click-through, and not activated by clicks: the game keeps focus and input.
-$form.Add_Shown({
-    $ex = [HudWin]::GetWindowLong($form.Handle, -20)
-    [HudWin]::SetWindowLong($form.Handle, -20, $ex -bor 0x80000 -bor 0x20 -bor 0x08000000) | Out-Null
+$form.BackColor = [Drawing.Color]::FromArgb(14, 16, 22); $form.Opacity = 0.86
+$form.StartPosition = 'Manual'; $form.Size = New-Object Drawing.Size($PW, $PH); $form.Location = New-Object Drawing.Point(-4000, -4000)
+# Rounded corners.
+$path = New-Object Drawing.Drawing2D.GraphicsPath; $rad = 14
+$path.AddArc(0, 0, $rad, $rad, 180, 90); $path.AddArc($PW - $rad, 0, $rad, $rad, 270, 90)
+$path.AddArc($PW - $rad, $PH - $rad, $rad, $rad, 0, 90); $path.AddArc(0, $PH - $rad, $rad, $rad, 90, 90); $path.CloseFigure()
+$form.Region = New-Object Drawing.Region($path)
+
+$big = New-Object Drawing.Font("Segoe UI", 21, [Drawing.FontStyle]::Bold)
+$unit = New-Object Drawing.Font("Segoe UI", 9)
+$name = New-Object Drawing.Font("Segoe UI", 7.5, [Drawing.FontStyle]::Bold)
+$value = New-Object Drawing.Font("Segoe UI", 8.5)
+$white = [Drawing.Color]::FromArgb(236, 238, 244); $grey = [Drawing.Color]::FromArgb(138, 144, 160)
+$good = [Drawing.Color]::FromArgb(61, 220, 132); $fair = [Drawing.Color]::FromArgb(250, 204, 21); $bad = [Drawing.Color]::FromArgb(248, 113, 113)
+$brand = [Drawing.Color]::FromArgb(124, 92, 255); $track = [Drawing.Color]::FromArgb(40, 44, 56)
+function N($v, $f = "N1") { if ($null -eq $v) { "-" } else { ([double]$v).ToString($f) } }
+
+$form.Add_Paint({
+    param($sender, $e)
+    $g = $e.Graphics; $g.SmoothingMode = 'AntiAlias'; $g.TextRenderingHint = 'ClearTypeGridFit'
+    $brush = { param($c) New-Object Drawing.SolidBrush $c }
+    # The frame rate, in the colour of how it plays; the frame's time and draws beside it.
+    $colour = if ($null -eq $s.fps) { $grey } elseif ($s.fps -ge 28) { $good } elseif ($s.fps -ge 20) { $fair } else { $bad }
+    $g.FillRectangle((& $brush $colour), 0, 0, 4, $PH)
+    $text = N $s.fps "N0"
+    $g.DrawString($text, $big, (& $brush $colour), 12, 4)
+    $wide = $g.MeasureString($text, $big).Width
+    $g.DrawString("fps", $unit, (& $brush $grey), 10 + $wide, 20)
+    $right = New-Object Drawing.StringFormat; $right.Alignment = 'Far'
+    $g.DrawString((N $s.ms) + " ms", $value, (& $brush $white), ($PW - 12), 10, $right)
+    if ($null -ne $s.draws) { $g.DrawString(("{0:N0} draws" -f $s.draws), $name, (& $brush $grey), ($PW - 12), 26, $right) }
+    # A line: its name, what it says, and a bar of how full it is ($null: no bar).
+    $row = { param($y, $what, $says, $part, $whole, $inner)
+        $g.DrawString($what, $name, (& $brush $grey), 13, $y + 1)
+        $g.DrawString($says, $value, (& $brush $white), 50, $y)
+        if ($null -ne $part -and $whole) {
+            $g.FillRectangle((& $brush $track), 50, $y + 16, ($PW - 62), 3)
+            $share = [math]::Min(1.0, [double]$part / [double]$whole)
+            $g.FillRectangle((& $brush $(if ($share -gt 0.92) { $bad } else { $grey })), 50, $y + 16, [int](($PW - 62) * $share), 3)
+            if ($null -ne $inner) { $g.FillRectangle((& $brush $brand), 50, $y + 16, [int](($PW - 62) * [math]::Min(1.0, [double]$inner / [double]$whole)), 3) }
+        }
+    }
+    & $row 46 "CPU" ("game {0}%   PC {1}%" -f (N $s.gameCpu "N0"), (N $s.pcCpu "N0")) $null $null $null
+    & $row 64 "GPU" ("{0}%   {1} of {2} GB" -f (N $s.gpu "N0"), (N $s.vramUsed), (N $s.vramAll)) $s.vramUsed $s.vramAll $s.gameVram
+    & $row 86 "GAME" ("video {0} GB   shared {1} GB" -f (N $s.gameVram), (N $s.gameShared)) $null $null $null
+    & $row 104 "RAM" ("game {0}   PC {1} of {2} GB" -f (N $s.gameRam), (N $s.ram), (N $s.ramAll "N0")) $s.ram $s.ramAll $s.gameRam
 })
-# One reading that fails shows "-", not an empty panel.
-function Try-Get([scriptblock]$f) { try { & $f } catch { "-" } }
+
+# The game's process and window: looked for until found, then kept.
+function Game {
+    if ($state.id) { $p = Get-Process -Id $state.id -ErrorAction SilentlyContinue; if ($p) { return $p }; $state.id = 0 }
+    $game = Get-CimInstance Win32_Process -Filter "Name='vilocity.exe'" | Where-Object CommandLine -like '*native run*' | Select-Object -First 1
+    if ($game) { $state.id = $game.ProcessId; Get-Process -Id $game.ProcessId -ErrorAction SilentlyContinue }
+}
+# In the upper right corner of the game's picture; shown with the game's window.
+function Place($win) {
+    $r = New-Object HudWin+RECT; $p = New-Object HudWin+POINT
+    $shown = [HudWin]::IsWindowVisible($win) -and -not [HudWin]::IsIconic($win) -and [HudWin]::GetClientRect($win, [ref]$r) -and [HudWin]::ClientToScreen($win, [ref]$p)
+    if ($shown) {
+        $at = New-Object Drawing.Point(($p.X + $r.R - $PW - 14), ($p.Y + 14)); if ($form.Location -ne $at) { $form.Location = $at }
+        # Only where the game's picture is what the user sees there (the panel is over all
+        # windows, as it must be to be over the game's without belonging to it): asked
+        # just beside and just under the panel, where the panel itself is not found.
+        $shown = [HudWin]::Seen($win, ($at.X - 5), ($at.Y + $PH / 2)) -and [HudWin]::Seen($win, ($at.X + $PW / 2), ($at.Y + $PH + 5))
+    }
+    $want = $shown -and -not $state.hidden
+    if ($form.Visible -ne $want) { $form.Visible = $want }
+}
 
 $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 1000
 $timer.Add_Tick({
-    $game = Get-CimInstance Win32_Process -Filter "Name='vilocity.exe'" |
-        Where-Object CommandLine -like '*native run*' | Select-Object -First 1
-    $g = if ($game) { Get-Process -Id $game.ProcessId -ErrorAction SilentlyContinue }
-    if ($g) { $state.seen = $true } elseif ($state.seen) { $form.Close(); return }
+    $g = Game
+    if ($g) { $state.seen = $true } elseif ($state.seen) { $form.Close(); return } else { return }
+    $g.Refresh(); $win = $g.MainWindowHandle
+    if ($win -eq [IntPtr]::Zero) { return }
+    $state.owner = $win
     # The engine puts the frame rate in the window's title.
-    if ($g -and $g.MainWindowTitle -match '([\d.]+) fps ([\d.]+) ms/frame') { $state.frame = "{0} fps  ({1} ms)" -f $Matches[1], $Matches[2] }
-    $mb = 1MB
-    $text = @()
-    $text += "FPS   " + $(if ($state.frame) { $state.frame } else { "-" })
-    $gameCpu = "-"
-    if ($g) {
-        if ($state.lastCpu) {
-            $gameCpu = Try-Get { "{0:N0}%" -f (($g.TotalProcessorTime - $state.lastCpu).TotalSeconds / ((Get-Date) - $state.lastAt).TotalSeconds / $cores * 100) }
-        }
+    if ($g.MainWindowTitle -match '([\d.]+) fps ([\d.]+) ms/frame (\d+) draws') { $s.fps = [double]$Matches[1]; $s.ms = [double]$Matches[2]; $s.draws = [int]$Matches[3] }
+    try {
+        if ($state.lastCpu) { $s.gameCpu = ($g.TotalProcessorTime - $state.lastCpu).TotalSeconds / ((Get-Date) - $state.lastAt).TotalSeconds / $cores * 100 }
         $state.lastCpu = $g.TotalProcessorTime; $state.lastAt = Get-Date
-    }
-    $pcCpu = Try-Get { "{0:N0}%" -f (Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average }
-    $text += "CPU   game $gameCpu  pc $pcCpu"
-    $text += Try-Get {
-        $v = (nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits) -split ',\s*'
-        "VRAM  {0:N1}/{1:N1} GB" -f ([double]$v[0] / 1024), ([double]$v[1] / 1024)
-    }
-    if ($g) {
-        $text += Try-Get {
+        $s.gameRam = $g.WorkingSet64 / 1GB; $s.gameCommit = $g.PrivateMemorySize64 / 1GB
+    } catch {}
+    if ($pc) { try { $s.pcCpu = $pc.NextValue() } catch {} }
+    $ram = [HudWin]::Ram(); $s.ram = $ram[0]; $s.ramAll = $ram[1]
+    # The card every other second: these questions take a tenth of a second each.
+    $state.tick += 1
+    if ($state.tick % 2 -eq 1) {
+        try {
+            $v = (nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits) -split ',\s*'
+            $s.vramUsed = [double]$v[0] / 1024; $s.vramAll = [double]$v[1] / 1024; $s.gpu = [double]$v[2]
+        } catch {}
+        try {
             $vm = Get-CimInstance Win32_PerfRawData_GPUPerformanceCounters_GPUProcessMemory | Where-Object Name -like "pid_$($g.Id)_*"
-            "game  vram {0:N1} GB  shared {1:N1} GB" -f (($vm | Measure-Object DedicatedUsage -Sum).Sum / 1GB), (($vm | Measure-Object SharedUsage -Sum).Sum / 1GB)
-        }
-        $text += Try-Get { "      ram {0:N1} GB  commit {1:N1} GB" -f ($g.WorkingSet64 / 1GB), ($g.PrivateMemorySize64 / 1GB) }
-        $r = New-Object HudWin+RECT
-        if (-not [HudWin]::IsIconic($g.MainWindowHandle) -and [HudWin]::GetWindowRect($g.MainWindowHandle, [ref]$r)) {
-            $form.Location = New-Object Drawing.Point(($r.R - $form.Width - 10), ($r.T + 36))
-        }
-        # Only over the game: hidden while another window is in front, or after F8.
-        $state.front = ([HudWin]::GetForegroundWindow() -eq $g.MainWindowHandle) -and -not [HudWin]::IsIconic($g.MainWindowHandle)
-        $form.Visible = $state.front -and -not $state.hidden
-    } else {
-        $form.Visible = $false
+            $s.gameVram = ($vm | Measure-Object DedicatedUsage -Sum).Sum / 1GB; $s.gameShared = ($vm | Measure-Object SharedUsage -Sum).Sum / 1GB
+        } catch {}
     }
-    $text += Try-Get {
-        $os = Get-CimInstance Win32_OperatingSystem
-        $used = ($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1MB; $total = $os.TotalVisibleMemorySize / 1MB
-        "PC    ram {0:N1}/{1:N0} GB" -f $used, $total
-    }
-    $label.Text = $text -join "`n"
+    Place $win
+    $form.Invalidate()
 })
 $timer.Start()
-# F8 (while the game is in front) hides or shows the panel; read often so a short press counts.
-$keys = New-Object Windows.Forms.Timer
-$keys.Interval = 50
-$keys.Add_Tick({
+# Ten times a second: the panel follows the game's window, and F8 (while the game is in
+# front) hides or shows it; read often so that a short press counts.
+$fast = New-Object Windows.Forms.Timer
+$fast.Interval = 100
+$fast.Add_Tick({
+    if ($state.owner -eq [IntPtr]::Zero) { return }
     $down = [HudWin]::GetAsyncKeyState(0x77) -lt 0
-    if ($down -and -not $state.f8 -and $state.front) {
-        $state.hidden = -not $state.hidden
-        $form.Visible = -not $state.hidden
-    }
+    if ($down -and -not $state.f8 -and [HudWin]::GetForegroundWindow() -eq $state.owner) { $state.hidden = -not $state.hidden }
     $state.f8 = $down
+    Place $state.owner
 })
-$keys.Start()
+$fast.Start()
 [Windows.Forms.Application]::Run($form)

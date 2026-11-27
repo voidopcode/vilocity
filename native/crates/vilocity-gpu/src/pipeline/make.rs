@@ -231,9 +231,33 @@ pub(crate) fn ready(p: &Arc<Pending>) -> Option<&HostPipeline> {
     }
     if p.made.get().is_none() {
         start(p, REQUESTED);
-        wait(p, crate::frame::current());
+        if p.graphics.is_none() && compute_waits() {
+            // (OnceLock waits for a worker already making it, or it is made here.)
+            p.make();
+        } else {
+            wait(p, crate::frame::current());
+        }
     }
     p.made.get()?.as_ref()
+}
+
+/// (Vilocity: Exopus's, DoubleGhosty/cool_fox 2a1965f, GPL-3.0, as this.)
+/// Whether a dispatch waits for its compute pipeline until it is made,
+/// whatever the frame's budget ([`wait_budget`]); a draw still waits within
+/// the budget and is dropped while its pipeline is not there.
+///
+/// A dropped draw is drawn again in the next frame. A dropped dispatch may
+/// not be: the title runs some compute passes once (a bake of a character's
+/// clothes and skin, a buffer cleared when a scene changes), and what they
+/// leave is read for as long as the scene lasts. Seen here: the shirt of the
+/// character in blocks of black and white, his arms speckled, after a start
+/// in which pipelines were still being made. A wait once (the pipeline
+/// library has it on the next run) against a picture wrong until the scene
+/// ends. On by default; `VILOCITY_PIPELINE_COMPUTE_WAIT=0`: within the
+/// budget, as before.
+fn compute_waits() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VILOCITY_PIPELINE_COMPUTE_WAIT").is_none_or(|v| v != "0"))
 }
 
 /// Makes `p` on this thread if it is not made yet (waiting for a worker
