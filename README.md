@@ -104,19 +104,27 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 18:36
+**Latest test run:** 2026-11-27 19:13
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 20.7 fps, 48 ms a frame |
-| Best while playing | 25.7 fps |
-| Last frame | 19.0 fps, 53 ms, 8160 draws, 261 dropped without a pipeline |
-| Shaders that failed to translate | compute 6 |
+| Frame rate while playing | no frames of the world in this run (menus only) |
+| Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: a face drawn with another texture's colours, the 4-7 fps drops explained and
-shown on the overlay, and what the picture tests of 2026-11-27 evening ruled out.
+Latest: clothes and faces drawn with another texture's colours, the 4-7 fps drops
+explained and shown on the overlay, and what the picture tests of 2026-11-27 evening
+ruled out.
+- **Striped clothes (a texture showing an old picture).** A texture picked by index is
+  looked at again 4, 12, 40, 120 and 400 frames after its upload, and uploaded again if
+  its memory changed. Textures some of whose pages the title also maps at other
+  addresses are written there, unseen, at any time: in play logs of two PCs they were
+  found changed up to 1,600 frames after the upload, past the last look, and kept the
+  old picture from then on (all 183 changed ones of one session were of that kind).
+  They are now looked at every 200 frames for as long as they are shown; the others
+  keep the five looks. A 1440p walk: same frame rate (median 20 and 21 fps), no errors;
+  no late change happened on that walk, so the fix is not seen at work yet.
 - **A face drawn with a mask's colours (a "mosaic face").** While a texture waits for
   its host copy, its slot went on showing the texture it showed before if that one had
   the same size and format, and some 530 slots a second walking were given another

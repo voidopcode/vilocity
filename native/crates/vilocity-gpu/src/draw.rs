@@ -759,6 +759,14 @@ pub(crate) static HEAP_TEXTURES_FULL: AtomicU64 = AtomicU64::new(0);
 /// memory is looked at again, each counted from the look before.
 const RECHECK_FRAMES: [u64; 5] = [4, 12, 40, 120, 400];
 
+/// (Vilocity) After [`RECHECK_FRAMES`], a texture some of whose pages the title also
+/// maps at other addresses is looked at again every this many frames, for as long as
+/// its slot shows it: such textures were found changed up to 1,600 frames after their
+/// upload in play sessions on two PCs (2026-11-27), past the last look, and showed the
+/// old picture from then on (stripes on clothes). All 183 changed ones of one session
+/// were of that kind; the others keep the five looks.
+const LATE_RECHECK: u64 = 200;
+
 /// Looks at uploaded textures picked by index that found the memory as it
 /// was, and that found it changed (uploaded again), since the start.
 pub(crate) static HEAP_TEXTURES_RECHECKED: [AtomicU64; 2] = [AtomicU64::new(0), AtomicU64::new(0)];
@@ -2719,6 +2727,11 @@ impl State {
                     match RECHECK_FRAMES.get(usize::from(looks) + 1) {
                         Some(wait) => {
                             host.texture_slot_recheck(index, write, frame + wait, (at, len), print, looks + 1, uploaded)
+                        }
+                        // (Vilocity) Pages the title also maps at other addresses are
+                        // written there, unseen here, at any time ([`LATE_RECHECK`]).
+                        None if !crate::inplace::shown_elsewhere(at as usize & !0xffff, (at + len) as usize).is_empty() => {
+                            host.texture_slot_recheck(index, write, frame + LATE_RECHECK, (at, len), print, looks, uploaded)
                         }
                         None => host.texture_slot_done(index, write, None),
                     }
