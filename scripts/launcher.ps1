@@ -304,7 +304,7 @@ try { $smooth.driver = [NvSmooth]::Get('vilocity.exe') -eq 1; $ui.Smooth.IsCheck
 # 0: 1080p, 2: 1440p, 1: 4K (1 was "Quality", the same picture, in settings kept from before).
 function Mode { if ($ui.Mode1.IsChecked) { 1 } elseif ($ui.Mode2.IsChecked) { 2 } else { 0 } }
 function Cap { if ($ui.Cap2.IsChecked) { 2 } elseif ($ui.Cap1.IsChecked) { 1 } else { 0 } }
-$modeText = { $ui.ModeText.Text = @("The game's Series S picture: 1280x720 upscaled to 1920x1080, the fastest.", "The game's Series X picture for a 4K screen: the most detail, the slowest.", "The game's Series X picture for a 1440p screen: sharper than 1080p, about a quarter slower.")[(Mode)] }
+$modeText = { $ui.ModeText.Text = @("The game's Series S picture: 1280x720 upscaled to 1920x1080, the fastest.", "The game's Series X picture for a 4K screen: the most detail, the slowest. It fills a 16 GB card: close other programs that use the card, or textures go missing (blank eyes, wrong skin).", "The game's Series X picture for a 1440p screen: sharper than 1080p, about a quarter slower. It fills a 16 GB card: close other programs that use the card, or textures go missing (blank eyes, wrong skin).")[(Mode)] }
 $ui.Mode0.Add_Checked($modeText); $ui.Mode1.Add_Checked($modeText); $ui.Mode2.Add_Checked($modeText); & $modeText
 $sharpText = { $ui.SharpText.Text = if ($ui.Sharp.Value -le 0) { "off, as the game asks" } else { "{0:N1}" -f $ui.Sharp.Value } }
 $ui.Sharp.Add_ValueChanged($sharpText); & $sharpText

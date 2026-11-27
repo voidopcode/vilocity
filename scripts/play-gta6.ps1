@@ -24,7 +24,10 @@ param(
     # DLSS on an NVIDIA RTX card, in place of the game's own upscaling: off, or the mode.
     # It runs through NVIDIA's Streamline SDK, which you download yourself (NVIDIA's licence):
     # its bin\x64 folder is named by VILOCITY_STREAMLINE_DIR, or is %LOCALAPPDATA%\vilocity\streamline.
-    [ValidateSet('off', 'quality', 'balanced', 'performance', 'dlaa')][string]$Dlss = 'off',
+    # (No 'dlaa': with the scene at the size of the output the game stops at its start, on an
+    # assertion of its own. Measured at 1080p: quality 1280x720, balanced 1113x626,
+    # performance 960x540, every frame by DLSS; 35.4, 35.4 and 34.1 ms a frame.)
+    [ValidateSet('off', 'quality', 'balanced', 'performance')][string]$Dlss = 'off',
     # DLSS Frame Generation (RTX 40 and 50): a made-up frame between every two, so twice the
     # frame rate shown; the controls answer at the real one. Needs the same Streamline SDK.
     [switch]$FrameGen,

@@ -104,14 +104,14 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 12:14
+**Latest test run:** 2026-11-27 12:57
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 29.5 fps, 34 ms a frame |
-| Best while playing | 44.5 fps |
-| Last frame | 32.9 fps, 30 ms, 4984 draws, 48 dropped without a pipeline |
-| Shaders that failed to translate | compute 5 |
+| Frame rate while playing (typical) | 28.7 fps, 35 ms a frame |
+| Best while playing | 29.6 fps |
+| Last frame | 29.6 fps, 34 ms, 5198 draws, 263 dropped without a pipeline |
+| Shaders that failed to translate | compute 6 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
@@ -120,7 +120,7 @@ Measured on one PC (Ryzen 9 9950X3D, RTX 5080, 62 GB), with runs that take the
 keyboard and whose every frame was captured and counted.
 - **DLSS Super Resolution** takes the place of the game's own FSR upscale
   (louketa/foxhound's Streamline integration, ported): `scripts\play-gta6.ps1 -Dlss
-  quality` (or `balanced`, `performance`, `dlaa`), and a box in the launcher's Options.
+  quality` (or `balanced`, `performance`), and a box in the launcher's Options.
   It needs NVIDIA's Streamline SDK unpacked at `%LOCALAPPDATA%\vilocity\streamline`
   (NVIDIA's download: nothing of it is in this repository; its library is loaded only
   if its signature checks, and never fetches anything). In six minutes of the opening
@@ -169,6 +169,13 @@ keyboard and whose every frame was captured and counted.
   (`VILOCITY_AMBIENT_SPECULAR=1,1`): 150 pairs of frames with and without it showed no
   harm; the case it is for (a puddle under a roof mirrors the full sky, white with black
   squares, and the exposure falls) has not been compared yet.
+- **1440p and 4K need the whole card.** Most of the card there is render targets of the
+  size of a 4K screen, not textures: with other programs holding 3 GB of a 16 GB card
+  it has no room from the first minute, under the old rule and the new one alike, and
+  textures wait (a face with blank white eyes, seven minutes in). The launcher says so
+  at those two choices. DLSS at the size of the output (`dlaa`) stops the game at its
+  start and is not offered; balanced and performance run (1113x626 and 960x540 to
+  1080p) and are no faster than quality: the frame is the processor's.
 - Known and open: with the pause menu up the blurred picture behind it drifts to green
   and magenta; the town of the current story save runs at 23 to 24 fps (9,000 to
   10,000 draws); the list of light programs in the wide form leaves grey rectangles on

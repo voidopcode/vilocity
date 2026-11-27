@@ -581,8 +581,19 @@ pub(crate) fn bound(this: This) {
     }
     let frame = crate::frame::current();
     for shader in &p.shaders {
-        tracing::info!(pipeline = ?this, frame, stage = shader.stage, size = shader.container.len(), hash = %shader.hash, "first bind");
+        tracing::info!(pipeline = ?this, frame, stage = shader.stage, size = shader.container.len(), hash = %shader.hash, name = named(&shader.container), "first bind");
     }
+}
+
+/// The name a compute program carries in its container (`CS_...`), for the first-bind
+/// line: which programs a moment of the game (its pause menu, a cutscene) brings in.
+fn named(container: &[u8]) -> &str {
+    let Some(at) = container.windows(3).position(|w| w == b"CS_") else {
+        return "";
+    };
+    let name = &container[at..];
+    let len = name.iter().take(96).take_while(|b| b.is_ascii_alphanumeric() || **b == b'_').count();
+    std::str::from_utf8(&name[..len]).unwrap_or("")
 }
 
 /// The host pipeline of a title pipeline; `None` if one of its shaders does
