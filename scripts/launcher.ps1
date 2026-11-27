@@ -80,6 +80,19 @@ public static class NvSmooth {
 
 $root = Split-Path $PSScriptRoot
 $home_ = Join-Path $env:LOCALAPPDATA "vilocity"
+# The in-game menu's settings (F1), kept by the game in menu.txt in the data folder. Its
+# upscaler and frame generation are the DLSS boxes here too: the newest choice counts.
+$menuFile = Join-Path $home_ "data\menu.txt"
+function Read-Menu {
+    $m = @{}
+    Get-Content $menuFile -ErrorAction SilentlyContinue | ForEach-Object { if ($_ -match '^\s*(\w+)\s*=\s*([\d.]+)\s*$') { $m[$Matches[1]] = [double]$Matches[2] } }
+    $m
+}
+function Write-Menu($m) {
+    New-Item -ItemType Directory -Force (Split-Path $menuFile) | Out-Null
+    $lines = $m.GetEnumerator() | Sort-Object Name | ForEach-Object { "{0}={1}" -f $_.Name, ([double]$_.Value).ToString([Globalization.CultureInfo]::InvariantCulture) }
+    Set-Content $menuFile ($lines -join "`n")
+}
 $file = Join-Path $home_ "launcher.json"
 $exe = Join-Path $root "target\release\vilocity.exe"
 
@@ -431,6 +444,23 @@ $ui.Warm.Add_Click({
     Start-Process cmd -ArgumentList '/k', "`"$exe`" $how && echo. && echo Done. Close this window."
 })
 
+# A click on a DLSS box: into menu.txt (a DLSS mode the game's menu chose stays).
+$syncDlss = {
+    if (-not $ui.Dlss.IsEnabled) { return }
+    $m = Read-Menu
+    $m.upscaler = if ($ui.Dlss.IsChecked -or $ui.FrameGen.IsChecked) { [math]::Max(1, [double]$m.upscaler) } else { 0 }
+    $m.framegen = if ($ui.FrameGen.IsChecked) { [math]::Max(2, [double]$m.framegen) } else { 0 }
+    Write-Menu $m
+}
+$ui.Dlss.Add_Click($syncDlss); $ui.FrameGen.Add_Click($syncDlss)
+# The boxes as the game's menu left them.
+$showMenu = {
+    $m = Read-Menu
+    if ($m.ContainsKey('upscaler') -and $ui.Dlss.IsEnabled) { $ui.Dlss.IsChecked = $m.upscaler -gt 0 }
+    if ($m.ContainsKey('framegen') -and $ui.FrameGen.IsEnabled) { $ui.FrameGen.IsChecked = $m.framegen -ge 2 }
+}
+& $showMenu
+
 $ui.Play.Add_Click({
     if ($state.started) {
         # The play script with all it started (its step, the game, the panel, the log window): ending
@@ -440,6 +470,7 @@ $ui.Play.Add_Click({
         $state.started = $null; $state.proc = $null; $ui.Play.Content = "PLAY"; & $refresh; $ui.Status.Text = "Stopped."
         return
     }
+    & $showMenu
     Save-Choices
     # Smooth Motion into the driver's profile for vilocity.exe, when the box differs from what the driver holds.
     $note = ""

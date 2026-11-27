@@ -117,15 +117,23 @@ loads saves and gets into the world. The world is where the work is now.
 
 Latest: settings inside the game, a first start no longer ends at the world's first
 frame, and what the hunt for the torn frames ruled out.
-- **Settings inside the game: F1.** F1 shows a menu over the picture; F1 or Esc hides
-  it. Up and down pick, left and right change, and the change shows in the next frame
-  and is kept for the next start at once (`menu.txt` in the data folder): light in the
-  shade, brighter nights, the fog light's cap, the reflections stand-in, "steadier
-  picture" and a frame rate cap (30 to 60). The last line puts everything back to what
-  the launcher gave. While it is shown the game gets no keys and no mouse. F1 was the
-  game's VIEW in the keys file; it is the menu's now, also with an older keys file.
-  (The idea and its look are trustno1-coder/VIctory-NVIDIA's; DLSS and the picture
-  size still need a restart and stay in the launcher.)
+- **Settings inside the game: F1.** F1 shows a menu over the picture, drawn as the
+  frame-rate panel is (its colours, Segoe UI, the bar in the colour of the frame rate,
+  rounded corners); F1 or Esc hides it. Up and down pick, left and right change, and
+  the change shows in the next frame and is kept at once (`menu.txt` in the data
+  folder): light in the shade, brighter nights, the fog light's cap, the reflections
+  stand-in, "steadier picture", a frame rate cap (30 to 60). Each card sees its own
+  upscaler: on NVIDIA DLSS (off, quality, balanced, performance) and frame generation
+  (off, 2x, 3x, 4x); on AMD and the others the game's own AMD FSR, no frame
+  generation. The upscaler, and frame generation when it was off at the start, are
+  marked `*`: they are kept now and used from the next start (the game's picture size
+  is set when it loads); the play script reads them, and the launcher's DLSS boxes
+  follow them. Frame generation needs Windows' hardware-accelerated GPU scheduling;
+  the 3x and 4x of an RTX 50 are not checked here (it is off on the test PC). The last
+  line puts everything back to the launcher's. While the menu is shown the game gets no
+  keys and no mouse. F1 was the game's VIEW in the keys file; it is the menu's now.
+  (After trustno1-coder/VIctory-NVIDIA's settings menu; its frame generation amounts
+  are ported from it.)
 - **First start on a PC that never ran the game** (issue 1, an RTX 5070 Ti): the first
   frame of the world waited while the shaders it uses were translated and compiled, one
   after the other, stood 30 s, and the game's own watchdog ended the run with a write to

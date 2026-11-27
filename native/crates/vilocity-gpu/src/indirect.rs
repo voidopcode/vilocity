@@ -283,13 +283,19 @@ fn widest(amd: bool) -> u32 {
 
 /// Whether `device` is an AMD card's.
 pub(crate) fn amd(device: &ID3D12Device) -> bool {
+    vendor(device) == Some(0x1002)
+}
+
+/// The PCI vendor of `device`'s card (0x10DE NVIDIA, 0x1002 AMD, 0x8086 Intel).
+pub(crate) fn vendor(device: &ID3D12Device) -> Option<u32> {
     use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory2, DXGI_CREATE_FACTORY_FLAGS, IDXGIAdapter1, IDXGIFactory4};
     // SAFETY: plain queries.
     unsafe {
         CreateDXGIFactory2::<IDXGIFactory4>(DXGI_CREATE_FACTORY_FLAGS(0))
             .and_then(|f| f.EnumAdapterByLuid::<IDXGIAdapter1>(device.GetAdapterLuid()))
             .and_then(|a| a.GetDesc1())
-            .is_ok_and(|d| d.VendorId == 0x1002)
+            .ok()
+            .map(|d| d.VendorId)
     }
 }
 

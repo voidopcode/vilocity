@@ -1,9 +1,10 @@
-//! A box of text drawn over what is shown (the frame-rate panel of the
-//! diagnostics build, the in-game menu): white dots on black, a line of it
-//! inverted if asked, at the top left or in the middle. Painted on the CPU
-//! when its text changes, kept in a buffer in the card's memory, and copied
-//! onto the swap chain's buffer at each present, behind the title's picture:
-//! saved frames and the frame recorder see the title's own.
+//! A picture drawn over what is shown (the frame-rate panel of the
+//! diagnostics build, the in-game menu): painted on the CPU when it changes
+//! (BGRA, top-down), kept in a buffer in the card's memory in the swap
+//! chain's format, and copied onto the swap chain's buffer at each present,
+//! behind the title's picture: saved frames and the frame recorder see the
+//! title's own. Corners may be rounded (rows copied shorter there).
+//! [`TextBox`] paints lines of text in a font of 5x7 dots for it.
 
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
@@ -16,7 +17,7 @@ const CELL: (u32, u32) = (6, 9);
 /// The box's rim in dots.
 const RIM: u32 = 3;
 
-/// The texts are put into one of these in turn: the card reads the others.
+/// The pictures are put into one of these in turn: the card reads the others.
 const UPLOADS: usize = 4;
 
 /// Seven rows of five dots, the leftmost the highest bit.
@@ -105,23 +106,14 @@ impl Layout {
         dot != (inverted == Some(line))
     }
 
-    /// The box as rows of `pitch` bytes.
-    fn painted(self, lines: &[String], inverted: Option<usize>, scale: u32, colours: [&[u8]; 2], pitch: usize) -> Vec<u8> {
+    /// The box as BGRA rows, white on black.
+    fn painted(self, lines: &[String], inverted: Option<usize>, scale: u32) -> Vec<u8> {
         let (width, height) = self.size(scale);
-        let bytes = colours[0].len();
-        let mut out = vec![0; pitch * height as usize];
-        for y in 0..height / scale {
-            let top = pitch * (y * scale) as usize;
-            for x in 0..width / scale {
-                let colour = colours[usize::from(self.lit(lines, inverted, x, y))];
-                for i in 0..scale {
-                    let at = top + (x * scale + i) as usize * bytes;
-                    out[at..at + bytes].copy_from_slice(colour);
-                }
-            }
-            for i in 1..scale as usize {
-                out.copy_within(top..top + pitch, top + i * pitch);
-            }
+        let mut out = vec![0; (width * height * 4) as usize];
+        for (i, pixel) in out.chunks_exact_mut(4).enumerate() {
+            let (x, y) = (i as u32 % width / scale, i as u32 / width / scale);
+            let v = if self.lit(lines, inverted, x, y) { 0xFF } else { 0 };
+            pixel.copy_from_slice(&[v, v, v, 0xFF]);
         }
         out
     }
@@ -133,24 +125,68 @@ fn scale(height: u32) -> u32 {
     (height / 540).max(1)
 }
 
-/// The bytes of a black and a white pixel of a swap chain's format.
-fn colours(format: DXGI_FORMAT) -> Option<[&'static [u8]; 2]> {
-    Some(match format {
-        DXGI_FORMAT_R8G8B8A8_UNORM | DXGI_FORMAT_B8G8R8A8_UNORM => [&[0, 0, 0, 0xFF], &[0xFF; 4]],
-        DXGI_FORMAT_R10G10B10A2_UNORM => [&[0, 0, 0, 0xC0], &[0xFF; 4]],
-        // Halves of 0 and 1.
-        DXGI_FORMAT_R16G16B16A16_FLOAT => [
-            &[0, 0, 0, 0, 0, 0, 0, 0x3C],
-            &[0, 0x3C, 0, 0x3C, 0, 0x3C, 0, 0x3C],
-        ],
-        _ => return None,
-    })
+/// The bytes of a pixel of the format, if it is one this knows.
+fn pixel_bytes(format: DXGI_FORMAT) -> Option<u32> {
+    match format {
+        DXGI_FORMAT_R8G8B8A8_UNORM | DXGI_FORMAT_B8G8R8A8_UNORM | DXGI_FORMAT_R10G10B10A2_UNORM => Some(4),
+        DXGI_FORMAT_R16G16B16A16_FLOAT => Some(8),
+        _ => None,
+    }
 }
 
-/// The buffers of a box that size and format.
+/// A half of `v` (0 to a few: no infinities, small values flushed to 0).
+fn half(v: f32) -> u16 {
+    let bits = v.to_bits();
+    let exponent = ((bits >> 23) & 0xFF) as i32 - 127 + 15;
+    if v <= 0.0 || exponent <= 0 {
+        return 0;
+    }
+    ((exponent.min(30) as u32) << 10 | (bits >> 13) & 0x3FF) as u16
+}
+
+/// A BGRA picture of `width` pixels a row as rows of `pitch` bytes in
+/// `format` (sRGB-encoded for the 8 and 10 bit ones, light for the halves),
+/// opaque.
+fn converted(bgra: &[u8], width: u32, format: DXGI_FORMAT, pitch: usize) -> Option<Vec<u8>> {
+    let bytes = pixel_bytes(format)? as usize;
+    let rows = bgra.len() / (width as usize * 4);
+    let mut out = vec![0; pitch * rows];
+    for (y, row) in bgra.chunks_exact(width as usize * 4).enumerate() {
+        for (x, p) in row.chunks_exact(4).enumerate() {
+            let (b, g, r) = (p[0], p[1], p[2]);
+            let at = y * pitch + x * bytes;
+            let to = &mut out[at..at + bytes];
+            match format {
+                DXGI_FORMAT_B8G8R8A8_UNORM => to.copy_from_slice(&[b, g, r, 0xFF]),
+                DXGI_FORMAT_R8G8B8A8_UNORM => to.copy_from_slice(&[r, g, b, 0xFF]),
+                DXGI_FORMAT_R10G10B10A2_UNORM => {
+                    let ten = |c: u8| (u32::from(c) * 1023 + 127) / 255;
+                    to.copy_from_slice(&(ten(r) | ten(g) << 10 | ten(b) << 20 | 3 << 30).to_le_bytes());
+                }
+                _ => {
+                    let light = |c: u8| half((f32::from(c) / 255.0).powf(2.2));
+                    for (i, h) in [light(r), light(g), light(b), half(1.0)].into_iter().enumerate() {
+                        to[2 * i..2 * i + 2].copy_from_slice(&h.to_le_bytes());
+                    }
+                }
+            }
+        }
+    }
+    Some(out)
+}
+
+/// For a corner of `radius` pixels: how many pixels row `y` of the corner
+/// (0 the outermost) leaves out at its end.
+fn inset(radius: u32, y: u32) -> u32 {
+    let r = radius as f32;
+    let dy = r - y as f32 - 0.5;
+    (r - (r * r - dy * dy).max(0.0).sqrt()).round() as u32
+}
+
+/// The buffers of a picture of that size and format.
 struct Buffers {
     format: DXGI_FORMAT,
-    scale: u32,
+    size: (u32, u32),
     pitch: u32,
     uploads: Vec<(ID3D12Resource, *mut u8)>,
     card: ID3D12Resource,
@@ -164,9 +200,8 @@ struct Buffers {
 unsafe impl Send for Buffers {}
 
 impl Buffers {
-    fn new(host: &Host, format: DXGI_FORMAT, scale: u32, layout: Layout) -> Option<Buffers> {
-        let (width, height) = layout.size(scale);
-        let pitch = (width * colours(format)?[0].len() as u32).next_multiple_of(256);
+    fn new(host: &Host, format: DXGI_FORMAT, (width, height): (u32, u32)) -> Option<Buffers> {
+        let pitch = (width * pixel_bytes(format)?).next_multiple_of(256);
         let bytes = u64::from(pitch) * u64::from(height);
         let uploads = (0..UPLOADS).map(|_| host.upload_buffer(bytes)).collect::<Option<Vec<_>>>()?;
         let heap = D3D12_HEAP_PROPERTIES {
@@ -190,12 +225,11 @@ impl Buffers {
                 .CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, None, &mut card)
                 .ok()?;
         }
-        Some(Buffers { format, scale, pitch, uploads, card: card?, turn: 0, fresh: false })
+        Some(Buffers { format, size: (width, height), pitch, uploads, card: card?, turn: 0, fresh: false })
     }
 
-    fn write(&mut self, layout: Layout, lines: &[String], inverted: Option<usize>) {
-        let Some(colours) = colours(self.format) else { return };
-        let picture = layout.painted(lines, inverted, self.scale, colours, self.pitch as usize);
+    fn write(&mut self, bgra: &[u8]) {
+        let Some(picture) = converted(bgra, self.size.0, self.format, self.pitch as usize) else { return };
         self.turn = (self.turn + 1) % UPLOADS;
         // SAFETY: a mapped upload buffer of the picture's size, which the card read a second or more ago.
         unsafe { std::ptr::copy_nonoverlapping(picture.as_ptr(), self.uploads[self.turn].1, picture.len()) };
@@ -203,7 +237,7 @@ impl Buffers {
     }
 }
 
-/// Where a box is shown.
+/// Where a picture is shown.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Place {
     /// (The frame-rate panel's, in diagnostics builds.)
@@ -212,30 +246,30 @@ pub(super) enum Place {
     Middle,
 }
 
-/// A box of text to show.
-pub(super) struct TextBox {
-    layout: Layout,
-    lines: Vec<String>,
-    inverted: Option<usize>,
+/// A picture to show.
+pub(super) struct Overlay {
+    size: (u32, u32),
+    bgra: Vec<u8>,
+    radius: u32,
     changed: bool,
     buffers: Option<Buffers>,
     failed: bool,
 }
 
-impl TextBox {
-    pub(super) fn new(layout: Layout) -> TextBox {
-        TextBox { layout, lines: Vec::new(), inverted: None, changed: false, buffers: None, failed: false }
+impl Overlay {
+    pub(super) fn new() -> Overlay {
+        Overlay { size: (0, 0), bgra: Vec::new(), radius: 0, changed: false, buffers: None, failed: false }
     }
 
-    /// Its text from here on (painted at the next draw if it changed).
-    pub(super) fn set(&mut self, lines: Vec<String>, inverted: Option<usize>) {
-        if lines != self.lines || inverted != self.inverted {
-            (self.lines, self.inverted, self.changed) = (lines, inverted, true);
-        }
+    /// The picture from here on: BGRA rows of `size`, the corners rounded by
+    /// `radius` pixels.
+    pub(super) fn set(&mut self, size: (u32, u32), bgra: Vec<u8>, radius: u32) {
+        debug_assert_eq!(bgra.len(), (size.0 * size.1 * 4) as usize);
+        (self.size, self.bgra, self.radius, self.changed) = (size, bgra, radius.min(size.0 / 2).min(size.1 / 2), true);
     }
 
-    /// Records the copy of the box onto `back`, a buffer of the swap chain of
-    /// that size and format in the state to be copied into.
+    /// Records the copy of the picture onto `back`, a buffer of the swap
+    /// chain of that size and format in the state to be copied into.
     pub(super) fn draw(
         &mut self,
         host: &Host,
@@ -245,32 +279,40 @@ impl TextBox {
         format: DXGI_FORMAT,
         place: Place,
     ) {
-        if self.lines.is_empty() || self.failed {
+        if self.bgra.is_empty() || self.failed {
             return;
         }
         // Not the title's: the frame recorder leaves it out.
         #[cfg(feature = "diagnostics")]
         let _ours = crate::replay::record::unrecorded();
-        let scale = scale(height);
-        if self.buffers.as_ref().is_none_or(|b| (b.format, b.scale) != (format, scale)) {
-            // (What the card may still read stays: a picture's size changes once or twice in a run.)
+        if self.buffers.as_ref().is_none_or(|b| (b.format, b.size) != (format, self.size)) {
+            // (What the card may still read stays: a picture's size changes now and then.)
             std::mem::forget(self.buffers.take());
-            self.buffers = Buffers::new(host, format, scale, self.layout);
+            self.buffers = Buffers::new(host, format, self.size);
             self.failed = self.buffers.is_none();
             self.changed = true;
         }
         let Some(buffers) = &mut self.buffers else { return };
         if std::mem::take(&mut self.changed) {
-            buffers.write(self.layout, &self.lines, self.inverted);
+            buffers.write(&self.bgra);
         }
-        let (w, h) = self.layout.size(scale);
-        let (w, h) = (w.min(width), h.min(height));
+        let (bw, bh) = self.size;
+        let (w, h) = (bw.min(width), bh.min(height));
         let (x, y) = match place {
             Place::TopLeft => (0, 0),
             Place::Middle => ((width - w) / 2, (height - h) / 2),
         };
+        // The rows to copy: whole in the middle, shorter at rounded corners.
+        let r = self.radius.min(h / 2);
+        let mut parts: Vec<(u32, u32, u32)> = Vec::with_capacity(2 * r as usize + 1);
+        for row in 0..r {
+            let cut = inset(r, row);
+            parts.push((row, row + 1, cut));
+            parts.push((h - 1 - row, h - row, cut));
+        }
+        parts.push((r, h - r, 0));
         let list = &list.list;
-        // SAFETY: an open list and live resources; the box lies within both.
+        // SAFETY: an open list and live resources; the picture lies within both.
         unsafe {
             if std::mem::take(&mut buffers.fresh) {
                 list.CopyResource(&buffers.card, &buffers.uploads[buffers.turn].0);
@@ -280,7 +322,6 @@ impl TextBox {
                     D3D12_RESOURCE_STATE_COPY_SOURCE,
                 )]);
             }
-            let (bw, bh) = self.layout.size(scale);
             let from = D3D12_TEXTURE_COPY_LOCATION {
                 pResource: std::mem::transmute_copy(&buffers.card),
                 Type: D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
@@ -302,16 +343,60 @@ impl TextBox {
                 Type: D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
                 Anonymous: D3D12_TEXTURE_COPY_LOCATION_0 { SubresourceIndex: 0 },
             };
-            let part = D3D12_BOX {
-                left: 0,
-                top: 0,
-                front: 0,
-                right: w,
-                bottom: h,
-                back: 1,
-            };
-            list.CopyTextureRegion(&to, x, y, 0, &from, Some(&part));
+            for (top, bottom, cut) in parts {
+                if top >= bottom || 2 * cut >= w {
+                    continue;
+                }
+                let part = D3D12_BOX { left: cut, top, front: 0, right: w - cut, bottom, back: 1 };
+                list.CopyTextureRegion(&to, x + cut, y + top, 0, &from, Some(&part));
+            }
         }
+    }
+}
+
+/// Lines of text in the font of dots, at the top left or in the middle.
+#[cfg_attr(not(feature = "diagnostics"), allow(dead_code))]
+pub(super) struct TextBox {
+    layout: Layout,
+    lines: Vec<String>,
+    inverted: Option<usize>,
+    /// The scale the overlay's picture was painted at, if it is current.
+    painted: Option<u32>,
+    overlay: Overlay,
+}
+
+#[cfg_attr(not(feature = "diagnostics"), allow(dead_code))]
+impl TextBox {
+    pub(super) fn new(layout: Layout) -> TextBox {
+        TextBox { layout, lines: Vec::new(), inverted: None, painted: None, overlay: Overlay::new() }
+    }
+
+    /// Its text from here on (painted at the next draw if it changed).
+    pub(super) fn set(&mut self, lines: Vec<String>, inverted: Option<usize>) {
+        if lines != self.lines || inverted != self.inverted {
+            (self.lines, self.inverted, self.painted) = (lines, inverted, None);
+        }
+    }
+
+    /// As [`Overlay::draw`].
+    pub(super) fn draw(
+        &mut self,
+        host: &Host,
+        list: &HostList,
+        back: &ID3D12Resource,
+        size: (u32, u32),
+        format: DXGI_FORMAT,
+        place: Place,
+    ) {
+        if self.lines.is_empty() {
+            return;
+        }
+        let scale = scale(size.1);
+        if self.painted != Some(scale) {
+            self.overlay.set(self.layout.size(scale), self.layout.painted(&self.lines, self.inverted, scale), 0);
+            self.painted = Some(scale);
+        }
+        self.overlay.draw(host, list, back, size, format, place);
     }
 }
 
@@ -337,22 +422,21 @@ mod tests {
     fn a_box_is_painted() {
         let layout = Layout { columns: 40, lines: 9 };
         let lines = vec!["I".to_owned(), " i".to_owned()];
+        let (white, black) = ([0xFF; 4], [0, 0, 0, 0xFF]);
         for scale in [1, 2, 4] {
             let (width, height) = layout.size(scale);
-            let pitch = (width * 4).next_multiple_of(256) as usize;
-            let colours = colours(DXGI_FORMAT_R10G10B10A2_UNORM).unwrap();
-            let picture = layout.painted(&lines, None, scale, colours, pitch);
-            assert_eq!(picture.len(), pitch * height as usize);
-            let at = |x: u32, y: u32| &picture[y as usize * pitch + x as usize * 4..][..4];
+            let picture = layout.painted(&lines, None, scale);
+            assert_eq!(picture.len(), (width * height * 4) as usize);
+            let at = |x: u32, y: u32| &picture[((y * width + x) * 4) as usize..][..4];
             // The rim is black, the first letter's top row lit in its middle.
-            assert_eq!(at(0, 0), colours[0]);
-            assert_eq!(at((RIM + 2) * scale, RIM * scale), colours[1]);
-            assert_eq!(at((RIM + 2) * scale + scale - 1, RIM * scale + scale - 1), colours[1]);
-            assert_eq!(at(RIM * scale, RIM * scale), colours[0]);
+            assert_eq!(at(0, 0), black);
+            assert_eq!(at((RIM + 2) * scale, RIM * scale), white);
+            assert_eq!(at((RIM + 2) * scale + scale - 1, RIM * scale + scale - 1), white);
+            assert_eq!(at(RIM * scale, RIM * scale), black);
             // Small letters are shown as capitals, a line and a cell on.
-            assert_eq!(at((RIM + CELL.0 + 2) * scale, (RIM + CELL.1) * scale), colours[1]);
+            assert_eq!(at((RIM + CELL.0 + 2) * scale, (RIM + CELL.1) * scale), white);
             // Nothing past a line's end.
-            assert_eq!(at((RIM + CELL.0 * 2 + 2) * scale, (RIM + CELL.1) * scale), colours[0]);
+            assert_eq!(at((RIM + CELL.0 * 2 + 2) * scale, (RIM + CELL.1) * scale), black);
         }
     }
 
@@ -362,12 +446,46 @@ mod tests {
     fn an_inverted_line_is_black_on_white() {
         let layout = Layout { columns: 4, lines: 2 };
         let lines = vec!["I".to_owned(), "I".to_owned()];
-        // The second line inverted: a dot beside its letter is white, the
-        // letter's top middle black; the first line as before.
         assert!(layout.lit(&lines, Some(1), RIM + 4 * CELL.0 - 1, RIM + CELL.1));
         assert!(!layout.lit(&lines, Some(1), RIM + 2, RIM + CELL.1));
         assert!(layout.lit(&lines, Some(1), RIM + 2, RIM));
         assert!(!layout.lit(&lines, Some(1), RIM + 4 * CELL.0 - 1, RIM));
         assert!(!layout.lit(&lines, Some(1), 0, 0), "the rim");
+    }
+
+    /// A pixel in each format the swap chains here use, at the place of
+    /// its row's pitch.
+    #[test]
+    fn pixels_are_converted_to_the_swap_chains_format() {
+        // Two rows of one pixel: an orange (B 0x20, G 0x80, R 0xFF), then black.
+        let bgra = [0x20, 0x80, 0xFF, 0, 0, 0, 0, 0];
+        let one = |format, pitch| converted(&bgra, 1, format, pitch).unwrap();
+        assert_eq!(one(DXGI_FORMAT_B8G8R8A8_UNORM, 256)[..4], [0x20, 0x80, 0xFF, 0xFF]);
+        assert_eq!(one(DXGI_FORMAT_R8G8B8A8_UNORM, 256)[..4], [0xFF, 0x80, 0x20, 0xFF]);
+        assert_eq!(one(DXGI_FORMAT_R8G8B8A8_UNORM, 256)[256..260], [0, 0, 0, 0xFF], "the second row");
+        let ten = u32::from_le_bytes(one(DXGI_FORMAT_R10G10B10A2_UNORM, 256)[..4].try_into().unwrap());
+        assert_eq!((ten & 0x3FF, ten >> 10 & 0x3FF, ten >> 20 & 0x3FF, ten >> 30), (1023, 514, 128, 3));
+        let halves = one(DXGI_FORMAT_R16G16B16A16_FLOAT, 256);
+        let h = |i: usize| u16::from_le_bytes([halves[2 * i], halves[2 * i + 1]]);
+        assert_eq!((h(0), h(3)), (0x3C00, 0x3C00), "full red and an opaque alpha are 1.0");
+        assert!(h(2) > 0 && h(2) < h(1) && h(1) < 0x3C00, "blue below green below 1.0, as light");
+        assert!(converted(&bgra, 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 256).is_none());
+    }
+
+    #[test]
+    fn halves_are_right() {
+        assert_eq!(half(0.0), 0);
+        assert_eq!(half(1.0), 0x3C00);
+        assert_eq!(half(0.5), 0x3800);
+        assert_eq!(half(2.0), 0x4000);
+        assert_eq!(half(-1.0), 0);
+    }
+
+    #[test]
+    fn rounded_corners_leave_out_less_further_in() {
+        assert_eq!(inset(0, 0), 0);
+        let cuts: Vec<u32> = (0..12).map(|y| inset(12, y)).collect();
+        assert!(cuts.windows(2).all(|w| w[0] >= w[1]), "{cuts:?}");
+        assert!(cuts[0] >= 6 && cuts[11] == 0, "{cuts:?}");
     }
 }

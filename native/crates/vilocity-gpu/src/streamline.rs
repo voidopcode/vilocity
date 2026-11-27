@@ -273,8 +273,10 @@ struct Calls {
     optimal: Vec<([u32; 2], u32, Option<[u32; 2]>)>,
     /// The mode, sizes and preset the last options named.
     last: Option<(u32, [u32; 2], [u32; 2])>,
-    /// Frame generation: on, and the frame whose simulation began.
+    /// Frame generation: on, the frames shown for each rendered one last
+    /// asked of it (0: off), and the frame whose simulation began.
     framegen_on: bool,
+    framegen_times: u32,
     simulating: Option<u32>,
 }
 
@@ -282,6 +284,7 @@ static CALLS: Mutex<Calls> = Mutex::new(Calls {
     optimal: Vec::new(),
     last: None,
     framegen_on: false,
+    framegen_times: 0,
     simulating: None,
 });
 
@@ -1536,8 +1539,33 @@ pub(crate) fn present_begins(frame: u64, planes: Planes<'_>) -> Option<Presentin
         }
         false
     };
-    if on != calls.framegen_on {
+    // (Vilocity: the frames shown for each rendered one, changed while the
+    // title runs, are trustno1-coder/VIctory-NVIDIA's, d12eb1b, GPL-3.0-or-later,
+    // as this.) What the in-game menu asks (F1): off, or 2 to 4 frames shown
+    // for each one rendered; 2 until it asks. The swap chain stays
+    // Streamline's proxy either way.
+    let wanted = framegen_wanted();
+    let on = on && wanted != 0;
+    let times = if on { wanted } else { 0 };
+    if on != calls.framegen_on || times != calls.framegen_times {
         let mut options = abi::DlssgOptions::new(if on { abi::DLSSG_ON } else { abi::DLSSG_OFF });
+        // No more than this card and driver generate (an RTX 50 makes up to
+        // 3 between two rendered frames, an RTX 40 one).
+        let mut generated = wanted.max(2) - 1;
+        if on
+            && generated > 1
+            && let Some(get_state) = functions.dlssg_get_state
+        {
+            let mut state = abi::DlssgState::default();
+            // SAFETY: a structure to fill, no options.
+            let code = unsafe { get_state(&viewport, &mut state, std::ptr::null()) };
+            let most = if code == 0 { state.num_frames_to_generate_max.max(1) } else { 1 };
+            if generated > most {
+                tracing::warn!(asked = generated + 1, given = most + 1, "DLSS Frame Generation: more frames asked than this card makes");
+                generated = most;
+            }
+        }
+        options.num_frames_to_generate = generated;
         options.flags = abi::DLSSG_RETAIN_RESOURCES_WHEN_OFF;
         options.num_back_buffers = 2;
         options.color_width = planes.size[0];
@@ -1545,9 +1573,11 @@ pub(crate) fn present_begins(frame: u64, planes: Planes<'_>) -> Option<Presentin
         options.on_error_callback = Some(present_error);
         // SAFETY: filled options for viewport 0, on the presenting thread.
         let code = unsafe { set_options(&viewport, &options) };
-        tracing::info!(frame, on, code, result = abi::result_name(code), "DLSS Frame Generation switched");
+        tracing::info!(frame, on, times = generated + 1, code, result = abi::result_name(code), "DLSS Frame Generation switched");
         if code == 0 {
             calls.framegen_on = on;
+            // What was asked (the driver may give fewer): not set again until that changes.
+            calls.framegen_times = times;
         }
     }
     if calls.framegen_on {
@@ -1655,6 +1685,18 @@ pub(crate) fn present_ends(presenting: Option<Presenting>) {
 
 /// Our swap chain's buffers are about to be made again: frame generation is
 /// off until the next present with an upscaling (Streamline asks so).
+/// What is asked of frame generation now: 0 off, 2 to 4 frames shown for
+/// each one rendered (the in-game menu's, 2 until it asks).
+fn framegen_wanted() -> u32 {
+    crate::live::get(crate::live::Knob::FrameGen).map_or(2, |n| if n < 2.0 { 0 } else { (n as u32).min(4) })
+}
+
+/// Whether frame generation can be switched and changed while the title
+/// runs: it was asked for at the start, so the swap chain is Streamline's.
+pub(crate) fn framegen_live() -> bool {
+    FG_READY.load(Acquire) && SWAP_CHAIN_PROXIED.load(Acquire)
+}
+
 pub(crate) fn resizing() {
     if !FG_READY.load(Acquire) || !SWAP_CHAIN_PROXIED.load(Acquire) {
         return;
@@ -1667,6 +1709,7 @@ pub(crate) fn resizing() {
         // SAFETY: filled options.
         unsafe { set_options(&viewport, &options) };
         calls.framegen_on = false;
+        calls.framegen_times = 0;
     }
 }
 

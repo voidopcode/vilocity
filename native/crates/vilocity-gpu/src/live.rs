@@ -25,9 +25,16 @@ pub(crate) enum Knob {
     Steady,
     /// Frames a second at most (0: no cap).
     Cap,
+    /// The upscaler at the next start (`scripts\play-gta6.ps1` reads it): 0 the
+    /// game's own (AMD FSR), 1 DLSS quality, 2 DLSS balanced, 3 DLSS performance.
+    Upscaler,
+    /// DLSS frame generation: 0 off, 2 to 4 frames shown for each one rendered;
+    /// live when it was on at the start, else from the next start.
+    FrameGen,
 }
 
-pub(crate) const KNOBS: [Knob; 6] = [Knob::Light, Knob::Night, Knob::Fog, Knob::Reflections, Knob::Steady, Knob::Cap];
+pub(crate) const KNOBS: [Knob; 8] =
+    [Knob::Light, Knob::Night, Knob::Fog, Knob::Reflections, Knob::Steady, Knob::Cap, Knob::Upscaler, Knob::FrameGen];
 
 impl Knob {
     /// Its name in `menu.txt`.
@@ -39,6 +46,8 @@ impl Knob {
             Knob::Reflections => "reflections",
             Knob::Steady => "steady",
             Knob::Cap => "cap",
+            Knob::Upscaler => "upscaler",
+            Knob::FrameGen => "framegen",
         }
     }
 }

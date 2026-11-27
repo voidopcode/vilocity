@@ -147,6 +147,16 @@ if (-not $Defaults) {
         if (-not (Test-Path "Env:$name")) { Set-Item "Env:$name" $settings[$name] }
     }
 }
+# The in-game menu's settings that apply at a start (F1, marked *): the upscaler and frame
+# generation, kept in menu.txt in the data folder, in place of -Dlss and -FrameGen.
+$dataDir = if ($env:VILOCITY_DATA_DIR) { $env:VILOCITY_DATA_DIR } else { Join-Path $env:LOCALAPPDATA "vilocity\data" }
+$menu = @{}
+Get-Content (Join-Path $dataDir "menu.txt") -ErrorAction SilentlyContinue | ForEach-Object { if ($_ -match '^\s*(\w+)\s*=\s*([\d.]+)\s*$') { $menu[$Matches[1]] = [double]$Matches[2] } }
+if (-not $Defaults -and $menu.ContainsKey('upscaler')) {
+    $Dlss = @('off', 'quality', 'balanced', 'performance')[[math]::Min(3, [int]$menu.upscaler)]
+    Write-Host ("Upscaler from the in-game menu (F1): " + $(if ($Dlss -eq 'off') { "the game's own (AMD FSR)" } else { "DLSS $Dlss" }) + ".")
+}
+if (-not $Defaults -and $menu.ContainsKey('framegen')) { $FrameGen = $menu.framegen -ge 2 }
 # DLSS: only with an NVIDIA card and the Streamline SDK's files there (louketa/foxhound's way).
 if ($Dlss -ne 'off' -and -not $Defaults) {
     $sl = if ($env:VILOCITY_STREAMLINE_DIR) { $env:VILOCITY_STREAMLINE_DIR } else { Join-Path $env:LOCALAPPDATA "vilocity\streamline" }
