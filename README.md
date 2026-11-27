@@ -104,13 +104,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 20:26
+**Latest test run:** 2026-11-27 21:13
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 25.6 fps, 39 ms a frame |
-| Best while playing | 30.9 fps |
-| Last frame | 29.8 fps, 34 ms, 4137 draws, 155 dropped without a pipeline |
+| Frame rate while playing (typical) | 31.0 fps, 32 ms a frame |
+| Best while playing | 42.1 fps |
+| Last frame | 30.8 fps, 32 ms, 4229 draws, 178 dropped without a pipeline |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -118,6 +118,21 @@ loads saves and gets into the world. The world is where the work is now.
 Latest: "will it work on this PC" in the launcher, clothes and faces drawn with another
 texture's colours, the 4-7 fps drops explained and shown on the overlay, and what the
 picture tests of 2026-11-27 evening ruled out.
+- **The sandbox on a PC where Windows refused the engine its own cache folder** (issue 3, an
+  RX 9070 XT on Windows 11): the engine stopped at its first step, "cannot resolve
+  ...\cache\images: access denied", where the same check passes in the sandbox on the other
+  PCs we have logs of. That check (it asks Windows for a folder's full path, to keep game data
+  out of the source tree) now goes on with the path as written when Windows refuses, and the
+  log says what was refused. If the sandbox is still refused something, the launcher now says
+  so ("untick Sandbox in Options") instead of "did not start". Not tried on that PC yet.
+- **DLSS that does not start no longer leaves the world black** (issue 4, an RTX 4080): NVIDIA's
+  NGX did not initialize there, so DLSS never ran, but the game's own FidelityFX had already
+  been made at the size DLSS needs, and every upscale was skipped: menus and HUD on a black
+  world. Now a frame DLSS does not take is the game's colour scaled into the output by a pass
+  of ours (the one the PC FidelityFX DLL falls back to), and the log says DLSS did not start.
+  Tested here with DLSS made to fail, 1080p balanced, no PC FidelityFX DLL: before, black
+  frames (HUD too, so the game's own FSR4 on that context is not the way); now the world at
+  30 fps, softer than with DLSS.
 - **Will it work on this PC.** The launcher's This PC page now begins with an answer:
   yes, yes at 1080p, it may with problems, or no, with the reasons, from what the game
   was measured to take: at 1080p about 22 GB of RAM and 7.5 GB of the card, at 1440p

@@ -332,11 +332,17 @@ extern "C" fn ffxDispatch(context: *mut *mut c_void, desc: *mut Header) -> u32 {
         Taken::Dlss => OK,
         Taken::Noted => own(),
         Taken::No(why) if created.clamped => {
-            // The title's FidelityFX on a context made for 1080p at the
-            // output size asked would read past its tables: no upscaling
-            // this frame (the output keeps the last one) rather than that.
+            // The title's FidelityFX on a context made smaller than asked
+            // would read past its tables at a larger output, and gave black
+            // frames, HUD and all, at the Series S output (a test with DLSS
+            // made to fail at the balanced scale). (Vilocity) The title's
+            // colour scaled into the output by a pass of ours instead: DLSS
+            // that did not start (NVIDIA's NGX, issue 4) left the world black.
             refused(why);
-            once!(warn, "FidelityFX: DLSS did not take an upscaling on a context made smaller than asked; none ran");
+            match streamline::scale_instead(&up) {
+                Ok(()) => once!(warn, "FidelityFX: an upscaling DLSS did not take, on a context made smaller than asked: the title's colour scaled into the output by a pass of ours"),
+                Err(e) => once!(warn, why = e, "FidelityFX: an upscaling DLSS did not take, on a context made smaller than asked: none ran"),
+            }
             OK
         }
         Taken::No(why) => {

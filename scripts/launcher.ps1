@@ -605,7 +605,10 @@ $timer.Add_Tick({
             }
             else { "Starting..." }
     } elseif ($state.seen -or ((Get-Date) - $state.started).TotalSeconds -gt 45) {
-        $ui.Status.Text = if ($state.seen) { "The game closed." } else { "The game did not start: see Logs." }
+        $newest = Get-ChildItem (Join-Path $home_ "logs\gta6-*.log") -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
+        $ui.Status.Text = if ($state.seen) { "The game closed." }
+            elseif ($ui.Sandbox.IsChecked -and $newest -and (Select-String -Path $newest.FullName -Pattern '(os error 5)' -SimpleMatch -Quiet)) { "Windows refused the sandbox a folder (access denied): untick Sandbox in Options to play, and please report it with the log." }
+            else { "The game did not start: see Logs." }
         $state.started = $null; $ui.Play.Content = "PLAY"; & $refresh
     }
 })

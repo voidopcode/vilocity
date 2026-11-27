@@ -65,6 +65,13 @@ pub fn ensure_outside_repo(path: &Path) -> Result<(), PolicyError> {
 /// Canonicalizes the longest existing prefix of `path` and re-appends the
 /// rest, so that paths which do not exist yet can still be compared.
 fn resolve(path: &Path) -> Result<PathBuf, PolicyError> {
+    resolve_with(path, |p| std::fs::canonicalize(p))
+}
+
+fn resolve_with(
+    path: &Path,
+    canonicalize: impl Fn(&Path) -> std::io::Result<PathBuf>,
+) -> Result<PathBuf, PolicyError> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -78,8 +85,11 @@ fn resolve(path: &Path) -> Result<PathBuf, PolicyError> {
 
     let mut existing = absolute.as_path();
     let mut rest = Vec::new();
+    // The first refusal that is not "missing": in a sandbox Windows has refused every level
+    // with "access denied" (issue 3), the cache folder it may write included.
+    let mut refused = None;
     loop {
-        match std::fs::canonicalize(existing) {
+        match canonicalize(existing) {
             Ok(canon) => {
                 let mut out = canon;
                 for component in rest.iter().rev() {
@@ -87,23 +97,29 @@ fn resolve(path: &Path) -> Result<PathBuf, PolicyError> {
                 }
                 return Ok(normalize(&out));
             }
-            Err(source) => match (existing.parent(), existing.file_name()) {
-                (Some(parent), Some(name)) => {
-                    rest.push(name.to_os_string());
-                    existing = parent;
+            Err(source) => {
+                if source.kind() != std::io::ErrorKind::NotFound && refused.is_none() {
+                    refused = Some((existing.to_path_buf(), source));
                 }
-                // `file_name()` is None for a trailing `..`; keep it so `normalize` resolves it.
-                (Some(parent), None) if existing.ends_with("..") => {
-                    rest.push("..".into());
-                    existing = parent;
+                match (existing.parent(), existing.file_name()) {
+                    (Some(parent), Some(name)) => {
+                        rest.push(name.to_os_string());
+                        existing = parent;
+                    }
+                    // `file_name()` is None for a trailing `..`; keep it so `normalize` resolves it.
+                    (Some(parent), None) if existing.ends_with("..") => {
+                        rest.push("..".into());
+                        existing = parent;
+                    }
+                    // Nothing resolved: the path as written (the marker check below still runs on it).
+                    _ => {
+                        if let Some((at, e)) = refused {
+                            eprintln!("vilocity: cannot resolve {} ({e}); checking it as written", at.display());
+                        }
+                        return Ok(normalize(&absolute));
+                    }
                 }
-                _ => {
-                    return Err(PolicyError::Io {
-                        path: path.to_path_buf(),
-                        source,
-                    });
-                }
-            },
+            }
         }
     }
 }
@@ -168,5 +184,12 @@ mod tests {
         let path = base.join("a").join("..").join("b");
         let resolved = resolve(&path).expect("a `..` in the missing tail must resolve lexically");
         assert_eq!(resolved, resolve(&base.join("b")).unwrap());
+    }
+
+    #[test]
+    fn a_path_windows_will_not_resolve_is_checked_as_written() {
+        let refused = |_: &Path| Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        let path = std::env::temp_dir().join("x").join("..").join("cache");
+        assert_eq!(resolve_with(&path, refused).unwrap(), std::env::temp_dir().join("cache"));
     }
 }

@@ -683,6 +683,11 @@ pub(crate) fn device_made(device: &ID3D12Device) -> Option<ID3D12CommandQueue> {
         functions.dlss_optimal = f!(abi::FEATURE_DLSS, c"slDLSSGetOptimalSettings", abi::SlDlssGetOptimalSettings);
         functions.dlss_set_options = f!(abi::FEATURE_DLSS, c"slDLSSSetOptions", abi::SlDlssSetOptions);
         let ready = functions.dlss_optimal.is_some() && functions.dlss_set_options.is_some();
+        if !ready {
+            tracing::error!(
+                "DLSS did not start (NVIDIA's NGX, in the driver, did not initialize: see the Streamline lines above); frames are upscaled without it (the PC FidelityFX DLL if there is one, else a plain scaling of ours). Updating the NVIDIA driver may bring it back"
+            );
+        }
         log_version(sl, abi::FEATURE_DLSS, "DLSS Super Resolution");
         DLSS_READY.store(ready, Release);
     }
@@ -897,6 +902,21 @@ pub fn upscale(up: &Upscale) -> Taken {
 /// The title's own upscaling ran for this reason.
 pub fn forwarded() {
     FORWARDED.fetch_add(1, Relaxed);
+}
+
+/// (Vilocity) For an upscaling neither DLSS nor the title's own FidelityFX
+/// can do: the title's colour scaled into the output by a pass of ours
+/// (`crate::external::Pass::scale`), a softer picture rather than none.
+pub fn scale_instead(up: &Upscale) -> Result<(), &'static str> {
+    let (colour, output) = (up.resources[COLOUR].0, up.resources[OUTPUT].0);
+    if colour.is_null() || output.is_null() {
+        return Err("a required texture (colour, output) is missing");
+    }
+    let mut done = Err("the title's list records nowhere (no host list)");
+    crate::external::record(up.list.cast(), |pass| {
+        done = pass.scale(colour.cast(), up.camera.render, output.cast(), up.camera.output);
+    });
+    done
 }
 
 /// The host state DLSS is told a texture of an upscaling is in: the one

@@ -295,7 +295,12 @@ Write-Host "log: $log"
 try {
     $sandbox = @(if ($NoSandbox) { '--no-sandbox' })
     & $exe play $Game @sandbox *> $log
-    Write-Host "Vilocity exited with code $LASTEXITCODE (log: $log)"
+    $code = $LASTEXITCODE
+    Write-Host "Vilocity exited with code $code (log: $log)"
+    # (Issue 3: a PC where Windows refused the sandbox its own folders.)
+    if (-not $NoSandbox -and $code -ne 0 -and (Select-String -Path $log -Pattern '(os error 5)' -SimpleMatch -Quiet)) {
+        Write-Host "Windows refused the sandbox a folder (access denied). To play without the sandbox: launcher, Options, untick Sandbox. Please attach this log to an issue."
+    }
 } finally {
     # The monitor goes with the game (also when this window is closed with Ctrl+C).
     if ($watch -and -not $watch.HasExited) { Stop-Process -Id $watch.Id -Force -ErrorAction SilentlyContinue }
