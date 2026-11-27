@@ -50,13 +50,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 00:17
+**Latest test run:** 2026-11-27 00:41
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 393.0 fps |
-| Median frame time | 51 ms |
-| Last frame | 18.8 fps, 53 ms, 11472 draws, 274 dropped without a pipeline |
+| Best frame rate (menus included) | 403.9 fps |
+| Median frame time | 3 ms |
+| Last frame | 32.8 fps, 31 ms, 190 draws, 90 dropped without a pipeline |
 | Shaders that failed to translate | compute 5 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -361,6 +361,45 @@ No game data is needed.
 - `scripts/`: GTA VI launcher and live monitor
 
 One Cargo workspace at the root; one `target\` folder for everything.
+
+## Credits
+
+Vilocity stands on other people's emulators and forks. Thank you to all of them.
+
+**The two engines**
+
+| Project | Licence | What Vilocity uses |
+|---------|---------|--------------------|
+| [VIctory](https://github.com/Marvisak/VIctory) by Marvisak | GPL-3.0 | the native engine's origin: loader, system libraries, GPU layer, shader translator |
+| cool_fox by codec_d (build 30e54b4) | GPL-3.0 | the native engine today: imported whole and renamed (`native/`) |
+| [XCL](https://github.com/xcl-dev/xcl) | GPL-2.0 | the compat engine (`compat/`), and the console instruction decoder in `vilocity-loader` |
+
+**Forks we took fixes, ports or settings from**
+
+| Project | What came from it |
+|---------|-------------------|
+| [fxceless/victory-fork](https://github.com/fxceless/victory-fork) | merged into the native engine; card copies of title buffers, parallel refresh and settle room |
+| [avatarmanz/VIctory-7900XTX](https://github.com/avatarmanz/VIctory-7900XTX) | the frame-rate unlock, lane fixes, placed views |
+| tippythetaidum | the face fix (victory-fork #927) |
+| [proneonn/Vertex](https://github.com/proneonn/Vertex) | keyboard and mouse |
+| [RyanLockwoood/VIctory-cool_fox-LockWood](https://github.com/RyanLockwoood/VIctory-cool_fox-LockWood) | the intro movie upload fix, XMA audio fixes, real fence waits, DirectStorage staging floor |
+| [DexNom/VIctory](https://github.com/DexNom/VIctory) | texture and descriptor fixes |
+| [trustno1-coder/VIctory-NVIDIA](https://github.com/trustno1-coder/VIctory-NVIDIA) | Series S at half resolution with the title's own upscaler, card buffer settings |
+| [Belobug/VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD) | the ambient light estimate, pipeline fixes |
+| [uiliannn/VItoriaBr](https://github.com/uiliannn/VItoriaBr) | the launcher's 1080p preset, the loop limit, capped constant buffer views |
+| triippywhale | command list fixes |
+| Vice-Tay | thread counts for 16-core processors |
+
+**References, no code taken**
+
+- puffnfresh/rebox: its program list gave the ray passes the launcher leaves out.
+- [brcly/TuxBox](https://github.com/brcly/TuxBox): pointed to a shared-memory race.
+
+**Runtime parts, not shipped with Vilocity:** AMD FidelityFX (FSR) if you download it, and DXC
+from the Windows SDK.
+
+The compat engine's own outside sources (AnyPS5, FFmpeg, AMD ISA and addrlib, LLVM test data
+and more) are listed with their licences in [`compat/THIRD_PARTY.md`](compat/THIRD_PARTY.md).
 
 ## Licence
 
