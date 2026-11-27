@@ -50,13 +50,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 00:41
+**Latest test run:** 2026-11-27 00:45
 
 | Measure | Value |
 |---------|-------|
 | Best frame rate (menus included) | 403.9 fps |
-| Median frame time | 3 ms |
-| Last frame | 32.8 fps, 31 ms, 190 draws, 90 dropped without a pipeline |
+| Median frame time | 48 ms |
+| Last frame | 22.8 fps, 44 ms, 4260 draws, 207 dropped without a pipeline |
 | Shaders that failed to translate | compute 5 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -388,12 +388,6 @@ Vilocity stands on other people's emulators and forks. Thank you to all of them.
 | [Belobug/VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD) | the ambient light estimate, pipeline fixes |
 | [uiliannn/VItoriaBr](https://github.com/uiliannn/VItoriaBr) | the launcher's 1080p preset, the loop limit, capped constant buffer views |
 | triippywhale | command list fixes |
-| Vice-Tay | thread counts for 16-core processors |
-
-**References, no code taken**
-
-- puffnfresh/rebox: its program list gave the ray passes the launcher leaves out.
-- [brcly/TuxBox](https://github.com/brcly/TuxBox): pointed to a shared-memory race.
 
 **Runtime parts, not shipped with Vilocity:** AMD FidelityFX (FSR) if you download it, and DXC
 from the Windows SDK.
