@@ -50,18 +50,31 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 01:44
+**Latest test run:** 2026-11-27 01:52
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 998.6 fps |
-| Median frame time | 56 ms |
-| Last frame | 57.0 fps, 18 ms, 1426 draws, 72 dropped without a pipeline |
-| Shaders that failed to translate | compute 2 |
+| Best frame rate (menus included) | 1000.3 fps |
+| Median frame time | 45 ms |
+| Last frame | 21.7 fps, 46 ms, 7827 draws, 2044 dropped without a pipeline |
+| Shaders that failed to translate | compute 5 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: checked on the new engine with a scripted run: sound plays (the engine's
+Latest: a launcher with a window. `Vilocity Launcher.cmd` opens it: it checks the
+PC (video memory free and who holds it, memory, disk, the engine's build), shows
+the game's own name and cover from your game folder, and has the options (picture,
+frame rate, sharpening, upscaler, panel, sandbox) beside a PLAY button; the game's
+state and frame rate show in it while it runs. One option writes NVIDIA's Smooth
+Motion (the driver's frame generation, RTX 40 and 50) into the driver's profile for
+`vilocity.exe` (the setting ids as in LooperSalty/AnyXboxX's launcher); reading the
+driver is tested here, the write is not yet. The game's window is now titled with
+the game's own name ("Grand Theft Auto VI | Vilocity 27 fps ...") and carries its
+own logo, both read from its manifest and files in your copy; nothing of the
+game's is in this repository. New: `VILOCITY_FSR_SHARPNESS=<0 to 1>` has the PC
+upscaler sharpen (the title asks for none); off by default.
+
+Earlier: checked on the new engine with a scripted run: sound plays (the engine's
 own recording of what the title plays has sound from the moment the world loads),
 a click takes the mouse (kept in the window, no cursor) and Esc gives it back, F8
 hides and shows the HUD. On foot, Space jumps and Shift runs now. On NVIDIA cards
@@ -313,6 +326,8 @@ engine's own commands are under `vilocity native ...` and `vilocity compat ...`.
 
 ### GTA VI first run
 
+Double-click `Vilocity Launcher.cmd`: pick the game folder, look at what the
+check of the PC says, press PLAY. Without the window:
 `scripts\play-gta6.ps1 -Game <game folder>` starts the game with the engine's
 measured settings and opens `scripts\monitor-gta6.ps1`: frame rate, memory, CPU
 and GPU use, where each frame's time goes, and the log's warnings and errors

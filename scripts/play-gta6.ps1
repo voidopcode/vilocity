@@ -1,16 +1,18 @@
 # Plays GTA VI with Vilocity (in its sandbox) and opens a live monitor window.
-#   scripts\play-gta6.ps1 [-Game <folder>] [-Defaults] [-Diag] [-NoSandbox] [-SeriesX]
+#   scripts\play-gta6.ps1 [-Game <folder>] [-Defaults] [-Diag] [-NoSandbox] [-SeriesX] [-NoMonitor]
 # -Defaults leaves the frame-rate switches below off (the fork's defaults).
 # -Diag runs the diagnostics build (cargo build --profile diag -p vilocity
 # --features diagnostics), which logs where each frame's time goes.
 # -NoSandbox runs the game as you, outside its sandbox (for measuring).
 # -SeriesX shows the title a Series X instead of the default Series S.
+# -NoMonitor opens no monitor window (the window launcher shows the state itself).
 param(
     [string]$Game = $env:VILOCITY_GTA6_DIR,
     [switch]$Defaults,
     [switch]$Diag,
     [switch]$NoSandbox,
-    [switch]$SeriesX
+    [switch]$SeriesX,
+    [switch]$NoMonitor
 )
 if (-not $Game) { throw "Pass -Game <game folder> or set VILOCITY_GTA6_DIR" }
 # The switches below are set in this window's environment: kept here and put
@@ -75,7 +77,8 @@ elseif (-not $env:VILOCITY_FSR_DLL -and (Test-Path $fsr)) { $env:VILOCITY_FSR_DL
 # minutes), so that none is translated while playing.
 $cache = if ($env:VILOCITY_CACHE_DIR) { $env:VILOCITY_CACHE_DIR } else { Join-Path $env:LOCALAPPDATA "vilocity\cache" }
 $mark = Join-Path $cache "shaders-done.txt"
-$build = "{0} {1:o}" -f $exe, (Get-Item $exe).LastWriteTimeUtc
+# (With the settings that change the translation: another set is translated ahead too.)
+$build = "{0} {1:o} {2} {3}" -f $exe, (Get-Item $exe).LastWriteTimeUtc, $env:VILOCITY_WAVE_WIDE, $env:VILOCITY_WAVE_WIDE_ONLY
 $rpf = Join-Path $Game "shaders.rpf"
 if ((Test-Path $rpf) -and ((Get-Content $mark -ErrorAction SilentlyContinue) -ne $build)) {
     Write-Host "Translating the game's shaders ahead (once per build, a few minutes)..."
@@ -84,7 +87,7 @@ if ((Test-Path $rpf) -and ((Get-Content $mark -ErrorAction SilentlyContinue) -ne
     else { Write-Host "Translating ahead failed: the shaders are translated while playing instead." }
 }
 
-$watch = Start-Process powershell -PassThru -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$monitor`" -Log `"$log`""
+$watch = if (-not $NoMonitor) { Start-Process powershell -PassThru -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$monitor`" -Log `"$log`"" }
 # The in-game HUD: frame rate and memory on the right of the game's window
 # (VILOCITY_HUD=0: none).
 if ($env:VILOCITY_HUD -ne "0") {
@@ -98,7 +101,7 @@ try {
     Write-Host "Vilocity exited with code $LASTEXITCODE (log: $log)"
 } finally {
     # The monitor goes with the game (also when this window is closed with Ctrl+C).
-    if (-not $watch.HasExited) { Stop-Process -Id $watch.Id -Force -ErrorAction SilentlyContinue }
+    if ($watch -and -not $watch.HasExited) { Stop-Process -Id $watch.Id -Force -ErrorAction SilentlyContinue }
     Get-ChildItem Env: | Where-Object { $_.Name -like 'VILOCITY_*' -and -not $before.ContainsKey($_.Name) } |
         ForEach-Object { Remove-Item "Env:$($_.Name)" }
     foreach ($name in $before.Keys) { Set-Item "Env:$name" $before[$name] }

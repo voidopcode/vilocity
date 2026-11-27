@@ -215,6 +215,36 @@ fn load(path: &Path) -> Result<Api, String> {
     }
 }
 
+/// `VILOCITY_FSR_SHARPNESS=<0 to 1>`: how much the PC upscaler sharpens when the title
+/// asks for no sharpening; unset or 0: not at all, as the title asks.
+fn sharpness() -> Option<f32> {
+    static ASKED: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    *ASKED.get_or_init(|| {
+        let asked = sharpness_of(&std::env::var("VILOCITY_FSR_SHARPNESS").ok()?);
+        if let Some(sharpness) = asked {
+            tracing::info!(sharpness, "the PC upscaler sharpens where the title asks for none (VILOCITY_FSR_SHARPNESS)");
+        }
+        asked
+    })
+}
+
+/// [`sharpness`] of the variable's value: a number above 0, at most 1.
+fn sharpness_of(value: &str) -> Option<f32> {
+    value.trim().parse::<f32>().ok().filter(|s| s.is_finite() && *s > 0.0).map(|s| s.min(1.0))
+}
+
+#[cfg(test)]
+mod sharpness_tests {
+    #[test]
+    fn a_number_above_nought_sharpens_and_nothing_else_does() {
+        assert_eq!(super::sharpness_of("0.5"), Some(0.5));
+        assert_eq!(super::sharpness_of(" 3 "), Some(1.0));
+        assert_eq!(super::sharpness_of("0"), None);
+        assert_eq!(super::sharpness_of("-1"), None);
+        assert_eq!(super::sharpness_of("on"), None);
+    }
+}
+
 /// Title memory changed for one call, put back after it, the last change
 /// first.
 #[derive(Default)]
@@ -753,6 +783,21 @@ extern "system" fn ffxDispatch(context: *mut *mut c_void, desc: *mut u8) -> u32 
         once(("dispatch extension", ty), || {
             tracing::warn!(ty = format_args!("{ty:#x}"), "FidelityFX dispatch: a description naming console objects is not given to the PC DLL")
         });
+    }
+    // (Vilocity) The PC upscaler's own sharpening pass where the title asks for none
+    // (`VILOCITY_FSR_SHARPNESS`): as a Series S the title upscales 1280x720 to 1920x1080
+    // with "sharpening 0 at 0", a soft picture on a PC's screen.
+    if ty == DISPATCH_UPSCALE
+        && let Some(sharpness) = sharpness()
+    {
+        // SAFETY: two fields of the title's dispatch description (the flag is a byte and
+        // its padding), put back after the call.
+        unsafe {
+            if desc.add(SHARPENING).read() == 0 {
+                patches.set_dword(desc.add(SHARPENING).cast(), 1);
+                patches.set_dword(desc.add(SHARPNESS).cast(), sharpness.to_bits());
+            }
+        }
     }
     let recorded = external::record(list, |pass| {
         done = hand_over(pass, api, context, desc, ty, slots, &mut patches);

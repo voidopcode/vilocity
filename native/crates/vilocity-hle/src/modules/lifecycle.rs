@@ -244,6 +244,42 @@ fn hook(hwnd: HWND) {
         wm::SetPropW(hwnd, TITLE_PROC, title as *mut c_void);
         wm::SetWindowLongPtrW(hwnd, wm::GWLP_WNDPROC, window_proc as *const () as isize);
     }
+    icon(hwnd);
+}
+
+/// (Vilocity) The window as a PC shows it: the title's own name in the title bar
+/// (the title names its window after its project), and its own logos there and on
+/// the taskbar, as its manifest names them for the console's shell (files of the
+/// user's copy, beside the executable). Vilocity's logo where it names none: the
+/// title's window class has no icon, a console's window is never seen.
+fn icon(hwnd: HWND) {
+    const OURS: [&[u8]; 2] = [
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../assets/logo-32.png")),
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../assets/logo-256.png")),
+    ];
+    let title = crate::runtime::title();
+    let folder = crate::runtime::main_image().and_then(crate::runtime::image_path).and_then(|exe| exe.parent().map(|p| p.to_path_buf()));
+    if !title.name.is_empty() {
+        let name: Vec<u16> = title.name.encode_utf16().chain([0]).collect();
+        // SAFETY: a window this thread made, and a NUL-terminated text.
+        unsafe { wm::SetWindowTextW(hwnd, name.as_ptr()) };
+    }
+    for (i, (kind, size)) in [(wm::ICON_SMALL, 32), (wm::ICON_BIG, 256)].into_iter().enumerate() {
+        let theirs = folder.as_ref().filter(|_| !title.logos[i].is_empty()).and_then(|f| std::fs::read(f.join(&title.logos[i])).ok());
+        let png = theirs.as_deref().unwrap_or(OURS[i]);
+        // SAFETY: a PNG file's bytes, which this call takes as an icon's picture (or
+        // refuses); the window was made by this thread just now, so the message is a
+        // plain call.
+        unsafe {
+            let mut icon = wm::CreateIconFromResourceEx(png.as_ptr(), png.len() as u32, 1, 0x0003_0000, size, size, wm::LR_DEFAULTCOLOR);
+            if icon.is_null() {
+                icon = wm::CreateIconFromResourceEx(OURS[i].as_ptr(), OURS[i].len() as u32, 1, 0x0003_0000, size, size, wm::LR_DEFAULTCOLOR);
+            }
+            if !icon.is_null() {
+                wm::SendMessageW(hwnd, wm::WM_SETICON, kind as usize, icon as isize);
+            }
+        }
+    }
 }
 
 extern "system" fn window_proc(

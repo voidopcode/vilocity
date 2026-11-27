@@ -95,6 +95,11 @@ pub struct Title {
     /// Game saves live beside it ([`Title::saves`]).
     pub storage: PathBuf,
     pub storage_bytes: u64,
+    /// (Vilocity) What the console's shell shows for it (`ShellVisuals`): its
+    /// name, and its small and large logos, files beside the manifest. Empty
+    /// where the manifest names none.
+    pub name: String,
+    pub logos: [String; 2],
 }
 
 impl Title {
@@ -115,6 +120,8 @@ impl Title {
             store_id: get("Game/StoreId").unwrap_or_default().to_owned(),
             storage: PathBuf::new(),
             storage_bytes: storage_mb.unwrap_or(0) << 20,
+            name: attribute(text, "ShellVisuals", "DefaultDisplayName").unwrap_or_default(),
+            logos: ["Square44x44Logo", "Square150x150Logo"].map(|logo| attribute(text, "ShellVisuals", logo).unwrap_or_default()),
         }
     }
 
@@ -122,6 +129,29 @@ impl Title {
     /// data directory, never the cache.
     pub fn saves(&self) -> PathBuf {
         self.storage.with_file_name("saves")
+    }
+}
+
+/// (Vilocity) The value of attribute `name` of the first `<element ...>` in
+/// `text`, in either kind of quotes (a `>` inside them does not end the tag).
+fn attribute(text: &str, element: &str, name: &str) -> Option<String> {
+    let open = format!("<{element}");
+    let mut rest = &text[text.find(&open)? + open.len()..];
+    // Name by name, to the tag's end.
+    loop {
+        rest = rest.trim_start();
+        if rest.starts_with('>') || rest.starts_with("/>") || rest.is_empty() {
+            return None;
+        }
+        let equals = rest.find('=')?;
+        let key = rest[..equals].trim();
+        let value = rest[equals + 1..].trim_start();
+        let quote = value.chars().next().filter(|q| *q == '"' || *q == '\'')?;
+        let end = value[1..].find(quote)?;
+        if key == name {
+            return Some(value[1..1 + end].to_owned());
+        }
+        rest = &value[end + 2..];
     }
 }
 
@@ -300,6 +330,18 @@ mod tests {
                     <PersistentLocalStorage><SizeMB>64</SizeMB></PersistentLocalStorage></Game>";
         let t = Title::from_manifest(text);
         assert_eq!((t.id, t.storage_bytes), (0x639A_A8DD, 64 << 20));
+        assert_eq!((t.name.as_str(), &t.logos), ("A > B", &[String::new(), String::new()]));
+    }
+
+    #[test]
+    fn the_shell_s_name_and_logos_come_from_the_manifest() {
+        let text = "<Game><Identity Name='x'/>
+<ShellVisuals DefaultDisplayName=\"Grand Theft Auto VI\"                     Square150x150Logo=\"big.png\" Square480x480Logo=\"huge.png\" Square44x44Logo='small.png' /></Game>";
+        let t = Title::from_manifest(text);
+        assert_eq!(t.name, "Grand Theft Auto VI");
+        assert_eq!(t.logos, ["small.png".to_owned(), "big.png".to_owned()]);
+        assert_eq!(attribute(text, "ShellVisuals", "Missing"), None);
+        assert_eq!(attribute("<Game/>", "ShellVisuals", "DefaultDisplayName"), None);
     }
 
     #[test]
