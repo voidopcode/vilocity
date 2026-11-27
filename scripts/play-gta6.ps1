@@ -161,11 +161,11 @@ if (-not $Defaults) {
     # 6f225b641c5b0708,5dc3b25986622949,369cbe906ea72764,2cc4c197ee29e291,a10179ab7eda0dc3.
     # Never 6871d6e4b3ac9a10 or 926c46bab3b86bd6: in the wide form they hung an RTX 5080 at
     # the world's start and the whole PC froze and restarted.)
-    # Video memory. The game wants about 11 GB of it as a Series S. Under 14 GB a
-    # texture's levels get memory when they are used (ZigZagBoi1/ScarlettPort: 18.9 to
-    # 22.0 fps on a 16 GB RX 9060 XT); under 10 GB also less of title buffers is kept
-    # on the card (Vice-Tay's set for 8 GB cards), and only the Series S picture.
-    if ($pc.vram -gt 0 -and $pc.vram -lt 14) { $settings.VILOCITY_LEVELS_ON_DEMAND = "1"; $why += "textures' levels on demand" }
+    # Video memory. The game wants about 11 GB of it as a Series S. Under 10 GB less of
+    # title buffers is kept on the card (Vice-Tay's set for 8 GB cards), and only the
+    # Series S picture. (Textures' levels on demand, VILOCITY_LEVELS_ON_DEMAND=1, are no
+    # longer set under 14 GB: on this 16 GB card held to about 8 GB, the same day walk ran
+    # at 13 fps median with black objects with them, 32 fps without, 2026-11-27.)
     if ($pc.vram -gt 0 -and $pc.vram -lt 10) {
         $settings.VILOCITY_CARD_BUFFERS_MB = "1536"; $settings.VILOCITY_CARD_WINDOWS_MB = "1024"; $why += "less kept on the card"
         if ($Picture -ne '1080p') { $Picture = '1080p'; $why += "the 1080p picture (the others need more video memory)" }

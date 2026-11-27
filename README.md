@@ -104,13 +104,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 21:13
+**Latest test run:** 2026-11-27 21:21
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 31.0 fps, 32 ms a frame |
-| Best while playing | 42.1 fps |
-| Last frame | 30.8 fps, 32 ms, 4229 draws, 178 dropped without a pipeline |
+| Frame rate while playing (typical) | 30.6 fps, 33 ms a frame |
+| Best while playing | 36.0 fps |
+| Last frame | 29.1 fps, 34 ms, 3678 draws, 119 dropped without a pipeline |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -118,6 +118,16 @@ loads saves and gets into the world. The world is where the work is now.
 Latest: "will it work on this PC" in the launcher, clothes and faces drawn with another
 texture's colours, the 4-7 fps drops explained and shown on the overlay, and what the
 picture tests of 2026-11-27 evening ruled out.
+- **The "VRAM leak" was other programs, and the overlay now names the biggest.** Over a
+  10-minute 1440p session the game's card memory rose to 14.5 GB in the first minute, then
+  stayed between 14.4 and 15.4 GB until it closed (what it takes it gives back): no leak.
+  Other programs filled the rest: 5.3 GB was still held after the game closed, and one Python
+  program alone held 3.9 GB of the 16 GB card. When the card is full the overlay now says
+  which program holds the most: "CARD FULL: others 7.8 GB (python 3.9)".
+- **8 GB cards: textures' levels on demand are no longer set.** The same scripted day walk
+  (it ends swimming) on this 16 GB card held to about 8 GB, with the play script's 8 GB
+  settings: with them 13 fps median and black objects, without them 32 fps median (lowest 16)
+  and none seen. The switch is still there (`VILOCITY_LEVELS_ON_DEMAND=1`).
 - **The sandbox on a PC where Windows refused the engine its own cache folder** (issue 3, an
   RX 9070 XT on Windows 11): the engine stopped at its first step, "cannot resolve
   ...\cache\images: access denied", where the same check passes in the sandbox on the other

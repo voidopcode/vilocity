@@ -106,7 +106,10 @@ $form.Add_Paint({
     # A full card: Windows moves the game's memory to the PC's and the card's frame takes 60-120 ms
     # (4-7 fps at 1440p with 5.6 GB held by others, 2026-11-27; 1080p needs some 5 GB less).
     $full = $null -ne $s.vramUsed -and $s.vramAll -gt 0 -and ($s.vramUsed / $s.vramAll) -gt 0.93
-    if ($full) { & $row 86 "GAME" ("CARD FULL: others {0} GB, try 1080p" -f (N $others)) $null $null $null $bad }
+    if ($full) {
+        $who = if ($s.topName -and $s.topVram -ge 1) { " ({0} {1})" -f $s.topName.Substring(0, [math]::Min(12, $s.topName.Length)), (N $s.topVram) } else { ", try 1080p" }
+        & $row 86 "GAME" ("CARD FULL: others {0} GB{1}" -f (N $others), $who) $null $null $null $bad
+    }
     else { & $row 86 "GAME" $(if ($others -ge 2) { "video {0} GB   others hold {1} GB" -f (N $s.gameVram), (N $others) } else { "video {0} GB   shared {1} GB" -f (N $s.gameVram), (N $s.gameShared) }) $null $null $null }
     & $row 104 "RAM" ("game {0}   PC {1} of {2} GB" -f (N $s.gameRam), (N $s.ram), (N $s.ramAll "N0")) $s.ram $s.ramAll $s.gameRam
     & $row 126 "KEYS" $(if ($state.keys -eq "driving") { "driving   G: on foot   F1: settings" } else { "on foot   G: driving   F1: settings" }) $null $null $null
@@ -158,8 +161,15 @@ $timer.Add_Tick({
             $s.vramUsed = [double]$v[0] / 1024; $s.vramAll = [double]$v[1] / 1024; $s.gpu = [double]$v[2]
         } catch {}
         try {
-            $vm = Get-CimInstance Win32_PerfRawData_GPUPerformanceCounters_GPUProcessMemory | Where-Object Name -like "pid_$($g.Id)_*"
+            $all = Get-CimInstance Win32_PerfRawData_GPUPerformanceCounters_GPUProcessMemory
+            $vm = $all | Where-Object Name -like "pid_$($g.Id)_*"
             $s.gameVram = ($vm | Measure-Object DedicatedUsage -Sum).Sum / 1GB; $s.gameShared = ($vm | Measure-Object SharedUsage -Sum).Sum / 1GB
+            # The other program holding the most of the card, named when it is full (a python tool held
+            # 3.9 GB of a 16 GB card while the game ran, 2026-11-27: "a VRAM leak" that was not the game's).
+            $top = $all | Where-Object { $_.Name -notlike "pid_$($g.Id)_*" } | Group-Object { ($_.Name -split '_')[1] } |
+                Sort-Object { ($_.Group | Measure-Object DedicatedUsage -Sum).Sum } -Descending | Select-Object -First 1
+            $s.topVram = if ($top) { ($top.Group | Measure-Object DedicatedUsage -Sum).Sum / 1GB } else { 0 }
+            $s.topName = if ($top) { (Get-Process -Id ([int]$top.Name) -ErrorAction SilentlyContinue).ProcessName }
         } catch {}
     }
     # Which keys hold: the engine writes "keys layout=drive" or "walk" at each press of G.
