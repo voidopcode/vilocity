@@ -35,6 +35,14 @@ const E_NOINTERFACE: HRESULT = 0x8000_4002_u32 as i32;
 
 /// Input kinds (bits) our devices have.
 const KEYBOARD_KIND: u32 = 0x10;
+
+/// (Vilocity) `VILOCITY_KEYS_ONLY=1`: only the scripted keys (`VILOCITY_KEYS`) reach
+/// the title, not the keyboard and the mouse: for a run that is measured, which a key
+/// pressed by chance must not steer.
+pub(crate) fn keys_only() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VILOCITY_KEYS_ONLY").is_some_and(|v| v == "1"))
+}
 const GAMEPAD_KIND: u32 = 0x4_0000;
 /// Device status of a connected device: connected, input enabled.
 const STATUS_CONNECTED: u32 = 0x3;
@@ -1420,7 +1428,7 @@ mod host {
         // SAFETY: plain queries; a null window gives process 0.
         unsafe {
             GetWindowThreadProcessId(GetForegroundWindow(), &mut process);
-            process == GetCurrentProcessId()
+            process == GetCurrentProcessId() && !crate::modules::gameinput::keys_only()
         }
     }
 

@@ -214,7 +214,7 @@ mod host {
             let down = |vk: u8| unsafe { GetAsyncKeyState(i32::from(vk)) } < 0;
             // SAFETY: a plain query.
             let front = unsafe { wm::GetForegroundWindow() };
-            let area = (wanted && lifecycle::is_title_window(front))
+            let area = (wanted && !crate::modules::gameinput::keys_only() && lifecycle::is_title_window(front))
                 .then(|| client_area(front))
                 .flatten();
             let inside = area.as_ref().is_some_and(cursor_in);
