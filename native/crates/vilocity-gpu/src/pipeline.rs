@@ -450,6 +450,25 @@ pub(crate) fn is_builder(this: This) -> bool {
     !this.is_null() && pipeline(this).builder
 }
 
+/// (Vilocity) For a compute pipeline of the underwater fog's light
+/// (`CS_TransmissionVolumetricsSubmerged_bbfb2953`, a wave64 program that
+/// does not translate for 32-lane cards): the views it writes, from its
+/// console program. `None` for any other pipeline (the name's `_` leaves out
+/// `CS_TransmissionVolumetricsSubmergedTemporal`, which runs).
+#[cfg(windows)]
+pub(crate) fn submerged_outputs(this: This) -> Option<Vec<vilocity_shader::UsedResource>> {
+    const NAME: &[u8] = b"CS_TransmissionVolumetricsSubmerged_";
+    if this.is_null() {
+        return None;
+    }
+    let [shader] = &pipeline(this).shaders[..] else { return None };
+    if shader.stage != "compute" || !shader.container.windows(NAME.len()).any(|w| w == NAME) {
+        return None;
+    }
+    let programs = shader.programs()?;
+    Some(programs.first()?.used.iter().filter(|u| u.kind == vilocity_shader::ResourceType::Uav).copied().collect())
+}
+
 /// A stage of the builder was dropped after all: none runs for the rest of
 /// this frame and the next (what it fed is not there).
 #[cfg(windows)]

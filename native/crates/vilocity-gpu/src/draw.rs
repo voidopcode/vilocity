@@ -3117,6 +3117,46 @@ impl State {
         });
     }
 
+    /// (Vilocity) A dropped dispatch of the underwater fog's light
+    /// (`CS_TransmissionVolumetricsSubmerged`, which no 32-lane card runs):
+    /// what it writes stayed zero, and the scene seen through water, which is
+    /// multiplied by it, black with only the particles drawn after it showing
+    /// (2026-11-27, day walk under water, RTX 5080). Its images are set to
+    /// clear water instead: no light scattered (0, 0, 0), all of it let
+    /// through (1).
+    fn submerged(&mut self, list: &HostList) {
+        let Some(outputs) = crate::pipeline::submerged_outputs(self.pipeline as This) else {
+            return;
+        };
+        let mut found = Vec::new();
+        for u in outputs.iter().filter(|u| u.root == RootType::Table) {
+            let Some(Root::Table(table)) = self.roots_ref(true).get(usize::from(u.slot)).cloned() else {
+                continue;
+            };
+            if let Some(View::Unordered(resource, ..)) = crate::descriptor::view(table + u64::from(u.table_offset_dwords) * 4) {
+                found.push(resource);
+            }
+        }
+        if found.is_empty() {
+            once!(outputs = outputs.len(), "the underwater fog's light: none of its images found; the water stays black");
+            return;
+        }
+        let mut said = Vec::new();
+        crate::external::record_here(list, |pass| {
+            for &resource in &found {
+                let kind = crate::resource::host_copy(resource as This).map(|c| {
+                    // SAFETY: a live resource.
+                    let d = unsafe { c.texture.GetDesc() };
+                    format!("{:?} {:?} {}x{}x{}", d.Dimension, d.Format, d.Width, d.Height, d.DepthOrArraySize)
+                });
+                said.push((kind, pass.fill(resource as *const std::ffi::c_void, [0.0, 0.0, 0.0, 1.0])));
+            }
+        });
+        self.after_external();
+        static SAID: std::sync::Once = std::sync::Once::new();
+        SAID.call_once(|| tracing::info!(images = ?said, "the underwater fog's light, which no 32-lane card runs: its images set to clear water"));
+    }
+
     /// Runs a dispatch on the host.
     pub(crate) fn dispatch(&mut self, list: &HostList, x: u32, y: u32, z: u32, flags: u32) {
         // It may write the arguments a window holds clamped.
@@ -3143,6 +3183,7 @@ impl State {
                 "a dispatch without a host pipeline dropped"
             );
             DROPPED.fetch_add(1, Ordering::Relaxed);
+            self.submerged(list);
             #[cfg(feature = "diagnostics")]
             {
                 crate::pipeline::note_drop(self.pipeline as This);

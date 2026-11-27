@@ -104,13 +104,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 22:46
+**Latest test run:** 2026-11-27 23:03
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 12.5 fps, 80 ms a frame |
-| Best while playing | 27.5 fps |
-| Last frame | 19.4 fps, 52 ms, 4569 draws, 155 dropped without a pipeline |
+| Frame rate while playing (typical) | 27.5 fps, 36 ms a frame |
+| Best while playing | 30.1 fps |
+| Last frame | 28.7 fps, 35 ms, 3771 draws, 209 dropped without a pipeline |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -118,6 +118,15 @@ loads saves and gets into the world. The world is where the work is now.
 Latest: "will it work on this PC" in the launcher, clothes and faces drawn with another
 texture's colours, the 4-7 fps drops explained and shown on the overlay, and what the
 picture tests of 2026-11-27 evening ruled out.
+- **Under water is no longer black.** The underwater fog's light (`CS_TransmissionVolumetricsSubmerged`)
+  is one of the wave64 programs no 32-lane card runs, so the four images it writes (a light
+  volume of 80x46x68 and a 640x360 picture, each in R11G11B10 and R10G10B10A2) stayed zero, and
+  the scene seen through water, multiplied by them, was black with only the particles drawn
+  after it showing. When its dispatch is dropped, a pass of ours now sets those images to clear
+  water: no light scattered, all of it let through. The water has no murk then, but you see.
+  Tested on the day walk (1080p, RTX 5080): the dive now goes from the surface to the white
+  flash the game itself shows on entering the water (there before too), with no black frame
+  in between; a longer stay under water was not scripted (the walk does not stay under).
 - **Windows 10: the game's root signatures are made by the Agility SDK runtime too.** On an
   RTX 5070 with Windows 10 19045 the device came from the D3D12 Agility SDK (shader model 6.6),
   but every root signature was still refused ("Unsupported bit-flag set, root signature flags

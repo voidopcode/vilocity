@@ -412,6 +412,163 @@ impl Scaler {
     }
 }
 
+impl Pass<'_> {
+    /// (Vilocity) For a program of the title no card here can run: title
+    /// texture `to` (its first level, every slice or depth) set to `value`
+    /// by a pass of ours, made ready as for an unordered write.
+    pub(crate) fn fill(&mut self, to: *const c_void, value: [f32; 4]) -> Result<(), &'static str> {
+        let target = self.look(to)?;
+        if !target.unordered() {
+            return Err("its host copy allows no unordered access");
+        }
+        let filler = filler().ok_or("the pass of ours could not be made")?;
+        self.ready(to, true).ok_or("a texture lost its host copy")?;
+        let copy = crate::resource::host_copy(to.cast()).ok_or("a texture lost its host copy")?;
+        // SAFETY: a live resource.
+        let desc = unsafe { copy.texture.GetDesc() };
+        filler.record(self.list, &copy.texture, unordered_format(to.cast(), desc.Format.0 as u32), &desc, value)
+    }
+}
+
+/// (Vilocity) `f` with a pass on host list `list`, which the caller is
+/// recording already (a draw state's own dispatch, `crate::draw`): the
+/// caller sets its draw state again afterwards (`State::after_external`).
+pub(crate) fn record_here(list: &crate::host::HostList, f: impl FnOnce(&mut Pass)) {
+    uav_barrier(list);
+    let mut pass = Pass { list, again: false };
+    f(&mut pass);
+    uav_barrier(list);
+    list.changed_something();
+}
+
+/// The pass of [`Pass::fill`]: one program for 2D textures (as arrays), one
+/// for volumes, and a ring of views for them.
+struct Filler {
+    root: windows::Win32::Graphics::Direct3D12::ID3D12RootSignature,
+    flat: windows::Win32::Graphics::Direct3D12::ID3D12PipelineState,
+    volume: windows::Win32::Graphics::Direct3D12::ID3D12PipelineState,
+    views: windows::Win32::Graphics::Direct3D12::ID3D12DescriptorHeap,
+    step: u32,
+    next: std::sync::atomic::AtomicU32,
+}
+
+// SAFETY: D3D12 objects are free-threaded.
+unsafe impl Send for Filler {}
+// SAFETY: as above.
+unsafe impl Sync for Filler {}
+
+const FILLS: u32 = 256;
+
+const FILL_SOURCE: &str = r#"
+#define RS "DescriptorTable(UAV(u0)), RootConstants(num32BitConstants=8, b0)"
+#ifdef VOLUME
+RWTexture3D<float4> to_ : register(u0);
+#else
+RWTexture2DArray<float4> to_ : register(u0);
+#endif
+cbuffer Fill : register(b0) { float4 value; uint3 size; uint unused; };
+[RootSignature(RS)]
+[numthreads(4, 4, 4)]
+void main(uint3 at : SV_DispatchThreadID) {
+    if (any(at >= size)) return;
+    to_[at] = value;
+}
+"#;
+
+fn filler() -> Option<&'static Filler> {
+    static FILLER: std::sync::OnceLock<Option<Filler>> = std::sync::OnceLock::new();
+    FILLER
+        .get_or_init(|| {
+            Filler::new().inspect_err(|e| tracing::warn!(error = %e, "no pass of ours to fill a texture")).ok()
+        })
+        .as_ref()
+}
+
+impl Filler {
+    fn new() -> windows::core::Result<Filler> {
+        use windows::Win32::Graphics::Direct3D12::*;
+        use windows::core::s;
+        let host = crate::host::host().ok_or_else(windows::core::Error::empty)?;
+        let flat = crate::host::compile(FILL_SOURCE, s!("main"), s!("cs_5_1"))?;
+        let volume = crate::host::compile(&format!("#define VOLUME\n{FILL_SOURCE}"), s!("main"), s!("cs_5_1"))?;
+        // SAFETY: compiled programs with their root signature inside; plain creations.
+        unsafe {
+            let root: ID3D12RootSignature = host.device.CreateRootSignature(0, &flat)?;
+            let pso = |code: &[u8]| {
+                host.device.CreateComputePipelineState::<ID3D12PipelineState>(&D3D12_COMPUTE_PIPELINE_STATE_DESC {
+                    pRootSignature: std::mem::transmute_copy(&root),
+                    CS: D3D12_SHADER_BYTECODE { pShaderBytecode: code.as_ptr().cast(), BytecodeLength: code.len() },
+                    ..Default::default()
+                })
+            };
+            let (flat, volume) = (pso(&flat)?, pso(&volume)?);
+            let views = host.device.CreateDescriptorHeap(&D3D12_DESCRIPTOR_HEAP_DESC {
+                Type: D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+                NumDescriptors: FILLS,
+                Flags: D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
+                NodeMask: 0,
+            })?;
+            let step = host.device.GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+            Ok(Filler { root, flat, volume, views, step, next: std::sync::atomic::AtomicU32::new(0) })
+        }
+    }
+
+    /// Records the fill of `to` (in format `write`) onto `list`.
+    fn record(
+        &self,
+        list: &crate::host::HostList,
+        to: &windows::Win32::Graphics::Direct3D12::ID3D12Resource,
+        write: u32,
+        desc: &windows::Win32::Graphics::Direct3D12::D3D12_RESOURCE_DESC,
+        value: [f32; 4],
+    ) -> Result<(), &'static str> {
+        use windows::Win32::Graphics::Direct3D12::*;
+        use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT;
+        let volume = desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D;
+        if !volume && desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D {
+            return Err("not a 2D texture or a volume");
+        }
+        let size = [desc.Width.min(u64::from(u32::MAX)) as u32, desc.Height, u32::from(desc.DepthOrArraySize)];
+        let uav = if volume {
+            D3D12_UNORDERED_ACCESS_VIEW_DESC {
+                Format: DXGI_FORMAT(write as i32),
+                ViewDimension: D3D12_UAV_DIMENSION_TEXTURE3D,
+                Anonymous: D3D12_UNORDERED_ACCESS_VIEW_DESC_0 { Texture3D: D3D12_TEX3D_UAV { MipSlice: 0, FirstWSlice: 0, WSize: size[2] } },
+            }
+        } else {
+            D3D12_UNORDERED_ACCESS_VIEW_DESC {
+                Format: DXGI_FORMAT(write as i32),
+                ViewDimension: D3D12_UAV_DIMENSION_TEXTURE2DARRAY,
+                Anonymous: D3D12_UNORDERED_ACCESS_VIEW_DESC_0 {
+                    Texture2DArray: D3D12_TEX2D_ARRAY_UAV { MipSlice: 0, FirstArraySlice: 0, ArraySize: size[2], PlaneSlice: 0 },
+                },
+            }
+        };
+        let device = &crate::host::host().ok_or("no host device")?.device;
+        let at = (self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % FILLS * self.step) as usize;
+        let mut constants = [0u32; 8];
+        for (to, v) in constants.iter_mut().zip(value) {
+            *to = v.to_bits();
+        }
+        constants[4..7].copy_from_slice(&size);
+        // SAFETY: an open list; a view made in a slot no list in flight still
+        // reads (the ring is many frames long); a live texture.
+        unsafe {
+            let cpu = self.views.GetCPUDescriptorHandleForHeapStart();
+            let gpu = self.views.GetGPUDescriptorHandleForHeapStart();
+            device.CreateUnorderedAccessView(to, None, Some(&uav), D3D12_CPU_DESCRIPTOR_HANDLE { ptr: cpu.ptr + at });
+            let l = &list.list;
+            l.SetDescriptorHeaps(&[Some(self.views.clone())]);
+            l.SetComputeRootSignature(&self.root);
+            l.SetPipelineState(if volume { &self.volume } else { &self.flat });
+            l.SetComputeRootDescriptorTable(0, D3D12_GPU_DESCRIPTOR_HANDLE { ptr: gpu.ptr + at as u64 });
+            l.SetComputeRoot32BitConstants(1, 8, constants.as_ptr().cast(), 0);
+            l.Dispatch(size[0].div_ceil(4), size[1].div_ceil(4), size[2].div_ceil(4));
+        }
+        Ok(())
+    }
+}
+
 /// Runs `f` with title list `list`'s host list, at this point of the title's
 /// commands; afterwards the title's heaps, root signatures and pipeline are
 /// set again for its next draw or dispatch (the library set its own).
