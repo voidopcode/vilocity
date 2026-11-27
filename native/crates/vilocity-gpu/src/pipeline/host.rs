@@ -1055,19 +1055,20 @@ fn root_signature(
     // SAFETY: the description points at live arrays; the blob is read in
     // full before it is released.
     unsafe {
-        let mut blob: Option<ID3DBlob> = None;
         let mut error: Option<ID3DBlob> = None;
-        if let Err(e) = D3D12SerializeVersionedRootSignature(&desc, &mut blob, Some(&mut error)) {
-            if let Some(error) = error {
-                let text = std::slice::from_raw_parts(
-                    error.GetBufferPointer().cast::<u8>(),
-                    error.GetBufferSize(),
-                );
-                tracing::warn!("root signature: {}", String::from_utf8_lossy(text));
+        let blob = match vilocity_shader::emit::host::serialize_root_signature(device, &desc, &mut error) {
+            Ok(blob) => blob,
+            Err(e) => {
+                if let Some(error) = error {
+                    let text = std::slice::from_raw_parts(
+                        error.GetBufferPointer().cast::<u8>(),
+                        error.GetBufferSize(),
+                    );
+                    tracing::warn!("root signature: {}", String::from_utf8_lossy(text));
+                }
+                return Err(e);
             }
-            return Err(e);
-        }
-        let blob = blob.ok_or_else(windows::core::Error::empty)?;
+        };
         let bytes =
             std::slice::from_raw_parts(blob.GetBufferPointer().cast::<u8>(), blob.GetBufferSize());
         Ok((device.CreateRootSignature(0, bytes)?, bytes.to_vec()))

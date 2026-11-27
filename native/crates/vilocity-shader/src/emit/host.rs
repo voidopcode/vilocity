@@ -109,6 +109,27 @@ pub fn agility_used() -> bool {
     AGILITY_USED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// (Vilocity) Serializes `desc` with the runtime `device` came from. On Windows 10 the
+/// system's `D3D12SerializeVersionedRootSignature` refuses the flags of shader model 6.6
+/// (heaps indexed directly: "Unsupported bit-flag set (root signature flags c01)") also for
+/// a device of the Agility SDK runtime, whose own serializer takes them (an RTX 5070 on
+/// Windows 10, 2026-11-27: every root signature refused, then the game's crash).
+pub fn serialize_root_signature(
+    device: &ID3D12Device,
+    desc: &D3D12_VERSIONED_ROOT_SIGNATURE_DESC,
+    error: &mut Option<ID3DBlob>,
+) -> windows::core::Result<ID3DBlob> {
+    let mut blob = None;
+    // SAFETY: a live description and out pointers for the call.
+    unsafe {
+        match device.cast::<ID3D12DeviceConfiguration>().ok().filter(|_| agility_used()) {
+            Some(config) => config.SerializeVersionedRootSignature(desc, &mut blob, Some(error))?,
+            None => D3D12SerializeVersionedRootSignature(desc, &mut blob, Some(error))?,
+        }
+    }
+    blob.ok_or_else(windows::core::Error::empty)
+}
+
 fn agility_factory() -> Option<&'static ID3D12DeviceFactory> {
     static FACTORY: std::sync::OnceLock<Option<ID3D12DeviceFactory>> = std::sync::OnceLock::new();
     FACTORY
@@ -397,11 +418,8 @@ impl Host {
         };
         // SAFETY: the description points at live arrays.
         unsafe {
-            let mut blob = None;
             let mut error = None;
-            D3D12SerializeVersionedRootSignature(&desc, &mut blob, Some(&mut error))
-                .map_err(err)?;
-            let blob: ID3DBlob = blob.ok_or("no root signature blob")?;
+            let blob = serialize_root_signature(&self.device, &desc, &mut error).map_err(err)?;
             let bytes = std::slice::from_raw_parts(
                 blob.GetBufferPointer().cast::<u8>(),
                 blob.GetBufferSize(),

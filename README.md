@@ -104,13 +104,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 22:45
+**Latest test run:** 2026-11-27 22:46
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 1.1 fps, 910 ms a frame |
-| Best while playing | 3.5 fps |
-| Last frame | 3.3 fps, 304 ms, 3822 draws, 159 dropped without a pipeline |
+| Frame rate while playing (typical) | 12.5 fps, 80 ms a frame |
+| Best while playing | 27.5 fps |
+| Last frame | 19.4 fps, 52 ms, 4569 draws, 155 dropped without a pipeline |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -118,6 +118,14 @@ loads saves and gets into the world. The world is where the work is now.
 Latest: "will it work on this PC" in the launcher, clothes and faces drawn with another
 texture's colours, the 4-7 fps drops explained and shown on the overlay, and what the
 picture tests of 2026-11-27 evening ruled out.
+- **Windows 10: the game's root signatures are made by the Agility SDK runtime too.** On an
+  RTX 5070 with Windows 10 19045 the device came from the D3D12 Agility SDK (shader model 6.6),
+  but every root signature was still refused ("Unsupported bit-flag set, root signature flags
+  c01") and the game crashed at its start: they were serialized by Windows 10's own
+  `D3D12SerializeVersionedRootSignature`, which does not know the flags for heaps indexed
+  directly. With the Agility runtime they now go through its own serializer
+  (`ID3D12DeviceConfiguration`). Tested here with that runtime forced: 0 refused, the world at
+  25 fps; not yet on a Windows 10 PC.
 - **"Translating the game's shaders" shows how far it is.** Two players took the step for
   stuck: it said "about a minute" (timed on a 16-core processor) and nothing moved. Its lines
   (one each 1,000 shaders) now go to `logs\shaders-progress.txt`, and the launcher shows the
