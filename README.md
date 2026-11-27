@@ -104,13 +104,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 22:10
+**Latest test run:** 2026-11-27 22:31
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 26.0 fps, 39 ms a frame |
-| Best while playing | 43.2 fps |
-| Last frame | 28.9 fps, 35 ms, 5063 draws, 112 dropped without a pipeline |
+| Frame rate while playing (typical) | 24.7 fps, 41 ms a frame |
+| Best while playing | 30.8 fps |
+| Last frame | 25.5 fps, 39 ms, 3375 draws, 323 dropped without a pipeline |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -118,6 +118,13 @@ loads saves and gets into the world. The world is where the work is now.
 Latest: "will it work on this PC" in the launcher, clothes and faces drawn with another
 texture's colours, the 4-7 fps drops explained and shown on the overlay, and what the
 picture tests of 2026-11-27 evening ruled out.
+- **Launcher: save backups, a benchmark, Update, and a progress bar.** Tools now has: save
+  backups (your saves are copied at each PLAY into `%LOCALAPPDATA%\vilocity\backups`, the
+  newest 10 kept; Restore puts one back after copying the saves of now); a benchmark (starts
+  the game and, once you are in the world, measures 60 seconds of play from the window's frame
+  rate, then shows median, average, 5% low and highest with the PC's card, processor, memory
+  and picture, and copies it to share); Update (git pull, then the engine is built, for copies
+  made with git). Preparing the game's pipelines now also shows a progress bar.
 - **The overlay reads AMD and Intel cards too.** It asked only nvidia-smi, so an RX 9070 XT
   showed "-%" and "- of - GB" (issue 3). Without nvidia-smi it now reads Windows' own GPU
   counters for the card the game draws on; on the RTX 5080 they agree with nvidia-smi

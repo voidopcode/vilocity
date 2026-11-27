@@ -187,6 +187,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
             <StackPanel Margin="30,0,30,0" VerticalAlignment="Center" HorizontalAlignment="Left" MaxWidth="520">
               <TextBlock x:Name="GameName" FontSize="32" FontWeight="Bold" Foreground="White" TextWrapping="Wrap"/>
               <TextBlock x:Name="Status" FontSize="14" Foreground="#D5D8E6" TextWrapping="Wrap" Margin="0,8,0,0"/>
+              <ProgressBar x:Name="Progress" Height="6" Margin="0,8,0,0" Maximum="1" Visibility="Collapsed" Foreground="#7C5CFF" Background="#33FFFFFF" BorderThickness="0"/>
               <StackPanel Orientation="Horizontal" Margin="0,22,0,0">
                 <Button x:Name="Play" Content="PLAY" FontSize="17" FontWeight="Bold" Padding="46,13" Background="{StaticResource Accent}" Foreground="White" IsDefault="True"/>
                 <Button x:Name="Browse" Content="Game folder..." Margin="12,0,0,0" Background="#33FFFFFF" Padding="16,13"/>
@@ -264,6 +265,9 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
         <Border Style="{StaticResource Card}"><StackPanel>
           <DockPanel Margin="0,0,0,12"><Button x:Name="Keys" DockPanel.Dock="Right" Content="Open" MinWidth="110"/><StackPanel><TextBlock Text="Keys"/><TextBlock Style="{StaticResource Dim}" Text="Which key does what. Change it and save: the running game takes it within a second."/></StackPanel></DockPanel>
           <DockPanel Margin="0,0,0,12"><Button x:Name="Saves" DockPanel.Dock="Right" Content="Open" MinWidth="110"/><StackPanel><TextBlock Text="Saves"/><TextBlock Style="{StaticResource Dim}" Text="The folder with your saved games and the game's settings."/></StackPanel></DockPanel>
+          <DockPanel Margin="0,0,0,12"><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button x:Name="Backups" Content="Open" MinWidth="110"/><Button x:Name="Restore" Content="Restore..." MinWidth="110" Margin="8,0,0,0"/></StackPanel><StackPanel><TextBlock Text="Save backups"/><TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Text="Your saves are copied at each PLAY; the last 10 copies are kept. Restore puts one back (your saves of now are copied first)."/></StackPanel></DockPanel>
+          <DockPanel Margin="0,0,0,12"><Button x:Name="Bench" DockPanel.Dock="Right" Content="Start" MinWidth="110"/><StackPanel><TextBlock Text="Benchmark"/><TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Text="Starts the game; once you are in the world it measures 60 seconds of play (move around as you usually do), then shows the result and copies it to share."/></StackPanel></DockPanel>
+          <DockPanel Margin="0,0,0,12"><Button x:Name="Update" DockPanel.Dock="Right" Content="Update" MinWidth="110"/><StackPanel><TextBlock Text="Update Vilocity"/><TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Text="Gets the newest Vilocity (git pull) and builds the engine, in a window of its own."/></StackPanel></DockPanel>
           <DockPanel Margin="0,0,0,12"><Button x:Name="Logs" DockPanel.Dock="Right" Content="Open" MinWidth="110"/><StackPanel><TextBlock Text="Logs"/><TextBlock Style="{StaticResource Dim}" Text="One file for each start of the game."/></StackPanel></DockPanel>
           <DockPanel Margin="0,0,0,12"><Button x:Name="Warm" DockPanel.Dock="Right" Content="Build" MinWidth="110"/><StackPanel><TextBlock Text="Build all pipelines ahead"/><TextBlock Style="{StaticResource Dim}" Text="Optional, about an hour and a half once: nothing is compiled while you play in a new place."/></StackPanel></DockPanel>
           <DockPanel><Button x:Name="Build" DockPanel.Dock="Right" Content="Build" MinWidth="110"/><StackPanel><TextBlock Text="Build the engine"/><TextBlock Style="{StaticResource Dim}" Text="cargo build --release -p vilocity, in a window of its own. After an update of Vilocity."/></StackPanel></DockPanel>
@@ -280,7 +284,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
 </Window>
 '@
 $w = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
-$ui = @{}; foreach ($n in 'Settings', 'SettingsNote', 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Measure', 'Sandbox', 'Dlss', 'DlssText', 'FrameGen', 'Steady', 'Rays', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4') { $ui[$n] = $w.FindName($n) }
+$ui = @{}; foreach ($n in 'Settings', 'SettingsNote', 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Measure', 'Sandbox', 'Dlss', 'DlssText', 'FrameGen', 'Steady', 'Rays', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4', 'Progress', 'Backups', 'Restore', 'Bench', 'Update') { $ui[$n] = $w.FindName($n) }
 # The rail: one page shown at a time. The log's page shows the end of the newest log, read again while it is open.
 $showLog = {
     $newest = Get-ChildItem (Join-Path $home_ "logs") -Filter "gta6-*.log" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
@@ -470,7 +474,7 @@ function Game-Process {
     if ($p) { Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue }
 }
 
-$state = @{ ready = $false; started = $null; seen = $false }
+$state = @{ ready = $false; started = $null; seen = $false; bench = $null; benchDraws = 0 }
 $refresh = { $state.ready = Test-Machine; if (-not $state.started) { $ui.Play.IsEnabled = $state.ready; $ui.Status.Text = if ($state.ready) { "Ready." } else { "Not ready yet: see This PC." } } }
 
 $ui.Browse.Add_Click({
@@ -483,6 +487,70 @@ $ui.Recheck.Add_Click({ & $refresh })
 $ui.Keys.Add_Click({ $k = Join-Path $home_ "data\keys.txt"; if (Test-Path $k) { Start-Process notepad $k } else { $ui.Status.Text = "The keys file is made on the game's first start." } })
 $ui.Saves.Add_Click({ $d = Join-Path $home_ "data"; New-Item -ItemType Directory -Force $d | Out-Null; Start-Process explorer $d })
 $ui.Logs.Add_Click({ $d = Join-Path $home_ "logs"; New-Item -ItemType Directory -Force $d | Out-Null; Start-Process explorer $d })
+
+# Save backups: each title's saves (data\<title>\saves) copied to backups\<date and time>; at each
+# PLAY the newest 10 are kept. -NoTrim: none is let go (before a restore, which may pick the oldest).
+$backups = Join-Path $home_ "backups"
+function Backup-Saves([switch]$NoTrim) {
+    $titles = @(Get-ChildItem (Join-Path $home_ "data") -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName "saves") })
+    if (-not $titles) { return $null }
+    $to = Join-Path $backups (Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')
+    foreach ($t in $titles) {
+        New-Item -ItemType Directory -Force (Join-Path $to $t.Name) | Out-Null
+        Copy-Item (Join-Path $t.FullName "saves") (Join-Path $to $t.Name) -Recurse -Force
+    }
+    if (-not $NoTrim) { Get-ChildItem $backups -Directory | Sort-Object Name -Descending | Select-Object -Skip 10 | Remove-Item -Recurse -Force }
+    $to
+}
+$ui.Backups.Add_Click({ New-Item -ItemType Directory -Force $backups | Out-Null; Start-Process explorer $backups })
+$ui.Restore.Add_Click({
+    if (Game-Process) { $ui.Status.Text = "Close the game first, then restore."; return }
+    New-Item -ItemType Directory -Force $backups | Out-Null
+    $d = New-Object System.Windows.Forms.FolderBrowserDialog
+    $d.Description = "Pick a backup: a folder named by its date and time"; $d.SelectedPath = $backups
+    if ($d.ShowDialog() -ne 'OK') { return }
+    $titles = @(Get-ChildItem $d.SelectedPath -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName "saves") })
+    if (-not $titles) { $ui.Status.Text = "That folder holds no backup of saves: pick one of the folders named by a date."; return }
+    $sure = [Windows.MessageBox]::Show("Put back the saves of $(Split-Path $d.SelectedPath -Leaf)?`n`nYour saves of now are copied to the backups first.", "Restore saves", 'YesNo')
+    if ($sure -ne 'Yes') { return }
+    $now = Backup-Saves -NoTrim
+    foreach ($t in $titles) {
+        $dst = Join-Path $home_ "data\$($t.Name)"
+        New-Item -ItemType Directory -Force $dst | Out-Null
+        Remove-Item (Join-Path $dst "saves") -Recurse -Force -ErrorAction SilentlyContinue
+        Copy-Item (Join-Path $t.FullName "saves") $dst -Recurse -Force
+    }
+    $ui.Status.Text = "Saves put back from $(Split-Path $d.SelectedPath -Leaf)$(if ($now) { "; those of before are in $(Split-Path $now -Leaf)" })."
+})
+
+# The benchmark: PLAY, then 60 seconds of the world measured from the window's frame rate (the
+# timer), and what it found put on the clipboard to share.
+$benchDone = {
+    $f = @($state.bench | Sort-Object)
+    $avg = ($f | Measure-Object -Average).Average
+    $gpu = (Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Sort-Object AdapterRAM -Descending | Select-Object -First 1).Name
+    $cpu = (Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1).Name
+    $ram = (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).TotalPhysicalMemory / 1GB
+    $how = @("1080p", "4K", "1440p")[(Mode)] + $(if ($ui.Dlss.IsChecked -and $ui.Dlss.IsEnabled) { ", DLSS" } else { "" }) + $(if ($ui.FrameGen.IsChecked -and $ui.FrameGen.IsEnabled) { " + frame generation" } else { "" })
+    $text = "Vilocity benchmark, {0:yyyy-MM-dd}: {1}, {2}, {3:N0} GB RAM, {4}. 60 s of play: median {5:N1} fps, average {6:N1}, 5% low {7:N1}, highest {8:N1} ({9:N0} draws a frame)." -f (Get-Date), $gpu, $cpu.Trim(), $ram, $how, $f[[int]($f.Count / 2)], $avg, $f[[int]($f.Count * 0.05)], $f[-1], ($state.benchDraws / $f.Count)
+    $state.bench = $null
+    try { Set-Clipboard -Value $text } catch {}
+    $ui.Status.Text = $text + " (Copied: paste it to share.)"
+    [Windows.MessageBox]::Show($text + "`n`nIt is on the clipboard: paste it to share.", "Benchmark") | Out-Null
+}
+$ui.Bench.Add_Click({
+    if ($state.started) { $ui.Status.Text = "Close the game first: the benchmark starts it."; return }
+    $state.bench = New-Object 'System.Collections.Generic.List[double]'; $state.benchDraws = 0
+    $ui.Nav0.IsChecked = $true
+    $ui.Play.RaiseEvent((New-Object Windows.RoutedEventArgs ([Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
+})
+
+# Update: the newest Vilocity from git and the engine built again, in a window of its own.
+$ui.Update.Add_Click({
+    if (-not (Test-Path (Join-Path $root ".git"))) { $ui.Status.Text = "This copy of Vilocity was not made with git: download the newest from github.com/voidopcode/vilocity."; return }
+    if ($state.started -or (Game-Process)) { $ui.Status.Text = "Close the game first: its engine is built again."; return }
+    Start-Process cmd -ArgumentList '/k', "cd /d `"$root`" && git pull --ff-only && cargo build --release -p vilocity && echo. && echo Updated. Close this window, then close the launcher and open it again."
+})
 $ui.Build.Add_Click({ Start-Process cmd -ArgumentList '/k', "cd /d `"$root`" && cargo build --release -p vilocity && echo. && echo Built. Close this window and press Check again." })
 
 # Every pipeline the game has made in earlier runs (the engine keeps the list), compiled in a
@@ -551,11 +619,13 @@ $ui.Play.Add_Click({
         # only vilocity.exe let the script go on to its next step, and the game started all the same.
         if ($state.proc -and -not $state.proc.HasExited) { & taskkill.exe /PID $state.proc.Id /T /F 2>&1 | Out-Null }
         Get-Process vilocity -ErrorAction SilentlyContinue | Stop-Process -Force
-        $state.started = $null; $state.proc = $null; $ui.Play.Content = "PLAY"; & $refresh; $ui.Status.Text = "Stopped."
+        $state.started = $null; $state.proc = $null; $state.bench = $null; $ui.Progress.Visibility = 'Collapsed'; $ui.Play.Content = "PLAY"; & $refresh; $ui.Status.Text = "Stopped."
         return
     }
     & $showMenu
     Save-Choices
+    # Your saves, copied before each start (Tools, Save backups).
+    try { $null = Backup-Saves } catch {}
     # Smooth Motion into the driver's profile for vilocity.exe, when the box differs from what the driver holds.
     $note = ""
     if ($ui.Smooth.Visibility -eq 'Visible' -and [bool]$ui.Smooth.IsChecked -ne $smooth.driver) {
@@ -586,10 +656,18 @@ $timer = New-Object Windows.Threading.DispatcherTimer; $timer.Interval = [TimeSp
 $timer.Add_Tick({
     if (-not $state.started) { return }
     $g = Game-Process
+    $bar = $null
     if ($g) {
-        if ($ui.Leave.IsChecked -and -not $state.seen) { $w.Close(); return }
+        if ($ui.Leave.IsChecked -and -not $state.seen -and $null -eq $state.bench) { $w.Close(); return }
         $state.seen = $true
         $ui.Status.Text = if ($g.MainWindowTitle -match '([\d.]+) fps ([\d.]+) ms/frame') { "Running: {0} fps ({1} ms a frame). F8 hides the panel, Esc frees the mouse." -f $Matches[1], $Matches[2] } else { "Running." }
+        # The benchmark: the window's frame rate once a second while the world is drawn (over 2,000 draws).
+        if ($null -ne $state.bench -and $g.MainWindowTitle -match '([\d.]+) fps [\d.]+ ms/frame (\d+) draws' -and [int]$Matches[2] -gt 2000) {
+            $state.bench.Add([double]$Matches[1]); $state.benchDraws += [int]$Matches[2]
+            $bar = $state.bench.Count / 60.0
+            $ui.Status.Text = "Benchmark: {0} of 60 seconds measured. Move around as you usually play." -f $state.bench.Count
+            if ($state.bench.Count -ge 60) { & $benchDone }
+        } elseif ($null -ne $state.bench) { $ui.Status.Text = "Benchmark: waiting for the world (it measures once you are in it)..." }
     } elseif (-not $state.seen -and $state.proc -and -not $state.proc.HasExited) {
         # The play script is still at its steps before the game; it is not "did not start" while it runs
         # (said after 45 seconds, PLAY came back and a second press started a second game).
@@ -599,7 +677,7 @@ $timer.Add_Tick({
                 # How far it is, from the lines the play script keeps (a few minutes after an update of Vilocity or the driver).
                 $lines = Get-Content (Join-Path $home_ "logs\warm-progress.txt") -Tail 3 -ErrorAction SilentlyContinue
                 $done = $lines | Where-Object { $_ -match '^(\d+) of (\d+)' } | Select-Object -Last 1
-                if ($done -match '^(\d+) of (\d+)') { "Preparing the game's pipelines: {0:N0} of {1:N0} (after an update, a few minutes)..." -f [int]$Matches[1], [int]$Matches[2] }
+                if ($done -match '^(\d+) of (\d+)') { if ([int]$Matches[2] -gt 0) { $bar = [int]$Matches[1] / [double]$Matches[2] }; "Preparing the game's pipelines: {0:N0} of {1:N0} (after an update, a few minutes)..." -f [int]$Matches[1], [int]$Matches[2] }
                 elseif (($lines | Where-Object { $_ -match '\d+ to make' } | Select-Object -Last 1) -match '(\d+) to make') { "Preparing {0:N0} of the game's pipelines (after an update, a few minutes)..." -f [int]$Matches[1] }
                 else { "Preparing the game's pipelines (after an update, a few minutes)..." }
             }
@@ -609,8 +687,11 @@ $timer.Add_Tick({
         $ui.Status.Text = if ($state.seen) { "The game closed." }
             elseif ($ui.Sandbox.IsChecked -and $newest -and (Select-String -Path $newest.FullName -Pattern '(os error 5)' -SimpleMatch -Quiet)) { "Windows refused the sandbox a folder (access denied): untick Sandbox in Options to play, and please report it with the log." }
             else { "The game did not start: see Logs." }
+        if ($null -ne $state.bench) { $state.bench = $null; $ui.Status.Text += " (The benchmark ended with the game, before 60 seconds of the world.)" }
         $state.started = $null; $ui.Play.Content = "PLAY"; & $refresh
     }
+    $ui.Progress.Visibility = if ($null -ne $bar) { 'Visible' } else { 'Collapsed' }
+    if ($null -ne $bar) { $ui.Progress.Value = [math]::Min(1.0, $bar) }
 })
 $timer.Start()
 $w.Add_Closing({ if (-not $Shot) { Save-Choices } })
