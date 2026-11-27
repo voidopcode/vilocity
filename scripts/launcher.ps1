@@ -86,7 +86,7 @@ $exe = Join-Path $root "target\release\vilocity.exe"
 # What the window remembers, with what it starts from. (The game folder: the user's
 # variable as it is now, not as this window's parent had it.)
 $known = [Environment]::GetEnvironmentVariable('VILOCITY_GTA6_DIR', 'User'); if (-not $known) { $known = $env:VILOCITY_GTA6_DIR }
-$set = @{ game = $known; mode = 0; cap = 0; sharp = 0.0; fsr = $true; hud = $true; sandbox = $true; night = $true; full = $true; leave = $false; extra = "" }
+$set = @{ game = $known; mode = 0; cap = 0; sharp = 0.0; fsr = $true; hud = $true; sandbox = $true; night = $true; full = $true; logwin = $true; leave = $false; extra = "" }
 if (Test-Path $file) {
     try { $old = Get-Content $file -Raw | ConvertFrom-Json; foreach ($k in @($set.Keys)) { if ($null -ne $old.$k) { $set[$k] = $old.$k } } } catch {}
 }
@@ -96,105 +96,194 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
 
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Vilocity" Width="960" Height="900" MinWidth="880" MinHeight="840" WindowStartupLocation="CenterScreen"
-        Background="#0B0D12" Foreground="#E6ECF5" FontFamily="Segoe UI" FontSize="13">
+        Title="Vilocity" Width="1080" Height="720" MinWidth="960" MinHeight="640" WindowStartupLocation="CenterScreen"
+        Background="#0A0B10" Foreground="#EDEFF5" FontFamily="Segoe UI" FontSize="13">
   <Window.Resources>
-    <Style TargetType="TextBlock"><Setter Property="Foreground" Value="#E6ECF5"/></Style>
-    <Style x:Key="Dim" TargetType="TextBlock"><Setter Property="Foreground" Value="#8B93A7"/><Setter Property="FontSize" Value="12"/><Setter Property="TextWrapping" Value="Wrap"/></Style>
-    <Style x:Key="Head" TargetType="TextBlock"><Setter Property="Foreground" Value="#8B93A7"/><Setter Property="FontSize" Value="11"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Margin" Value="0,0,0,10"/></Style>
-    <Style x:Key="Label" TargetType="TextBlock"><Setter Property="Foreground" Value="#E6ECF5"/><Setter Property="Margin" Value="0,0,0,6"/></Style>
+    <LinearGradientBrush x:Key="Accent" StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#7C5CFF" Offset="0"/><GradientStop Color="#4F8BFF" Offset="1"/></LinearGradientBrush>
+    <Style TargetType="TextBlock"><Setter Property="Foreground" Value="#EDEFF5"/></Style>
+    <Style x:Key="Dim" TargetType="TextBlock"><Setter Property="Foreground" Value="#8A91A6"/><Setter Property="FontSize" Value="12"/><Setter Property="TextWrapping" Value="Wrap"/></Style>
+    <Style x:Key="Head" TargetType="TextBlock"><Setter Property="Foreground" Value="#8A91A6"/><Setter Property="FontSize" Value="11"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Margin" Value="0,0,0,10"/></Style>
+    <Style x:Key="Label" TargetType="TextBlock"><Setter Property="Foreground" Value="#EDEFF5"/><Setter Property="Margin" Value="0,0,0,6"/></Style>
+    <Style x:Key="Title" TargetType="TextBlock"><Setter Property="Foreground" Value="#EDEFF5"/><Setter Property="FontSize" Value="22"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Margin" Value="0,0,0,16"/></Style>
+    <Style x:Key="Card" TargetType="Border"><Setter Property="Background" Value="#141722"/><Setter Property="CornerRadius" Value="14"/><Setter Property="Padding" Value="18,16"/><Setter Property="BorderBrush" Value="#1F2433"/><Setter Property="BorderThickness" Value="1"/></Style>
     <Style TargetType="Button">
-      <Setter Property="Foreground" Value="#E6ECF5"/><Setter Property="Background" Value="#1D2230"/><Setter Property="Padding" Value="14,7"/><Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Foreground" Value="#EDEFF5"/><Setter Property="Background" Value="#1D2130"/><Setter Property="Padding" Value="14,8"/><Setter Property="Cursor" Value="Hand"/>
       <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
-        <Border x:Name="b" Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}" BorderThickness="1" BorderBrush="Transparent">
+        <Border x:Name="b" Background="{TemplateBinding Background}" CornerRadius="9" Padding="{TemplateBinding Padding}" BorderThickness="1" BorderBrush="#2A3042">
           <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
         <ControlTemplate.Triggers>
-          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="b" Property="Opacity" Value="0.85"/></Trigger>
-          <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="#E6ECF5"/></Trigger>
-          <Trigger Property="IsEnabled" Value="False"><Setter TargetName="b" Property="Opacity" Value="0.45"/></Trigger>
+          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="b" Property="Opacity" Value="0.86"/></Trigger>
+          <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="#EDEFF5"/></Trigger>
+          <Trigger Property="IsEnabled" Value="False"><Setter TargetName="b" Property="Opacity" Value="0.4"/></Trigger>
         </ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
     </Style>
+    <!-- A size to choose: one of a row. -->
     <Style x:Key="Pill" TargetType="RadioButton">
-      <Setter Property="Foreground" Value="#E6ECF5"/><Setter Property="Margin" Value="0,0,6,0"/><Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Foreground" Value="#C6CBDA"/><Setter Property="Margin" Value="0,0,8,0"/><Setter Property="Cursor" Value="Hand"/>
       <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton">
-        <Border x:Name="b" Background="#1D2230" CornerRadius="6" Padding="14,6" BorderThickness="1" BorderBrush="Transparent"><ContentPresenter/></Border>
+        <Border x:Name="b" Background="#1D2130" CornerRadius="9" Padding="18,8" BorderThickness="1" BorderBrush="#2A3042"><ContentPresenter/></Border>
         <ControlTemplate.Triggers>
-          <Trigger Property="IsChecked" Value="True"><Setter TargetName="b" Property="Background" Value="#7C5CFF"/></Trigger>
-          <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="#E6ECF5"/></Trigger>
+          <Trigger Property="IsChecked" Value="True"><Setter TargetName="b" Property="Background" Value="{StaticResource Accent}"/><Setter TargetName="b" Property="BorderBrush" Value="Transparent"/><Setter Property="Foreground" Value="White"/></Trigger>
+          <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="#EDEFF5"/></Trigger>
         </ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
     </Style>
-    <Style TargetType="CheckBox"><Setter Property="Foreground" Value="#E6ECF5"/><Setter Property="Margin" Value="0,0,0,10"/></Style>
-    <Style TargetType="TextBox"><Setter Property="Background" Value="#0B0D12"/><Setter Property="Foreground" Value="#E6ECF5"/><Setter Property="BorderBrush" Value="#2A3142"/>
-      <Setter Property="Padding" Value="8,6"/><Setter Property="CaretBrush" Value="#E6ECF5"/></Style>
+    <!-- A page to go to, in the rail on the left. -->
+    <Style x:Key="Nav" TargetType="RadioButton">
+      <Setter Property="Foreground" Value="#8A91A6"/><Setter Property="Margin" Value="0,0,0,4"/><Setter Property="Cursor" Value="Hand"/><Setter Property="FontSize" Value="14"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton">
+        <Border x:Name="b" Background="Transparent" CornerRadius="10" Padding="12,10" BorderThickness="1" BorderBrush="Transparent"><ContentPresenter/></Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="b" Property="Background" Value="#141722"/></Trigger>
+          <Trigger Property="IsChecked" Value="True"><Setter TargetName="b" Property="Background" Value="#1A1E2C"/><Setter Property="Foreground" Value="#EDEFF5"/></Trigger>
+          <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="#EDEFF5"/></Trigger>
+        </ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style x:Key="Glyph" TargetType="TextBlock"><Setter Property="FontFamily" Value="Segoe MDL2 Assets"/><Setter Property="FontSize" Value="15"/><Setter Property="Margin" Value="0,2,12,0"/><Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/></Style>
+    <Style x:Key="NavText" TargetType="TextBlock"><Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/></Style>
+    <Style TargetType="CheckBox"><Setter Property="Foreground" Value="#EDEFF5"/><Setter Property="Margin" Value="0,0,0,10"/></Style>
+    <Style TargetType="TextBox"><Setter Property="Background" Value="#0A0B10"/><Setter Property="Foreground" Value="#EDEFF5"/><Setter Property="BorderBrush" Value="#2A3042"/>
+      <Setter Property="Padding" Value="8,6"/><Setter Property="CaretBrush" Value="#EDEFF5"/></Style>
   </Window.Resources>
-  <Grid Margin="28,22,28,22">
-    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-    <StackPanel Orientation="Horizontal" Margin="0,0,0,18">
-      <Image x:Name="Logo" Width="46" Height="46" Margin="0,0,12,0" RenderOptions.BitmapScalingMode="HighQuality"/>
-      <StackPanel VerticalAlignment="Center"><TextBlock Text="Vilocity" FontSize="22" FontWeight="SemiBold"/><TextBlock Style="{StaticResource Dim}" Text="Grand Theft Auto VI, running natively on Windows"/></StackPanel>
-    </StackPanel>
-    <Border Grid.Row="1" Background="#151926" CornerRadius="10" Padding="16,14" Margin="0,0,0,14">
-      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <Border x:Name="CoverBox" Width="64" Height="64" CornerRadius="8" Margin="0,0,14,0" Visibility="Collapsed"><Border.Background><ImageBrush x:Name="Cover" Stretch="UniformToFill"/></Border.Background></Border>
-        <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock x:Name="GameName" Style="{StaticResource Head}" Text="GAME FOLDER"/><TextBox x:Name="Game" ToolTip="The folder that holds game_scarlett_master.exe"/></StackPanel>
-        <Button x:Name="Browse" Grid.Column="2" Content="Browse..." Margin="10,0,0,0" VerticalAlignment="Bottom"/></Grid>
-    </Border>
-    <Grid Grid.Row="2"><Grid.ColumnDefinitions><ColumnDefinition Width="5*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="6*"/></Grid.ColumnDefinitions>
-      <Border Background="#151926" CornerRadius="10" Padding="16,14">
-        <DockPanel><TextBlock DockPanel.Dock="Top" Style="{StaticResource Head}" Text="THIS PC"/>
-          <Button x:Name="Recheck" DockPanel.Dock="Bottom" Content="Check again" HorizontalAlignment="Left" Margin="0,8,0,0"/>
-          <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel x:Name="Checks"/></ScrollViewer></DockPanel>
-      </Border>
-      <Border Grid.Column="2" Background="#151926" CornerRadius="10" Padding="16,14">
-        <StackPanel>
-          <TextBlock Style="{StaticResource Head}" Text="OPTIONS"/>
-          <TextBlock Style="{StaticResource Label}" Text="Picture"/>
-          <StackPanel Orientation="Horizontal"><RadioButton x:Name="Mode0" GroupName="mode" Style="{StaticResource Pill}" Content="Fast"/><RadioButton x:Name="Mode1" GroupName="mode" Style="{StaticResource Pill}" Content="Quality"/></StackPanel>
-          <TextBlock x:Name="ModeText" Style="{StaticResource Dim}" Margin="0,6,0,14"/>
-          <TextBlock Style="{StaticResource Label}" Text="Frame rate"/>
-          <StackPanel Orientation="Horizontal" Margin="0,0,0,14"><RadioButton x:Name="Cap0" GroupName="cap" Style="{StaticResource Pill}" Content="No limit"/><RadioButton x:Name="Cap1" GroupName="cap" Style="{StaticResource Pill}" Content="At most 60"/><RadioButton x:Name="Cap2" GroupName="cap" Style="{StaticResource Pill}" Content="At most 30"/></StackPanel>
-          <StackPanel Orientation="Horizontal"><TextBlock Text="Sharpening"/><TextBlock x:Name="SharpText" Style="{StaticResource Dim}" Margin="8,1,0,0"/></StackPanel>
-          <Slider x:Name="Sharp" Minimum="0" Maximum="1" TickFrequency="0.1" IsSnapToTickEnabled="True" Margin="0,6,0,14"/>
-          <CheckBox x:Name="Fsr"><TextBlock TextWrapping="Wrap" Text="AMD's PC upscaler, if its DLL is installed (a little faster)"/></CheckBox>
-          <CheckBox x:Name="Hud"><TextBlock TextWrapping="Wrap" Text="Frame rate panel in the game (F8 hides it)"/></CheckBox>
-          <CheckBox x:Name="Full" ToolTip="VILOCITY_FULLSCREEN=1. In a window the picture is shrunk to fit the desktop, which softens it"><TextBlock TextWrapping="Wrap" Text="Full screen: the sharpest picture (F11 switches to a window and back while playing)"/></CheckBox>
-          <CheckBox x:Name="Sandbox"><TextBlock TextWrapping="Wrap" Text="Sandbox: no network, none of your files (recommended)"/></CheckBox>
-          <CheckBox x:Name="Night" ToolTip="VILOCITY_AMBIENT_FLOOR=0.05: the least light the stand-in for the traced light gives a surface"><TextBlock TextWrapping="Wrap" Text="Brighter nights: a little light where no lamp reaches (without it, unlit ground is black at night)"/></CheckBox>
-          <CheckBox x:Name="Smooth" ToolTip="Written into the NVIDIA driver's profile for vilocity.exe when you press PLAY; nothing else of the driver is changed"><TextBlock TextWrapping="Wrap" Text="NVIDIA Smooth Motion: the driver shows a made-up picture between every two (twice the frame rate shown; RTX 40 and 50)"/></CheckBox>
-          <CheckBox x:Name="Leave"><TextBlock TextWrapping="Wrap" Text="Close this window when the game starts"/></CheckBox>
-          <TextBlock Style="{StaticResource Label}" Text="More settings" Margin="0,4,0,6"/>
-          <TextBox x:Name="Extra" ToolTip="NAME=VALUE; NAME=VALUE. For example: VILOCITY_AMBIENT=1.0; VILOCITY_THIN_THREADS=12"/>
+  <Grid>
+    <Grid.ColumnDefinitions><ColumnDefinition Width="210"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+    <!-- The rail: where to go. -->
+    <Border Background="#0E1017" BorderBrush="#1A1E2C" BorderThickness="0,0,1,0">
+      <DockPanel Margin="14,20,14,16">
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6,0,0,24">
+          <Image x:Name="Logo" Width="34" Height="34" Margin="0,0,10,0" RenderOptions.BitmapScalingMode="HighQuality"/>
+          <TextBlock Text="Vilocity" FontSize="19" FontWeight="SemiBold" VerticalAlignment="Center"/>
         </StackPanel>
-      </Border>
-    </Grid>
-    <Grid Grid.Row="3" Margin="0,16,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-      <StackPanel VerticalAlignment="Center">
-        <TextBlock x:Name="Status" FontSize="14" TextWrapping="Wrap"/>
-        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-          <Button x:Name="Keys" Content="Keys" Margin="0,0,8,0"/><Button x:Name="Saves" Content="Saves" Margin="0,0,8,0"/><Button x:Name="Logs" Content="Logs" Margin="0,0,8,0"/><Button x:Name="Build" Content="Build the engine" Margin="0,0,8,0" ToolTip="cargo build --release -p vilocity, in a window of its own"/><Button x:Name="Warm" Content="Build all pipelines ahead" ToolTip="Optional. Compiles every shader pipeline the game has ever made, so that none is compiled while you play in a new place. The ones you have played with are made ahead at every start anyway."/></StackPanel>
-      </StackPanel>
-      <Button x:Name="Play" Grid.Column="1" Content="PLAY" FontSize="18" FontWeight="Bold" Padding="46,14" Background="#7C5CFF" VerticalAlignment="Center" IsDefault="True"/>
+        <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource Dim}" Margin="8,0,0,0" Text="Your own copy of the game. No network, none of your files: the game runs in a sandbox."/>
+        <StackPanel>
+          <RadioButton x:Name="Nav0" GroupName="nav" Style="{StaticResource Nav}" IsChecked="True"><StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Glyph}" Text="&#xE768;"/><TextBlock Style="{StaticResource NavText}" Text="Play"/></StackPanel></RadioButton>
+          <RadioButton x:Name="Nav1" GroupName="nav" Style="{StaticResource Nav}"><StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Glyph}" Text="&#xE7F8;"/><TextBlock Style="{StaticResource NavText}" Text="This PC"/></StackPanel></RadioButton>
+          <RadioButton x:Name="Nav2" GroupName="nav" Style="{StaticResource Nav}"><StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Glyph}" Text="&#xE713;"/><TextBlock Style="{StaticResource NavText}" Text="Options"/></StackPanel></RadioButton>
+          <RadioButton x:Name="Nav3" GroupName="nav" Style="{StaticResource Nav}"><StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Glyph}" Text="&#xE90F;"/><TextBlock Style="{StaticResource NavText}" Text="Tools"/></StackPanel></RadioButton>
+          <RadioButton x:Name="Nav4" GroupName="nav" Style="{StaticResource Nav}"><StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Glyph}" Text="&#xE9D9;"/><TextBlock Style="{StaticResource NavText}" Text="Log"/></StackPanel></RadioButton>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+    <Grid Grid.Column="1" Margin="28,22,28,22">
+      <!-- Play: the game, its picture, go. -->
+      <ScrollViewer x:Name="Page0" VerticalScrollBarVisibility="Auto"><StackPanel>
+        <Border CornerRadius="18" Height="290" Margin="0,0,0,14">
+          <Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#1A1440" Offset="0"/><GradientStop Color="#3A2A9A" Offset="0.6"/><GradientStop Color="#1E5C8A" Offset="1"/></LinearGradientBrush></Border.Background>
+          <Grid>
+            <Border CornerRadius="18"><Border.Background><ImageBrush x:Name="Hero" Stretch="UniformToFill"/></Border.Background></Border>
+            <Border CornerRadius="18"><Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="1,0"><GradientStop Color="#FA0A0B10" Offset="0"/><GradientStop Color="#E60A0B10" Offset="0.4"/><GradientStop Color="#700A0B10" Offset="0.68"/><GradientStop Color="#000A0B10" Offset="1"/></LinearGradientBrush></Border.Background></Border>
+            <StackPanel Margin="30,0,30,0" VerticalAlignment="Center" HorizontalAlignment="Left" MaxWidth="520">
+              <TextBlock x:Name="GameName" FontSize="32" FontWeight="Bold" Foreground="White" TextWrapping="Wrap"/>
+              <TextBlock x:Name="Status" FontSize="14" Foreground="#D5D8E6" TextWrapping="Wrap" Margin="0,8,0,0"/>
+              <StackPanel Orientation="Horizontal" Margin="0,22,0,0">
+                <Button x:Name="Play" Content="PLAY" FontSize="17" FontWeight="Bold" Padding="46,13" Background="{StaticResource Accent}" Foreground="White" IsDefault="True"/>
+                <Button x:Name="Browse" Content="Game folder..." Margin="12,0,0,0" Background="#33FFFFFF" Padding="16,13"/>
+              </StackPanel>
+            </StackPanel>
+          </Grid>
+        </Border>
+        <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+          <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel>
+              <TextBlock Style="{StaticResource Head}" Text="PICTURE"/>
+              <StackPanel Orientation="Horizontal"><RadioButton x:Name="Mode0" GroupName="mode" Style="{StaticResource Pill}" Content="1080p" FontSize="15"/><RadioButton x:Name="Mode2" GroupName="mode" Style="{StaticResource Pill}" Content="1440p" FontSize="15"/><RadioButton x:Name="Mode1" GroupName="mode" Style="{StaticResource Pill}" Content="4K" FontSize="15"/></StackPanel>
+              <TextBlock x:Name="ModeText" Style="{StaticResource Dim}" Margin="0,10,0,0"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Margin="24,0,0,0" VerticalAlignment="Center">
+              <CheckBox x:Name="Full" ToolTip="In a window the picture is shrunk to fit the desktop, which softens it"><TextBlock Text="Full screen (F11 switches)"/></CheckBox>
+              <CheckBox x:Name="Hud"><TextBlock Text="Frame rate panel (F8 hides it)"/></CheckBox>
+              <CheckBox x:Name="LogWindow" Margin="0" ToolTip="A console that shows what the engine writes while the game runs"><TextBlock Text="Live log window"/></CheckBox>
+            </StackPanel>
+          </Grid>
+        </Border>
+        <Border Style="{StaticResource Card}">
+          <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Border x:Name="CoverBox" Width="44" Height="44" CornerRadius="8" Margin="0,0,14,0" Visibility="Collapsed"><Border.Background><ImageBrush x:Name="Cover" Stretch="UniformToFill"/></Border.Background></Border>
+            <StackPanel Grid.Column="1"><TextBlock Style="{StaticResource Head}" Text="GAME FOLDER" Margin="0,0,0,6"/><TextBox x:Name="Game" ToolTip="The folder that holds game_scarlett_master.exe"/></StackPanel>
+          </Grid>
+        </Border>
+      </StackPanel></ScrollViewer>
+      <!-- This PC: what it is, what it gets, what is missing. -->
+      <ScrollViewer x:Name="Page1" VerticalScrollBarVisibility="Auto" Visibility="Collapsed"><StackPanel>
+        <DockPanel><Button x:Name="Recheck" DockPanel.Dock="Right" Content="Check again" VerticalAlignment="Top"/><TextBlock Style="{StaticResource Title}" Text="This PC"/></DockPanel>
+        <Border Style="{StaticResource Card}" Margin="0,0,0,14"><StackPanel><TextBlock Style="{StaticResource Head}" Text="SETTINGS CHOSEN FOR THIS PC"/><TextBlock x:Name="Profile" TextWrapping="Wrap" FontSize="14"/></StackPanel></Border>
+        <Border Style="{StaticResource Card}"><StackPanel><TextBlock Style="{StaticResource Head}" Text="CHECKS"/><StackPanel x:Name="Checks"/></StackPanel></Border>
+      </StackPanel></ScrollViewer>
+      <!-- Options: for those who want them. -->
+      <ScrollViewer x:Name="Page2" VerticalScrollBarVisibility="Auto" Visibility="Collapsed"><StackPanel>
+        <TextBlock Style="{StaticResource Title}" Text="Options"/>
+        <Border Style="{StaticResource Card}" Margin="0,0,0,14"><StackPanel>
+          <TextBlock Style="{StaticResource Label}" Text="Frame rate"/>
+          <StackPanel Orientation="Horizontal" Margin="0,0,0,16"><RadioButton x:Name="Cap0" GroupName="cap" Style="{StaticResource Pill}" Content="No limit"/><RadioButton x:Name="Cap1" GroupName="cap" Style="{StaticResource Pill}" Content="At most 60"/><RadioButton x:Name="Cap2" GroupName="cap" Style="{StaticResource Pill}" Content="At most 30"/></StackPanel>
+          <StackPanel Orientation="Horizontal"><TextBlock Text="Sharpening"/><TextBlock x:Name="SharpText" Style="{StaticResource Dim}" Margin="8,1,0,0"/></StackPanel>
+          <Slider x:Name="Sharp" Minimum="0" Maximum="1" TickFrequency="0.1" IsSnapToTickEnabled="True" Margin="0,6,0,0"/>
+        </StackPanel></Border>
+        <Border Style="{StaticResource Card}" Margin="0,0,0,14"><StackPanel>
+          <CheckBox x:Name="Night" ToolTip="VILOCITY_AMBIENT_FLOOR=0.05: the least light the stand-in for the traced light gives a surface"><TextBlock TextWrapping="Wrap" Text="Brighter nights: a little light where no lamp reaches"/></CheckBox>
+          <CheckBox x:Name="Smooth" ToolTip="Written into the NVIDIA driver's profile for vilocity.exe when you press PLAY; nothing else of the driver is changed"><TextBlock TextWrapping="Wrap" Text="NVIDIA Smooth Motion: the driver shows a made-up picture between every two (twice the frame rate shown; RTX 40 and 50)"/></CheckBox>
+          <CheckBox x:Name="Fsr"><TextBlock TextWrapping="Wrap" Text="AMD's PC upscaler, if its DLL is installed (a little faster)"/></CheckBox>
+          <CheckBox x:Name="Sandbox"><TextBlock TextWrapping="Wrap" Text="Sandbox: no network, none of your files (recommended)"/></CheckBox>
+          <CheckBox x:Name="Leave" Margin="0"><TextBlock TextWrapping="Wrap" Text="Close this window when the game starts"/></CheckBox>
+        </StackPanel></Border>
+        <Border Style="{StaticResource Card}"><StackPanel>
+          <TextBlock Style="{StaticResource Label}" Text="Engine settings by name"/>
+          <TextBox x:Name="Extra" ToolTip="NAME=VALUE; NAME=VALUE. For example: VILOCITY_AMBIENT=1.0; VILOCITY_THIN_THREADS=12"/>
+          <TextBlock Style="{StaticResource Dim}" Margin="0,8,0,0" Text="NAME=VALUE; NAME=VALUE. What is named here wins over what the launcher sets."/>
+        </StackPanel></Border>
+      </StackPanel></ScrollViewer>
+      <!-- Tools. -->
+      <ScrollViewer x:Name="Page3" VerticalScrollBarVisibility="Auto" Visibility="Collapsed"><StackPanel>
+        <TextBlock Style="{StaticResource Title}" Text="Tools"/>
+        <Border Style="{StaticResource Card}"><StackPanel>
+          <DockPanel Margin="0,0,0,12"><Button x:Name="Keys" DockPanel.Dock="Right" Content="Open" MinWidth="110"/><StackPanel><TextBlock Text="Keys"/><TextBlock Style="{StaticResource Dim}" Text="Which key does what. Change it and save: the running game takes it within a second."/></StackPanel></DockPanel>
+          <DockPanel Margin="0,0,0,12"><Button x:Name="Saves" DockPanel.Dock="Right" Content="Open" MinWidth="110"/><StackPanel><TextBlock Text="Saves"/><TextBlock Style="{StaticResource Dim}" Text="The folder with your saved games and the game's settings."/></StackPanel></DockPanel>
+          <DockPanel Margin="0,0,0,12"><Button x:Name="Logs" DockPanel.Dock="Right" Content="Open" MinWidth="110"/><StackPanel><TextBlock Text="Logs"/><TextBlock Style="{StaticResource Dim}" Text="One file for each start of the game."/></StackPanel></DockPanel>
+          <DockPanel Margin="0,0,0,12"><Button x:Name="Warm" DockPanel.Dock="Right" Content="Build" MinWidth="110"/><StackPanel><TextBlock Text="Build all pipelines ahead"/><TextBlock Style="{StaticResource Dim}" Text="Optional, about an hour and a half once: nothing is compiled while you play in a new place."/></StackPanel></DockPanel>
+          <DockPanel><Button x:Name="Build" DockPanel.Dock="Right" Content="Build" MinWidth="110"/><StackPanel><TextBlock Text="Build the engine"/><TextBlock Style="{StaticResource Dim}" Text="cargo build --release -p vilocity, in a window of its own. After an update of Vilocity."/></StackPanel></DockPanel>
+        </StackPanel></Border>
+      </StackPanel></ScrollViewer>
+      <!-- Log: what the engine wrote in its newest run. -->
+      <DockPanel x:Name="Page4" Visibility="Collapsed">
+        <TextBlock DockPanel.Dock="Top" Style="{StaticResource Title}" Text="Log"/>
+        <TextBlock DockPanel.Dock="Top" x:Name="LogName" Style="{StaticResource Dim}" Margin="0,-8,0,10"/>
+        <TextBox x:Name="LogBox" IsReadOnly="True" FontFamily="Consolas" FontSize="12" TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="#07080C" BorderBrush="#1F2433"/>
+      </DockPanel>
     </Grid>
   </Grid>
 </Window>
 '@
 $w = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
-$ui = @{}; foreach ($n in 'Logo', 'CoverBox', 'Cover', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'Sandbox', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play') { $ui[$n] = $w.FindName($n) }
+$ui = @{}; foreach ($n in 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Sandbox', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4') { $ui[$n] = $w.FindName($n) }
+# The rail: one page shown at a time. The log's page shows the end of the newest log, read again while it is open.
+$showLog = {
+    $newest = Get-ChildItem (Join-Path $home_ "logs") -Filter "gta6-*.log" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
+    if (-not $newest) { $ui.LogName.Text = "No log yet: one is written at each start of the game."; return }
+    $ui.LogName.Text = $newest.FullName
+    try {
+        $fs = [IO.File]::Open($newest.FullName, 'Open', 'Read', 'ReadWrite'); $from = [math]::Max(0, $fs.Length - 60000); [void]$fs.Seek($from, 'Begin')
+        $text = (New-Object IO.StreamReader($fs)).ReadToEnd(); $fs.Close()
+        $ui.LogBox.Text = ($text -split "`r?`n" | Select-Object -Skip 1 | ForEach-Object { $_ -replace '^\S+T(\d\d:\d\d:\d\d)\.\d+Z\s+', '$1 ' }) -join "`r`n"; $ui.LogBox.ScrollToEnd()
+    } catch {}
+}
+foreach ($i in 0..4) {
+    $ui["Nav$i"].Tag = $i
+    $ui["Nav$i"].Add_Checked({ param($from) foreach ($k in 0..4) { $ui["Page$k"].Visibility = if ($k -eq $from.Tag) { 'Visible' } else { 'Collapsed' } }; if ($from.Tag -eq 4) { & $showLog } })
+}
 # The logo, in the window, its title bar and its taskbar button.
 $logo = Join-Path $root "assets\logo-256.png"
 if (Test-Path $logo) { $picture = New-Object Windows.Media.Imaging.BitmapImage ([Uri]$logo); $ui.Logo.Source = $picture; $w.Icon = $picture }
 
 $ui.Game.Text = [string]$set.game
-$ui["Mode$([math]::Min([int]$set.mode, 1))"].IsChecked = $true; $ui["Cap$([math]::Min([int]$set.cap, 2))"].IsChecked = $true
+$ui["Mode$([math]::Min([int]$set.mode, 2))"].IsChecked = $true; $ui["Cap$([math]::Min([int]$set.cap, 2))"].IsChecked = $true
 $ui.Sharp.Value = [double]$set.sharp; $ui.Fsr.IsChecked = [bool]$set.fsr; $ui.Hud.IsChecked = [bool]$set.hud
-$ui.Full.IsChecked = [bool]$set.full; $ui.Sandbox.IsChecked = [bool]$set.sandbox; $ui.Night.IsChecked = [bool]$set.night; $ui.Leave.IsChecked = [bool]$set.leave; $ui.Extra.Text = [string]$set.extra
+$ui.Full.IsChecked = [bool]$set.full; $ui.LogWindow.IsChecked = [bool]$set.logwin; $ui.Sandbox.IsChecked = [bool]$set.sandbox; $ui.Night.IsChecked = [bool]$set.night; $ui.Leave.IsChecked = [bool]$set.leave; $ui.Extra.Text = [string]$set.extra
 # Smooth Motion as the driver holds it now for vilocity.exe; no NVIDIA driver: no such option.
 $smooth = @{ driver = $null }
 try { $smooth.driver = [NvSmooth]::Get('vilocity.exe') -eq 1; $ui.Smooth.IsChecked = $smooth.driver } catch { $ui.Smooth.Visibility = 'Collapsed' }
-function Mode { if ($ui.Mode1.IsChecked) { 1 } else { 0 } }
+# 0: 1080p, 2: 1440p, 1: 4K (1 was "Quality", the same picture, in settings kept from before).
+function Mode { if ($ui.Mode1.IsChecked) { 1 } elseif ($ui.Mode2.IsChecked) { 2 } else { 0 } }
 function Cap { if ($ui.Cap2.IsChecked) { 2 } elseif ($ui.Cap1.IsChecked) { 1 } else { 0 } }
-$modeText = { $ui.ModeText.Text = if ((Mode) -eq 1) { "The game's Series X picture: more detail and pixels, about half the frame rate." } else { "The game's Series S picture: 1280x720 upscaled to 1920x1080, the fastest." } }
-$ui.Mode0.Add_Checked($modeText); $ui.Mode1.Add_Checked($modeText); & $modeText
+$modeText = { $ui.ModeText.Text = @("The game's Series S picture: 1280x720 upscaled to 1920x1080, the fastest.", "The game's Series X picture for a 4K screen: the most detail, the slowest.", "The game's Series X picture for a 1440p screen: sharper than 1080p, about a quarter slower.")[(Mode)] }
+$ui.Mode0.Add_Checked($modeText); $ui.Mode1.Add_Checked($modeText); $ui.Mode2.Add_Checked($modeText); & $modeText
 $sharpText = { $ui.SharpText.Text = if ($ui.Sharp.Value -le 0) { "off, as the game asks" } else { "{0:N1}" -f $ui.Sharp.Value } }
 $ui.Sharp.Add_ValueChanged($sharpText); & $sharpText
 
@@ -202,7 +291,7 @@ function Save-Choices {
     New-Item -ItemType Directory -Force $home_ | Out-Null
     @{ game = $ui.Game.Text.Trim(); mode = (Mode); cap = (Cap); sharp = [math]::Round($ui.Sharp.Value, 1)
        fsr = [bool]$ui.Fsr.IsChecked; hud = [bool]$ui.Hud.IsChecked; sandbox = [bool]$ui.Sandbox.IsChecked; night = [bool]$ui.Night.IsChecked
-       full = [bool]$ui.Full.IsChecked; leave = [bool]$ui.Leave.IsChecked; extra = $ui.Extra.Text.Trim() } | ConvertTo-Json | Set-Content $file
+       full = [bool]$ui.Full.IsChecked; logwin = [bool]$ui.LogWindow.IsChecked; leave = [bool]$ui.Leave.IsChecked; extra = $ui.Extra.Text.Trim() } | ConvertTo-Json | Set-Content $file
 }
 
 # One line of the check list: a dot (green: fine, yellow: it works but, red: it will not start) and what was found.
@@ -224,13 +313,22 @@ function Add-Check([string]$level, [string]$text, [string]$do = "", [scriptblock
 # Looks at the PC and the folders; whether the game can start.
 function Test-Machine {
     $ui.Checks.Children.Clear(); $ready = $true
+    # What the play script reads of this PC and sets for it (its own first line).
+    try {
+        $line = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "play-gta6.ps1") -Describe -Game . 2>$null | Select-Object -First 1
+        if ($line -match '^This PC: (.+)$') { $ui.Profile.Text = $Matches[1]; $ui.Profile.Visibility = 'Visible' }
+    } catch {}
     $game = $ui.Game.Text.Trim().Trim('"')
-    $ui.CoverBox.Visibility = 'Collapsed'; $ui.GameName.Text = "GAME FOLDER"
+    $ui.CoverBox.Visibility = 'Collapsed'; $ui.GameName.Text = "Choose your game folder"; $ui.Hero.ImageSource = $null
     if ($game -and (Test-Path (Join-Path $game "game_scarlett_master.exe"))) {
         Add-Check ok "Game folder: game_scarlett_master.exe is there"
         # The game's own name and logo, as its manifest names them (files of your copy).
         $manifest = Get-Content (Join-Path $game "MicrosoftGame.config") -Raw -ErrorAction SilentlyContinue
-        if ($manifest -match 'DefaultDisplayName="([^"]+)"') { $ui.GameName.Text = $Matches[1].ToUpper() }
+        if ($manifest -match 'DefaultDisplayName="([^"]+)"') { $ui.GameName.Text = $Matches[1] }
+        if ($manifest -match 'SplashScreenImage="([^"]+)"' -and (Test-Path (Join-Path $game $Matches[1]))) {
+            $splash = New-Object Windows.Media.Imaging.BitmapImage; $splash.BeginInit(); $splash.CacheOption = 'OnLoad'; $splash.DecodePixelWidth = 1280; $splash.UriSource = [Uri](Join-Path $game $Matches[1]); $splash.EndInit()
+            $ui.Hero.ImageSource = $splash
+        }
         if ($manifest -match 'Square150x150Logo="([^"]+)"' -and (Test-Path (Join-Path $game $Matches[1]))) {
             $cover = New-Object Windows.Media.Imaging.BitmapImage; $cover.BeginInit(); $cover.CacheOption = 'OnLoad'; $cover.UriSource = [Uri](Join-Path $game $Matches[1]); $cover.EndInit()
             $ui.Cover.ImageSource = $cover; $ui.CoverBox.Visibility = 'Visible'
@@ -283,7 +381,7 @@ function Game-Process {
 }
 
 $state = @{ ready = $false; started = $null; seen = $false }
-$refresh = { $state.ready = Test-Machine; if (-not $state.started) { $ui.Play.IsEnabled = $state.ready; $ui.Status.Text = if ($state.ready) { "Ready." } else { "Not ready: see the red lines." } } }
+$refresh = { $state.ready = Test-Machine; if (-not $state.started) { $ui.Play.IsEnabled = $state.ready; $ui.Status.Text = if ($state.ready) { "Ready." } else { "Not ready yet: see This PC." } } }
 
 $ui.Browse.Add_Click({
     $d = New-Object Windows.Forms.FolderBrowserDialog; $d.Description = "The folder that holds game_scarlett_master.exe"
@@ -328,7 +426,7 @@ $ui.Play.Add_Click({
     if ($ui.Full.IsChecked) { $vars.VILOCITY_FULLSCREEN = "1" }
     foreach ($pair in ($ui.Extra.Text -split ';')) { $k, $v = $pair -split '=', 2; if ($k -and $k.Trim() -match '^VILOCITY_[A-Z0-9_]+$' -and $null -ne $v) { $vars[$k.Trim()] = $v.Trim() } }
     $sets = ($vars.GetEnumerator() | ForEach-Object { "`$env:$($_.Key) = '$($_.Value -replace "'", "''")'; " }) -join ''
-    $switches = "-NoMonitor" + $(if ((Mode) -eq 1) { " -SeriesX" }) + $(if (-not $ui.Sandbox.IsChecked) { " -NoSandbox" })
+    $switches = "-NoMonitor" + " -Picture " + @("1080p", "4k", "1440p")[(Mode)] + $(if (-not $ui.Sandbox.IsChecked) { " -NoSandbox" }) + $(if ($ui.LogWindow.IsChecked) { " -LogWindow" })
     $play = Join-Path $PSScriptRoot "play-gta6.ps1"
     $cmd = "$sets & '$($play -replace "'", "''")' -Game '$($ui.Game.Text.Trim().Trim('"') -replace "'", "''")' $switches"
     Start-Process powershell -WindowStyle Hidden -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "`"$($cmd -replace '"', '\"')`"" | Out-Null

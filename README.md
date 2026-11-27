@@ -50,18 +50,31 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 05:04
+**Latest test run:** 2026-11-27 05:55
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 25.1 fps, 40 ms a frame |
-| Best while playing | 29.0 fps |
-| Last frame | 29.0 fps, 35 ms, 4504 draws, 173 dropped without a pipeline |
+| Frame rate while playing | no frames of the world in this run (menus only) |
 | Shaders that failed to translate | compute 5 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: the frame rate panel is new: the frame rate in the colour of how it plays,
+Latest: the launcher is new, and it sets the engine for the PC it runs on. A rail on
+the left (Play, This PC, Options, Tools, Log), the game with its own picture and PLAY
+(the game's pictures are read from your copy; none is in this repository), and the
+picture to choose: 1080p (the game's Series S picture), 1440p or 4K (its Series X
+picture for a screen of that size: sharper, about a quarter slower and more).
+`scripts\play-gta6.ps1` reads the PC (the card's maker and video memory, the memory,
+the processor's threads) and picks the worker threads, what is kept on the card and
+whether textures' levels get memory on demand; `-Describe` says what it found and
+set, `-As "nvidia,8,16,12"` shows what another PC would get. Measured on one PC only
+(Ryzen 9 9950X3D, RTX 5080): the other sets are the ones other forks measured on
+theirs, and say so in the script. A PC that has not played yet starts with a list of
+the pipelines the game draws with (`assets/pipelines-used.txt`, names only), so they
+are compiled while the game loads instead of when each is first seen. A live log
+window can open with the game (`-LogWindow`, `scripts\log-gta6.ps1`).
+
+Before that: the frame rate panel is new: the frame rate in the colour of how it plays,
 the frame's time and draws, the processor, the card and memory with bars. It shows
 whenever the game's picture is seen at that corner, whichever window has the keyboard,
 and goes when another window covers the game or the game is minimised (F8 hides it).
