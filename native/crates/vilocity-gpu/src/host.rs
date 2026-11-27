@@ -1062,6 +1062,15 @@ fn create() -> windows::core::Result<Host> {
             .and_then(|factory| factory.EnumAdapterByLuid::<IDXGIAdapter3>(device.GetAdapterLuid()))
             .ok();
         tracing::info!("host D3D12 device ready");
+        // The title's shaders index the descriptor heaps directly (shader model 6.6). A
+        // Direct3D 12 without it refuses their root signatures, and the title stopped a few
+        // seconds in (issue 3, an RX 9070 XT): said plainly here instead.
+        if !vilocity_shader::emit::host::shader_model(&device).is_ok_and(|sm| sm.0 >= D3D_SHADER_MODEL_6_6.0) {
+            fail(format_args!(
+                "this PC's Direct3D 12 has no shader model 6.6, which the game's shaders need (Windows 11 has it; \
+                 Windows 10's own may not): update Windows and the graphics card's driver"
+            ));
+        }
         Ok(Host {
             device,
             queue,

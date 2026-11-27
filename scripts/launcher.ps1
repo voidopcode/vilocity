@@ -99,7 +99,7 @@ $exe = Join-Path $root "target\release\vilocity.exe"
 # What the window remembers, with what it starts from. (The game folder: the user's
 # variable as it is now, not as this window's parent had it.)
 $known = [Environment]::GetEnvironmentVariable('VILOCITY_GTA6_DIR', 'User'); if (-not $known) { $known = $env:VILOCITY_GTA6_DIR }
-$set = @{ game = $known; mode = 0; cap = 0; sharp = 0.0; fsr = $true; hud = $true; sandbox = $true; night = $true; full = $true; logwin = $true; rays = $false; dlss = $false; framegen = $false; steady = $false; leave = $false; extra = "" }
+$set = @{ game = $known; mode = 0; cap = 1; sharp = 0.0; fsr = $true; hud = $true; sandbox = $true; night = $true; full = $true; logwin = $true; rays = $false; dlss = $false; framegen = $false; steady = $false; leave = $false; extra = "" }
 if (Test-Path $file) {
     try { $old = Get-Content $file -Raw | ConvertFrom-Json; foreach ($k in @($set.Keys)) { if ($null -ne $old.$k) { $set[$k] = $old.$k } } } catch {}
 }
@@ -235,11 +235,17 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
           <Slider x:Name="Sharp" Minimum="0" Maximum="1" TickFrequency="0.1" IsSnapToTickEnabled="True" Margin="0,6,0,0"/>
         </StackPanel></Border>
         <Border Style="{StaticResource Card}" Margin="0,0,0,14"><StackPanel>
-          <CheckBox x:Name="Dlss" ToolTip="DLSS Super Resolution in place of the game's own upscaling. NVIDIA's Streamline SDK is not part of Vilocity: download it from github.com/NVIDIA-RTX/Streamline/releases and unpack it into %LOCALAPPDATA%\vilocity\streamline"><TextBlock x:Name="DlssText" TextWrapping="Wrap" Text="DLSS (NVIDIA RTX cards): a sharper picture from the same frame"/></CheckBox>
-          <CheckBox x:Name="FrameGen" ToolTip="DLSS Frame Generation, with DLSS. The controls answer at the real frame rate"><TextBlock TextWrapping="Wrap" Text="Frame generation (DLSS, RTX 40 and 50): a made-up frame between every two, twice the frame rate shown"/></CheckBox>
-          <CheckBox x:Name="Steady" ToolTip="VILOCITY_SUBMIT_DEPTH=1. Measured: 2 to 5 torn frames in 2,600 while walking at night against 2 to 33; the opening at 29.7 frames a second against 31"><TextBlock TextWrapping="Wrap" Text="Steadier picture: fewer frames in which a character is drawn torn (seen at night), about 1.5 ms a frame slower"/></CheckBox>
+          <TextBlock Style="{StaticResource Label}" Text="Game settings (also in the game: F1)"/>
+          <TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,0,0,10" Text="The same settings as the game's F1 menu, kept together: what you change here shows there, and the other way round. Those marked * apply when the game starts; the others also change while it runs."/>
+          <StackPanel x:Name="Settings"/>
+          <TextBlock x:Name="SettingsNote" Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+        </StackPanel></Border>
+        <Border Style="{StaticResource Card}" Margin="0,0,0,14"><StackPanel>
+          <CheckBox x:Name="Dlss" Visibility="Collapsed" ToolTip="DLSS Super Resolution in place of the game's own upscaling. NVIDIA's Streamline SDK is not part of Vilocity: download it from github.com/NVIDIA-RTX/Streamline/releases and unpack it into %LOCALAPPDATA%\vilocity\streamline"><TextBlock x:Name="DlssText" TextWrapping="Wrap" Text="DLSS (NVIDIA RTX cards): a sharper picture from the same frame"/></CheckBox>
+          <CheckBox x:Name="FrameGen" Visibility="Collapsed" ToolTip="DLSS Frame Generation, with DLSS. The controls answer at the real frame rate"><TextBlock TextWrapping="Wrap" Text="Frame generation (DLSS, RTX 40 and 50): a made-up frame between every two, twice the frame rate shown"/></CheckBox>
+          <CheckBox x:Name="Steady" Visibility="Collapsed" ToolTip="VILOCITY_SUBMIT_DEPTH=1. Measured: 2 to 5 torn frames in 2,600 while walking at night against 2 to 33; the opening at 29.7 frames a second against 31"><TextBlock TextWrapping="Wrap" Text="Steadier picture: fewer frames in which a character is drawn torn (seen at night), about 1.5 ms a frame slower"/></CheckBox>
           <CheckBox x:Name="Rays" ToolTip="VILOCITY_BVH_BUILDER=1. Not measured here on an AMD card; other forks report 10-16 fps with it against 24 without on an RX 7900 XTX"><TextBlock TextWrapping="Wrap" Text="Ray tracing: the game's own traced light. For AMD Radeon cards; on NVIDIA cards it runs at 3 to 5 frames a second"/></CheckBox>
-          <CheckBox x:Name="Night" ToolTip="VILOCITY_AMBIENT_FLOOR=0.05: the least light the stand-in for the traced light gives a surface"><TextBlock TextWrapping="Wrap" Text="Brighter nights: a little light where no lamp reaches"/></CheckBox>
+          <CheckBox x:Name="Night" Visibility="Collapsed" ToolTip="VILOCITY_AMBIENT_FLOOR=0.05: the least light the stand-in for the traced light gives a surface"><TextBlock TextWrapping="Wrap" Text="Brighter nights: a little light where no lamp reaches"/></CheckBox>
           <CheckBox x:Name="Smooth" ToolTip="Written into the NVIDIA driver's profile for vilocity.exe when you press PLAY; nothing else of the driver is changed"><TextBlock TextWrapping="Wrap" Text="NVIDIA Smooth Motion: the driver shows a made-up picture between every two (twice the frame rate shown; RTX 40 and 50)"/></CheckBox>
           <CheckBox x:Name="Fsr"><TextBlock TextWrapping="Wrap" Text="AMD's PC upscaler, if its DLL is installed (a little faster)"/></CheckBox>
           <CheckBox x:Name="Sandbox"><TextBlock TextWrapping="Wrap" Text="Sandbox: no network, none of your files (recommended)"/></CheckBox>
@@ -273,7 +279,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
 </Window>
 '@
 $w = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
-$ui = @{}; foreach ($n in 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Sandbox', 'Dlss', 'DlssText', 'FrameGen', 'Steady', 'Rays', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4') { $ui[$n] = $w.FindName($n) }
+$ui = @{}; foreach ($n in 'Settings', 'SettingsNote', 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Sandbox', 'Dlss', 'DlssText', 'FrameGen', 'Steady', 'Rays', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4') { $ui[$n] = $w.FindName($n) }
 # The rail: one page shown at a time. The log's page shows the end of the newest log, read again while it is open.
 $showLog = {
     $newest = Get-ChildItem (Join-Path $home_ "logs") -Filter "gta6-*.log" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
@@ -305,7 +311,10 @@ if (-not ((Test-Path (Join-Path $sl "sl.interposer.dll")) -or (Test-Path (Join-P
 }
 # Frame generation: Streamline refuses it while Windows' GPU scheduling is off ("requires GPU
 # hardware scheduling to be enabled in the OS"), and the game then runs with DLSS alone.
-if ((Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' -ErrorAction SilentlyContinue).HwSchMode -ne 2) {
+# Windows' GPU scheduling: HwSchMode 2 is on, 1 off; on Windows 11 the value is often not there
+# while it is on, its default (issue 2).
+$hags = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' -ErrorAction SilentlyContinue).HwSchMode
+if (-not ($hags -eq 2 -or ($null -eq $hags -and [Environment]::OSVersion.Version.Build -ge 22000))) {
     $ui.FrameGen.IsEnabled = $false
     $note = New-Object Windows.Controls.TextBlock; $note.TextWrapping = 'Wrap'
     $note.Text = "Frame generation (DLSS, RTX 40 and 50): needs Windows' hardware-accelerated GPU scheduling, which is off on this PC. Turn it on in Windows Settings, System, Display, Graphics, and restart the PC."
@@ -370,6 +379,9 @@ function Test-Machine {
         }
     }
     else { Add-Check bad "Game folder: no game_scarlett_master.exe in it. Pick the folder of your own copy of the game."; $ready = $false }
+    # The game's shaders need shader model 6.6 of Direct3D 12: Windows 11 has it, Windows 10's
+    # own may not (issue 3: the game stopped seconds in; the engine now says so and ends).
+    if ([Environment]::OSVersion.Version.Build -lt 22000) { Add-Check warn "Windows 10: its Direct3D 12 may lack shader model 6.6, which the game's shaders need. If the game ends at its start saying so, Windows 11 has it." }
     if (Test-Path $exe) { Add-Check ok ("Engine: built {0:yyyy-MM-dd HH:mm}" -f (Get-Item $exe).LastWriteTime) }
     else { Add-Check bad "Engine: not built yet. In the repository's folder run: cargo build --release -p vilocity"; $ready = $false }
     try {
@@ -444,22 +456,53 @@ $ui.Warm.Add_Click({
     Start-Process cmd -ArgumentList '/k', "`"$exe`" $how && echo. && echo Done. Close this window."
 })
 
-# A click on a DLSS box: into menu.txt (a DLSS mode the game's menu chose stays).
-$syncDlss = {
-    if (-not $ui.Dlss.IsEnabled) { return }
-    $m = Read-Menu
-    $m.upscaler = if ($ui.Dlss.IsChecked -or $ui.FrameGen.IsChecked) { [math]::Max(1, [double]$m.upscaler) } else { 0 }
-    $m.framegen = if ($ui.FrameGen.IsChecked) { [math]::Max(2, [double]$m.framegen) } else { 0 }
-    Write-Menu $m
-}
-$ui.Dlss.Add_Click($syncDlss); $ui.FrameGen.Add_Click($syncDlss)
-# The boxes as the game's menu left them.
+# The (hidden) DLSS boxes as the game's menu left them: the play command is made from them.
 $showMenu = {
     $m = Read-Menu
     if ($m.ContainsKey('upscaler') -and $ui.Dlss.IsEnabled) { $ui.Dlss.IsChecked = $m.upscaler -gt 0 }
     if ($m.ContainsKey('framegen') -and $ui.FrameGen.IsEnabled) { $ui.FrameGen.IsChecked = $m.framegen -ge 2 }
 }
 & $showMenu
+
+# Every setting of the game's F1 menu, here too: a list for each, showing what menu.txt holds (or
+# what a start without it gets) and writing it there when changed. DLSS and frame generation are
+# NVIDIA's alone (AMD cards get the game's own FSR); the picture is the buttons on the first page.
+$nvidiaCard = [bool](Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Where-Object Name -match 'NVIDIA')
+$menuItems = @(
+    @{ key = 'upscaler'; label = 'Upscaler *'; nvidia = $true; dlss = $true; choices = @(@('DLSS Off', 0), @('DLSS Quality', 1), @('DLSS Balanced', 2), @('DLSS Performance', 3)); default = { if ($set.dlss) { 1 } else { 0 } } }
+    @{ key = 'dlssmodel'; label = 'DLSS model *'; nvidia = $true; dlss = $true; choices = @(@('Default', 0), @('J', 1), @('K', 2), @('L', 3), @('M', 4)); default = { 0 } }
+    @{ key = 'framegen'; label = 'Frame generation'; nvidia = $true; fg = $true; choices = @(@('Off', 0), @('2x', 2), @('3x', 3), @('4x', 4)); default = { if ($set.framegen) { 2 } else { 0 } } }
+    @{ key = 'light'; label = 'Light in the shade'; choices = @(@('Off', 0), @('0.4', 0.4), @('0.6', 0.6), @('0.8', 0.8), @('1.0', 1.0), @('1.2', 1.2), @('1.5', 1.5)); default = { 0.8 } }
+    @{ key = 'night'; label = 'Brighter nights'; choices = @(@('Off', 0), @('0.03', 0.03), @('0.05', 0.05), @('0.08', 0.08), @('0.12', 0.12)); default = { if ($set.night) { 0.05 } else { 0 } } }
+    @{ key = 'fog'; label = 'Fog light cap'; choices = @(@('Game', 0), @('1.0', 1.0), @('1.5', 1.5), @('2.0', 2.0), @('3.0', 3.0)); default = { 1.5 } }
+    @{ key = 'reflections'; label = 'Reflections stand-in'; choices = @(@('Off', 0), @('On', 1)); default = { 0 } }
+    @{ key = 'haze'; label = 'Heat haze *'; choices = @(@('On', 0), @('Off', 1)); default = { 0 } }
+    @{ key = 'steady'; label = 'Steadier picture (about 1.5 ms slower)'; choices = @(@('Off', 0), @('On', 1)); default = { if ($set.steady) { 1 } else { 0 } } }
+    @{ key = 'tornfix'; label = 'Torn-frame fix * (much slower)'; choices = @(@('Off', 0), @('On', 1)); default = { 0 } }
+)
+$readMenu = ${function:Read-Menu}; $writeMenu = ${function:Write-Menu}
+$menuNow = Read-Menu
+foreach ($item in $menuItems) {
+    if ($item.nvidia -and -not $nvidiaCard) { continue }
+    $row = New-Object Windows.Controls.DockPanel; $row.Margin = "0,0,0,8"
+    $box = New-Object Windows.Controls.ComboBox; $box.Width = 200; [Windows.Controls.DockPanel]::SetDock($box, 'Right')
+    foreach ($c in $item.choices) { [void]$box.Items.Add($c[0]) }
+    $v = if ($menuNow.ContainsKey($item.key)) { [double]$menuNow[$item.key] } else { [double](& $item.default) }
+    $at = 0; $best = [double]::MaxValue
+    for ($i = 0; $i -lt $item.choices.Count; $i++) { $d = [math]::Abs([double]$item.choices[$i][1] - $v); if ($d -lt $best) { $best = $d; $at = $i } }
+    $box.SelectedIndex = $at
+    if (($item.dlss -and -not $ui.Dlss.IsEnabled) -or ($item.fg -and -not $ui.FrameGen.IsEnabled)) { $box.IsEnabled = $false }
+    $key = $item.key; $choices = $item.choices
+    $box.Add_SelectionChanged({ $m = & $readMenu; $m[$key] = [double]$choices[$this.SelectedIndex][1]; & $writeMenu $m; & $showMenu }.GetNewClosure())
+    $t = New-Object Windows.Controls.TextBlock; $t.Text = $item.label; $t.VerticalAlignment = 'Center'
+    [void]$row.Children.Add($box); [void]$row.Children.Add($t); [void]$ui.Settings.Children.Add($row)
+}
+$ui.SettingsNote.Text = $(if (-not $nvidiaCard) { "DLSS and frame generation are for NVIDIA cards; this one upscales with the game's own AMD FSR." } elseif (-not $ui.Dlss.IsEnabled) { $ui.DlssText.Text } elseif (-not $ui.FrameGen.IsEnabled) { "Frame generation needs Windows' hardware-accelerated GPU scheduling, which is off on this PC (Windows Settings, System, Display, Graphics; then a restart)." } else { "" })
+# The picture (the first page's buttons) is kept in menu.txt too, so the game's menu shows it.
+if ($menuNow.ContainsKey('picture')) { $ui[@('Mode0', 'Mode2', 'Mode1')[[math]::Min(2, [int]$menuNow.picture)]].IsChecked = $true }
+foreach ($n in 'Mode0', 'Mode1', 'Mode2') {
+    $ui[$n].Add_Checked({ $m = & $readMenu; $m.picture = @{ Mode0 = 0; Mode1 = 2; Mode2 = 1 }[$this.Name]; & $writeMenu $m }.GetNewClosure())
+}
 
 $ui.Play.Add_Click({
     if ($state.started) {

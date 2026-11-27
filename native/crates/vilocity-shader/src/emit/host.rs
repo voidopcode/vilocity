@@ -77,7 +77,7 @@ fn adapter_matches(requested: &str, index: u32, name: &str) -> bool {
     }
 }
 
-fn shader_model(device: &ID3D12Device) -> windows::core::Result<D3D_SHADER_MODEL> {
+pub fn shader_model(device: &ID3D12Device) -> windows::core::Result<D3D_SHADER_MODEL> {
     let mut sm = D3D12_FEATURE_DATA_SHADER_MODEL {
         HighestShaderModel: D3D_SHADER_MODEL_6_6,
     };

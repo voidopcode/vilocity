@@ -84,6 +84,30 @@ const FRAME_GEN: Item = Item {
     choices: &[("Off", 0.0), ("2x", 2.0), ("3x", 3.0), ("4x", 4.0)],
     help: "Made-up frames between real ones: DLSS, RTX 40/50, Windows GPU scheduling",
 };
+const PICTURE: Item = Item {
+    name: "Picture",
+    knob: Knob::Picture,
+    choices: &[("1080p (Series S)", 0.0), ("1440p (Series X)", 1.0), ("4K (Series X)", 2.0)],
+    help: "Series X: sharper, slower, needs about 14 GB of video memory. Next start",
+};
+const DLSS_MODEL: Item = Item {
+    name: "DLSS model",
+    knob: Knob::DlssModel,
+    choices: &[("Default", 0.0), ("J", 1.0), ("K", 2.0), ("L", 3.0), ("M", 4.0)],
+    help: "Which of NVIDIA's DLSS models upscales. Applies at the next start",
+};
+const HAZE: Item = Item {
+    name: "Heat haze",
+    knob: Knob::Haze,
+    choices: &[("On", 0.0), ("Off", 1.0)],
+    help: "The game's shimmer above hot ground and fire. Applies at the next start",
+};
+const TORN_FIX: Item = Item {
+    name: "Torn-frame fix",
+    knob: Knob::TornFix,
+    choices: &[("Off", 0.0), ("On (slower)", 1.0)],
+    help: "No frames with a character drawn torn; much slower. Next start",
+};
 const LIGHT: Item = Item {
     name: "Light in the shade",
     knob: Knob::Light,
@@ -123,8 +147,9 @@ const CAP: Item = Item {
 
 /// The settings of an NVIDIA card (DLSS, frame generation), and of the others
 /// (the game's own AMD FSR, no frame generation).
-static NVIDIA_ITEMS: [Item; 8] = [UPSCALER_NVIDIA, FRAME_GEN, LIGHT, NIGHT, FOG, REFLECTIONS, STEADY, CAP];
-static OTHER_ITEMS: [Item; 7] = [UPSCALER_OTHER, LIGHT, NIGHT, FOG, REFLECTIONS, STEADY, CAP];
+static NVIDIA_ITEMS: [Item; 12] =
+    [PICTURE, UPSCALER_NVIDIA, DLSS_MODEL, FRAME_GEN, CAP, LIGHT, NIGHT, FOG, REFLECTIONS, HAZE, STEADY, TORN_FIX];
+static OTHER_ITEMS: [Item; 10] = [PICTURE, UPSCALER_OTHER, CAP, LIGHT, NIGHT, FOG, REFLECTIONS, HAZE, STEADY, TORN_FIX];
 
 /// The settings this PC's card has.
 fn items() -> &'static [Item] {
@@ -153,6 +178,20 @@ fn at_start(knob: Knob) -> f32 {
         Knob::Upscaler => 0.0,
         Knob::FrameGen if on("VILOCITY_FRAMEGEN") => 2.0,
         Knob::FrameGen => 0.0,
+        Knob::Picture => match (std::env::var("VILOCITY_CONSOLE").as_deref(), std::env::var("VILOCITY_DISPLAY_MODE").as_deref()) {
+            (Ok("series-x"), Ok("2560x1440")) => 1.0,
+            (Ok("series-x"), _) => 2.0,
+            _ => 0.0,
+        },
+        Knob::DlssModel => match std::env::var("VILOCITY_DLSS_PRESET").map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+            Ok("j") => 1.0,
+            Ok("k") => 2.0,
+            Ok("l") => 3.0,
+            Ok("m") => 4.0,
+            _ => 0.0,
+        },
+        Knob::Haze => f32::from(u8::from(std::env::var("VILOCITY_LEAVE_OUT").is_ok_and(|v| v.contains("731a39171b568298")))),
+        Knob::TornFix => f32::from(u8::from(std::env::var("VILOCITY_CARD_STEPS").is_ok_and(|v| v.trim() == "0"))),
     }
 }
 
@@ -164,7 +203,7 @@ fn value(knob: Knob) -> f32 {
 /// Whether a change of `knob` waits for the next start.
 fn next_start(knob: Knob) -> bool {
     match knob {
-        Knob::Upscaler => true,
+        Knob::Upscaler | Knob::Picture | Knob::DlssModel | Knob::Haze | Knob::TornFix => true,
         Knob::FrameGen => !crate::streamline::framegen_live(),
         _ => false,
     }
@@ -571,11 +610,18 @@ mod tests {
     /// the game's AMD FSR on the others', the rest on both.
     #[test]
     fn each_card_has_its_own_upscaler() {
-        assert!(NVIDIA_ITEMS[0].choices.iter().all(|c| c.0.starts_with("DLSS")));
+        let upscaler = |items: &[Item]| items.iter().find(|i| i.knob == Knob::Upscaler).map(|i| i.choices).unwrap();
+        assert!(upscaler(&NVIDIA_ITEMS).iter().all(|c| c.0.starts_with("DLSS")));
         assert!(NVIDIA_ITEMS.iter().any(|i| i.knob == Knob::FrameGen));
-        assert!(OTHER_ITEMS[0].choices.iter().all(|c| c.0.contains("FSR")));
+        assert!(upscaler(&OTHER_ITEMS).iter().all(|c| c.0.contains("FSR")));
         assert!(OTHER_ITEMS.iter().all(|i| i.knob != Knob::FrameGen));
-        assert_eq!(NVIDIA_ITEMS.len(), OTHER_ITEMS.len() + 1);
+        // Every choice's text fits its place on the row.
+        for item in NVIDIA_ITEMS.iter().chain(&OTHER_ITEMS) {
+            assert!(item.choices.iter().all(|c| c.0.len() <= 18), "{}", item.name);
+            assert!(item.help.len() <= 76, "{}", item.help);
+        }
+        assert_eq!(NVIDIA_ITEMS.len(), OTHER_ITEMS.len() + 2);
+        assert!(OTHER_ITEMS.iter().all(|i| i.knob != Knob::DlssModel));
     }
 
     #[test]

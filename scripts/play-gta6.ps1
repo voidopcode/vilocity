@@ -80,9 +80,9 @@ if (-not $Defaults) {
         VILOCITY_MAP_THREADS = "1"; VILOCITY_THIN = "1"; VILOCITY_UPLOAD_AHEAD = "1"
         VILOCITY_SHOW_AFTER = "1"
         VILOCITY_PIPELINE_BOOK = "1"   # the pipelines the game makes are kept, to be made ahead (below)
-        # No wait between frames: menus, intro and cutscenes are not held to the
-        # title's 30 frames a second (16.667: at most 60; 33.333: the title's own).
-        VILOCITY_FRAME_INTERVAL_MS = "0"
+        # At most 60 frames a second: menus, intro and cutscenes are not held to the
+        # title's 30, and not run at 1,000 either (0: no wait; 33.333: the title's own).
+        VILOCITY_FRAME_INTERVAL_MS = "16.667"
     }
     # This PC: the card with the most video memory (its maker and GB), the memory and the
     # processor's threads. (The registry holds a card's memory as 64 bits; WMI stops at 4 GB.)
@@ -157,6 +157,12 @@ if (-not $Defaults -and $menu.ContainsKey('upscaler')) {
     Write-Host ("Upscaler from the in-game menu (F1): " + $(if ($Dlss -eq 'off') { "the game's own (AMD FSR)" } else { "DLSS $Dlss" }) + ".")
 }
 if (-not $Defaults -and $menu.ContainsKey('framegen')) { $FrameGen = $menu.framegen -ge 2 }
+if (-not $Defaults -and $menu.ContainsKey('picture')) { $Picture = @('1080p', '1440p', '4k')[[math]::Min(2, [int]$menu.picture)] }
+if (-not $Defaults -and $menu.dlssmodel -ge 1) { $env:VILOCITY_DLSS_PRESET = @('', 'j', 'k', 'l', 'm')[[math]::Min(4, [int]$menu.dlssmodel)] }
+# (The title's heat haze, CS_IndirectApplyDiffusionInScattering_HeatHaze, left out.)
+if (-not $Defaults -and $menu.haze -ge 1) { $env:VILOCITY_LEAVE_OUT = (@($env:VILOCITY_LEAVE_OUT, '731a39171b568298') | Where-Object { $_ }) -join ',' }
+# The torn-frame fix: the steps done on the card ahead of the flights left out (no torn frames, much slower).
+if (-not $Defaults -and $menu.tornfix -ge 1) { $env:VILOCITY_CARD_STEPS = "0" }
 # DLSS: only with an NVIDIA card and the Streamline SDK's files there (louketa/foxhound's way).
 if ($Dlss -ne 'off' -and -not $Defaults) {
     $sl = if ($env:VILOCITY_STREAMLINE_DIR) { $env:VILOCITY_STREAMLINE_DIR } else { Join-Path $env:LOCALAPPDATA "vilocity\streamline" }
@@ -165,7 +171,10 @@ if ($Dlss -ne 'off' -and -not $Defaults) {
         $env:VILOCITY_STREAMLINE_DIR = $sl; $env:VILOCITY_DLSS = "1"; $env:VILOCITY_DLSS_MODE = $Dlss
         if ($FrameGen -and (Test-Path (Join-Path $sl "sl.dlss_g.dll"))) {
             # Streamline refuses frame generation while Windows' GPU scheduling is off.
-            if ((Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' -ErrorAction SilentlyContinue).HwSchMode -eq 2) { $env:VILOCITY_FRAMEGEN = "1"; Write-Host "DLSS Frame Generation on." }
+            # Windows' GPU scheduling: HwSchMode 2 is on, 1 off; on Windows 11 the value is often
+            # not there while it is on, its default (issue 2: an RTX 5070 Ti, Windows 11 25H2).
+            $hags = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' -ErrorAction SilentlyContinue).HwSchMode
+            if ($hags -eq 2 -or ($null -eq $hags -and [Environment]::OSVersion.Version.Build -ge 22000)) { $env:VILOCITY_FRAMEGEN = "1"; Write-Host "DLSS Frame Generation on." }
             else { Write-Host "Frame generation needs Windows' hardware-accelerated GPU scheduling (Settings, System, Display, Graphics; then a restart): it is off, so DLSS runs alone." }
         }
         Write-Host "DLSS ($Dlss) through the Streamline SDK in $sl."

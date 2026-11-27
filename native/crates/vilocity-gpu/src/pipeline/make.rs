@@ -56,7 +56,27 @@ fn named(shaders: &[Arc<Shader>], name: &[u8]) -> bool {
         .any(|s| s.stage == "compute" && s.container.windows(name.len()).any(|w| w == name))
 }
 
+/// (Vilocity: louketa/foxhound's, by way of trustno1-coder/VIctory-NVIDIA, GPL-3.0-or-later, as this.)
+/// Shader hashes whose pipelines are left out (`VILOCITY_LEAVE_OUT=<16 hex
+/// digits>[,..]`): their draws and dispatches are dropped. The title's heat
+/// haze (`CS_IndirectApplyDiffusionInScattering_HeatHaze`, 731a39171b568298)
+/// smears blurred blocks over lamps and lit signs here.
+fn leave_out() -> &'static [String] {
+    static HASHES: OnceLock<Vec<String>> = OnceLock::new();
+    HASHES.get_or_init(|| {
+        std::env::var("VILOCITY_LEAVE_OUT")
+            .unwrap_or_default()
+            .split(',')
+            .map(|h| h.trim().to_ascii_lowercase())
+            .filter(|h| h.len() == 16 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+            .collect()
+    })
+}
+
 fn left_out(shaders: &[Arc<Shader>]) -> Option<&'static str> {
+    if !leave_out().is_empty() && shaders.iter().any(|s| leave_out().contains(&s.hash)) {
+        return Some("named in VILOCITY_LEAVE_OUT, left out");
+    }
     static SKIP_RT_RESOLVE: OnceLock<bool> = OnceLock::new();
     let skip_rt = *SKIP_RT_RESOLVE.get_or_init(|| {
         let builder = std::env::var_os("VILOCITY_BVH_BUILDER").is_some_and(|v| v == "1");

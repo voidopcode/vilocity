@@ -790,6 +790,9 @@ pub(crate) fn after(list: &HostList, role: Role, views: &Views) -> bool {
     list.keep(&pass.cells);
     list.keep(&pass.points);
     let [strength, radius] = shade();
+    // In one run by turns (`VILOCITY_AB=<s>,VILOCITY_AMBIENT_SHADE`): as set, and no creases' shade.
+    #[cfg(feature = "diagnostics")]
+    let strength = if crate::ab::pick("VILOCITY_AMBIENT_SHADE") == Some(false) { 0.0 } else { strength };
     let floats = [level, constant, strength, radius, 0.1, 0.45];
     let mut words = [0u32; 14];
     for (to, v) in words.iter_mut().zip(floats) {

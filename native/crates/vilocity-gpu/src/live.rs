@@ -31,10 +31,31 @@ pub(crate) enum Knob {
     /// DLSS frame generation: 0 off, 2 to 4 frames shown for each one rendered;
     /// live when it was on at the start, else from the next start.
     FrameGen,
+    /// The picture at the next start: 0 the Series S one (1080p), 1 the
+    /// Series X one at 2560x1440, 2 the Series X one at 3840x2160.
+    Picture,
+    /// The DLSS model at the next start: 0 NVIDIA's default, 1 J, 2 K, 3 L, 4 M.
+    DlssModel,
+    /// The title's heat haze at the next start: 0 as the game has it, 1 left out.
+    Haze,
+    /// The torn-frame fix at the next start (`VILOCITY_CARD_STEPS=0`): 0 off, 1 on.
+    TornFix,
 }
 
-pub(crate) const KNOBS: [Knob; 8] =
-    [Knob::Light, Knob::Night, Knob::Fog, Knob::Reflections, Knob::Steady, Knob::Cap, Knob::Upscaler, Knob::FrameGen];
+pub(crate) const KNOBS: [Knob; 12] = [
+    Knob::Light,
+    Knob::Night,
+    Knob::Fog,
+    Knob::Reflections,
+    Knob::Steady,
+    Knob::Cap,
+    Knob::Upscaler,
+    Knob::FrameGen,
+    Knob::Picture,
+    Knob::DlssModel,
+    Knob::Haze,
+    Knob::TornFix,
+];
 
 impl Knob {
     /// Its name in `menu.txt`.
@@ -48,6 +69,10 @@ impl Knob {
             Knob::Cap => "cap",
             Knob::Upscaler => "upscaler",
             Knob::FrameGen => "framegen",
+            Knob::Picture => "picture",
+            Knob::DlssModel => "dlssmodel",
+            Knob::Haze => "haze",
+            Knob::TornFix => "tornfix",
         }
     }
 }

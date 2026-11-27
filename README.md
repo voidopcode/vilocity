@@ -115,8 +115,36 @@ loads saves and gets into the world. The world is where the work is now.
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: settings inside the game, a first start no longer ends at the world's first
-frame, and what the hunt for the torn frames ruled out.
+Latest: every setting in the launcher and in the game, two reported problems, settings
+inside the game, a first start no longer ends at the world's first frame, and what the
+hunt for the torn frames ruled out.
+- **Every setting, in the launcher and on F1, kept together.** The launcher's options
+  have a list for each of the game's settings (upscaler, DLSS model, frame generation,
+  light in the shade, brighter nights, fog light cap, reflections stand-in, heat haze,
+  steadier picture, torn-frame fix), the picture buttons included. They and the game's
+  F1 menu read and write one file (`menu.txt` in the data folder), so each shows what
+  the other changed; those marked `*` apply when the game starts (the play script reads
+  them). New on F1 too: picture, DLSS model, heat haze, torn-frame fix (after
+  trustno1-coder/VIctory-NVIDIA's menu). `VILOCITY_LEAVE_OUT=<shader hash>[,..]` leaves
+  a shader out (from foxhound).
+- **At most 60 frames a second by default**: menus and the loading screen ran at about
+  1,000 and only heated the card (the launcher's "No limit" still has it).
+- **Frame generation on Windows 11** (issue 2): Windows' GPU scheduling was taken for
+  off when its registry value is not there, as on Windows 11 where it is on by default;
+  the play script and the launcher now take it for on there.
+- **A PC whose Direct3D 12 lacks shader model 6.6** (issue 3, an RX 9070 XT): the game
+  stopped a few seconds in, after the runtime refused the shaders' root signatures. The
+  engine now ends at its start saying so (Windows 11 has it, Windows 10's own may not),
+  and the launcher's checks warn on Windows 10.
+- **Measured walking and running through the town** (story save, RTX 5080, 1080p
+  picture): 22 fps at the median (17 at the lowest) as the game is, 24 (19) with DLSS
+  quality. Frame generation was refused until Windows is restarted after GPU scheduling
+  is switched on.
+- **The floating blurry blocks** at night (beside lit signs and lamps) are not fixed:
+  not the heat haze, the light sprites, bloom, the lens and depth of field, nor the
+  reflections' misses (each left out in turn, the blocks stayed). They grow over minutes;
+  the suspect is the fog's tiled light, two of whose programs do not translate for 32-lane
+  cards while the temporal pass behind them runs.
 - **Settings inside the game: F1.** F1 shows a menu over the picture, drawn as the
   frame-rate panel is (its colours, Segoe UI, the bar in the colour of the frame rate,
   rounded corners); F1 or Esc hides it. Up and down pick, left and right change, and
