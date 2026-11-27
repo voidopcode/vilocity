@@ -3296,6 +3296,8 @@ impl HostHeap {
                 super::wait_for(texture, handle);
             }
             let later = !for_draw && (view.is_buffer() || waiting.is_some());
+            // The grey texture in place of nothing while it waits (below).
+            let mut grey = false;
             // Another view of the placed texture the slot shows already (a
             // title that streams a texture in writes its view again with
             // more mips each time some arrive): the slot goes on showing
@@ -3318,13 +3320,26 @@ impl HostHeap {
                 // ([`keep_shown`]): black, then grey for a frame or two is
                 // what popped.
                 if is_texture_view(&old) {
-                    let kept = kin.kept(keep_shown());
+                    // (Vilocity) "Of the same kind elsewhere" was most often another
+                    // texture of the same size and format given the slot (some 530 a
+                    // second walking), and the slot showed that one until the new one
+                    // was made: a face drawn with a mask's colours (2026-11-27). It
+                    // stands in only if its memory starts as the new one's (the title
+                    // moved it); one of another size only while the card has room, so
+                    // that the new one comes within frames. Else the grey texture.
+                    let wanted = kin.kept(keep_shown());
+                    let kept = wanted
+                        && match kin {
+                            Kin::Moved => same_start(&old, &view),
+                            _ => crate::resource::room_lately(),
+                        };
                     rewritten(kin, kept);
                     if kept {
                         drop(held);
                         self.unmake_stale(index, stale);
                         return Some(view);
                     }
+                    grey = wanted;
                 }
             }
             #[cfg(feature = "diagnostics")]
@@ -3338,14 +3353,19 @@ impl HostHeap {
             } else {
                 make_twinned(&view, self.at(index), self.twin(index))
             };
+            let mut neutral = None;
             if kept.is_none() && !self.sampler {
-                null_for(&view, self.at(index));
+                if grey {
+                    neutral = neutral_for(&view, self.at(index));
+                } else {
+                    null_for(&view, self.at(index));
+                }
             }
             if kept.is_some() || !self.sampler {
                 self.put(index);
             }
             self.twin_made(index, kept.is_some() && twinned(&view));
-            self.keep(index, kept.flatten());
+            self.keep(index, kept.flatten().or(neutral));
             self.quick_is(index, if later { 0 } else { key });
             drop(held);
             self.unmake_stale(index, stale);
@@ -4759,6 +4779,17 @@ fn same_placed_texture(a: &View, b: &View) -> bool {
     }
 }
 
+/// (Vilocity) Whether two views of placed textures of one description show the
+/// same picture: the first 4 KiB of their title memory are alike (read through
+/// the kernel; pages not there count as zeros).
+fn same_start(a: &View, b: &View) -> bool {
+    let (View::Placed(false, _, x), View::Placed(false, _, y)) = (a, b) else {
+        return false;
+    };
+    let at = |d: &[u32; 16]| u64::from(d[10]) | u64::from(d[11]) << 32;
+    at(x) == at(y) || crate::texture::fingerprint(at(x), 4096) == crate::texture::fingerprint(at(y), 4096)
+}
+
 /// A shader view of a texture the title placed in memory itself, as a view
 /// of the resource made for that memory (on first use).
 pub(crate) fn placed_texture(view: &View) -> Option<View> {
@@ -4963,6 +4994,25 @@ mod tests {
         assert_eq!(view(5, u32::MAX, 5.5), (2, u32::MAX, 2.5));
         // (Two levels the copy has not.)
         assert_eq!(view(1, 4, 0.0), (0, 2, 0.0));
+    }
+
+    /// A texture of the same description stands in only if its memory starts
+    /// as the new one's: the title moved it, rather than gave the slot another.
+    #[test]
+    fn only_a_moved_texture_stands_in_for_one_of_its_size() {
+        let (a, b, c) = (vec![7u8; 8192], vec![7u8; 8192], vec![9u8; 8192]);
+        let view = |memory: &[u8]| {
+            let at = memory.as_ptr() as u64;
+            let mut desc = [0u32; 16];
+            desc[10] = at as u32;
+            desc[11] = (at >> 32) as u32;
+            View::Placed(false, [98, 0, 64, 0, 64, 0, 64, 1, 7, 0, 0, 0, 0, 0], desc)
+        };
+        assert!(same_start(&view(&a), &view(&b)));
+        assert!(same_start(&view(&a), &view(&a)));
+        assert!(!same_start(&view(&a), &view(&c)));
+        // (Only views of placed textures are looked at.)
+        assert!(!same_start(&View::Constant(0, 0), &view(&a)));
     }
 
     /// 2D textures and arrays have a neutral stand-in, others a null view.

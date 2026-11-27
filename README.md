@@ -104,19 +104,27 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 17:59
+**Latest test run:** 2026-11-27 18:36
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 19.2 fps, 52 ms a frame |
-| Best while playing | 24.6 fps |
-| Last frame | 15.9 fps, 63 ms, 9588 draws, 316 dropped without a pipeline |
+| Frame rate while playing (typical) | 20.7 fps, 48 ms a frame |
+| Best while playing | 25.7 fps |
+| Last frame | 19.0 fps, 53 ms, 8160 draws, 261 dropped without a pipeline |
 | Shaders that failed to translate | compute 6 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: the 4-7 fps drops explained and shown on the overlay, and what the picture
-tests of 2026-11-27 evening ruled out.
+Latest: a face drawn with another texture's colours, the 4-7 fps drops explained and
+shown on the overlay, and what the picture tests of 2026-11-27 evening ruled out.
+- **A face drawn with a mask's colours (a "mosaic face").** While a texture waits for
+  its host copy, its slot went on showing the texture it showed before if that one had
+  the same size and format, and some 530 slots a second walking were given another
+  texture of that kind, not the same one moved. Such a stand-in is kept now only if its
+  memory starts as the new one's (the title moved it); else the grey stand-in shows for
+  the frames until the texture is made. In a 1440p walk slots that kept another texture
+  went from 128,563 to 31,756, at the same frame rate (median 20 and 21 fps). The mosaic
+  itself was not seen in our runs, so it is not confirmed gone.
 - **4-7 fps at the 1440p picture is the card's memory running out.** At 1440p the game
   holds 12.7-13.4 GB of the card. With about 6 GB held by other programs (browsers,
   Discord, a Python program), Windows cut the game's budget to about 12 GB and moved the
