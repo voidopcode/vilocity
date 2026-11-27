@@ -217,7 +217,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
         </Border>
         <Border Style="{StaticResource Card}" Margin="0,14,0,0"><StackPanel>
           <TextBlock Style="{StaticResource Head}" Text="KEYS" Margin="0,0,0,6"/>
-          <TextBlock Style="{StaticResource Dim}" Text="On foot: W A S D move, the mouse looks, Space jumps, Shift runs, F gets in and out. In a car press G for the driving keys (W accelerates, S brakes, Space is the handbrake) and G again on foot; the frame rate panel says which keys hold. F11: full screen. Esc frees the mouse. All keys: Tools, Keys."/>
+          <TextBlock Style="{StaticResource Dim}" Text="On foot: W A S D move, the mouse looks, Space jumps, Shift runs, Ctrl crouches, F gets in and out. In a car press G for the driving keys (W accelerates, S brakes, Space is the handbrake) and G again on foot; the frame rate panel says which keys hold. F11: full screen. Esc frees the mouse. All keys: Tools, Keys."/>
         </StackPanel></Border>
       </StackPanel></ScrollViewer>
       <!-- This PC: what it is, what it gets, what is missing. -->

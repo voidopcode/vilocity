@@ -158,8 +158,8 @@ MOVE_RIGHT = D
 LT = RightClick, U, RightAlt, Num1
 RT = LeftClick, O, Num3
 A = Space, Enter, Num0, 9
-B = Ctrl, R, Backspace, B, RightCtrl, Delete, NumDecimal, 0
-X = X, CapsLock, Slash, 7, F9
+B = R, Backspace, B, RightCtrl, Delete, NumDecimal, 0
+X = Ctrl, X, CapsLock, Slash, 7, F9
 Y = F, E, Y, Insert, Backslash, 8, F10
 LB = Tab, Mouse4, Semicolon, 5, Num7, F6
 RB = Q, Mouse5, Quote, 6, Num9, F7
@@ -412,6 +412,8 @@ mod tests {
         // Running on foot is Shift (and jumping Space).
         assert_eq!(keys_of(&binds.walk, Part::Button(LEFT_STICK))[0], 0xA0);
         assert_eq!(keys_of(&binds.walk, Part::Button(A))[0], b' ');
+        // (Vilocity) Crouching is Ctrl, as in GTA V; X on the pad, as the game's controls page says.
+        assert_eq!(keys_of(&binds.walk, Part::Button(X))[0], 0xA2);
         assert_eq!(keys_of(&binds.drive, Part::RightTrigger)[0], b'W');
         assert_eq!(keys_of(&binds.drive, Part::LeftTrigger)[0], b'S');
     }

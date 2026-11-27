@@ -126,6 +126,12 @@ picture tests of 2026-11-27 evening ruled out.
 - **The launcher shows how far "Preparing the game's pipelines" is** ("1,200 of 3,517"):
   it looked stuck for minutes after an update. The play script keeps the step's lines in
   `logs\warm-progress.txt`; the step says how far it is every 100 pipelines.
+- **Ctrl crouches on foot, as in GTA V** (the game's controls page: X is crouch; it was B).
+  The keys file Vilocity comes with has it; an older keys file keeps its own keys until it
+  is deleted (the game then writes the new one). F still gets in and out of cars, G
+  switches to the driving keys. Not changed yet: in a car GTA V has E for the horn, H for
+  the lights and Q for the radio; ours differ, and which buttons the game uses for those
+  is still to be read from its controls page.
 - **Measure** (launcher, Play page): runs the diagnostics build, whose log says where
   each frame's time and the memory go, for measuring from one's own play.
 - **Striped clothes (a texture showing an old picture).** A texture picked by index is

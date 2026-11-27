@@ -1748,8 +1748,9 @@ mod tests {
             (MENU, &[0x1B, b'P']),
             (VIEW, b"V"),
             (A, &[0x0D, b' ']),
-            (B, &[0x08, b'R', 0xA2]),
-            (X, b"X"),
+            (B, &[0x08, b'R']),
+            // (Vilocity) Ctrl crouches, as in GTA V: X on the pad (the game's controls page).
+            (X, &[0xA2, b'X']),
             (Y, b"FYE"),
             (UP, &[0x26, b'1']),
             (DOWN, &[0x28, b'2']),
