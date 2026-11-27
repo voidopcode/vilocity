@@ -55,6 +55,42 @@ $logs = Join-Path $env:LOCALAPPDATA "vilocity\logs"
 New-Item -ItemType Directory -Force $logs | Out-Null
 $log = Join-Path $logs ("gta6-{0:yyyyMMdd-HHmmss}.log" -f (Get-Date))
 
+# Windows 10's own Direct3D 12 stops at shader model 6.5, and the game's shaders need 6.6.
+# Microsoft's D3D12 Agility SDK runtime has it (Windows 10 22H2 from build 19045.3393). On
+# Windows 10 only, it is fetched once from nuget.org, checked against its SHA-512 and
+# Microsoft's signature, and only D3D12Core.dll (with Microsoft's licence) is kept in D3D12\
+# beside vilocity.exe: each PC gets it from Microsoft, under Microsoft's licence, which the
+# repository may not pass on. The engine uses it only where the system's runtime lacks 6.6
+# (VILOCITY_AGILITY=0: never).
+$agility = Join-Path (Split-Path $exe) "D3D12\D3D12Core.dll"
+if ([Environment]::OSVersion.Version.Build -lt 22000 -and -not (Test-Path $agility) -and $env:VILOCITY_AGILITY -ne "0") {
+    $ver = "1.620.2"; $sha512 = "1oP/f1cmkGw/Q9KZ9s3UscrSL4MpzNJ7NJLQoUE9mQQQK41UNBm+w7NUXIa/SfalAOv0LZXJmaoJaeXWkwMnNQ=="
+    Write-Host "Windows 10: getting Microsoft's D3D12 Agility SDK $ver (35 MB, from nuget.org) for shader model 6.6..."
+    $tmp = Join-Path $env:TEMP "vilocity-agility-$ver.nupkg"
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -UseBasicParsing -Uri "https://api.nuget.org/v3-flatcontainer/microsoft.direct3d.d3d12/$ver/microsoft.direct3d.d3d12.$ver.nupkg" -OutFile $tmp
+        $sha = [Security.Cryptography.SHA512]::Create()
+        $got = [Convert]::ToBase64String($sha.ComputeHash([IO.File]::ReadAllBytes($tmp)))
+        if ($got -ne $sha512) { throw "the package is not the one expected (its SHA-512 differs)" }
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        New-Item -ItemType Directory -Force (Split-Path $agility) | Out-Null
+        $zip = [IO.Compression.ZipFile]::OpenRead($tmp)
+        try {
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($zip.GetEntry('build/native/bin/x64/D3D12Core.dll'), $agility, $true)
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($zip.GetEntry('LICENSE.txt'), (Join-Path (Split-Path $agility) 'LICENSE.txt'), $true)
+        } finally { $zip.Dispose() }
+        $signed = Get-AuthenticodeSignature $agility
+        if ($signed.Status -ne 'Valid' -or $signed.SignerCertificate.Subject -notlike 'CN=Microsoft Corporation*') {
+            Remove-Item $agility -ErrorAction SilentlyContinue
+            throw "D3D12Core.dll is not signed by Microsoft"
+        }
+        Write-Host "Agility SDK runtime in place: $agility (Microsoft's licence beside it)."
+    } catch {
+        Write-Host "Could not get the Agility SDK: $($_.Exception.Message). Without it Windows 10 has no shader model 6.6 and the game cannot start." -ForegroundColor Yellow
+    } finally { Remove-Item $tmp -ErrorAction SilentlyContinue }
+}
+
 if (-not $Defaults) {
     # The native engine is cool_fox's (codec_d's VIctory fork, build 30e54b4):
     # these are the settings of its own launcher, measured there on an RTX 4090

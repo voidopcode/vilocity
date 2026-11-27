@@ -104,13 +104,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 19:56
+**Latest test run:** 2026-11-27 20:26
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 22.1 fps, 45 ms a frame |
-| Best while playing | 42.5 fps |
-| Last frame | 24.2 fps, 41 ms, 6889 draws, 248 dropped without a pipeline |
+| Frame rate while playing (typical) | 25.6 fps, 39 ms a frame |
+| Best while playing | 30.9 fps |
+| Last frame | 29.8 fps, 34 ms, 4137 draws, 155 dropped without a pipeline |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -128,6 +128,18 @@ picture tests of 2026-11-27 evening ruled out.
 - **The launcher shows how far "Preparing the game's pipelines" is** ("1,200 of 3,517"):
   it looked stuck for minutes after an update. The play script keeps the step's lines in
   `logs\warm-progress.txt`; the step says how far it is every 100 pipelines.
+- **Windows 10.** Its own Direct3D 12 stops at shader model 6.5, and the game's shaders need
+  6.6. On Windows 10 the play script now fetches Microsoft's D3D12 Agility SDK 1.620.2 from
+  nuget.org once (checked against its SHA-512 and Microsoft's signature) and keeps only
+  D3D12Core.dll, with Microsoft's licence, in D3D12\ beside vilocity.exe (the repository may
+  not pass it on). The engine makes its device on that runtime only where the system's lacks
+  6.6 (Windows 10 22H2 from build 19045.3393 loads it); the sandbox may read the folder.
+  Tested here by forcing it (`VILOCITY_AGILITY=1`): the device came from that runtime and the
+  world ran at 20-31 fps once its pipelines were made (0-5 fps the first minute). Not tried
+  on a Windows 10 PC.
+- **The launcher's "will it work" is advice, not a gate**: an 8 GB card or under 24 GB of RAM
+  says "it may, with problems" and PLAY stays on; only a processor without AVX2 or a card
+  without mesh shaders stops it.
 - **2 ms a frame: the write guards' lock rework is on by default** (renderer port #6, from
   cool_fox c781843, design by avatarmanz/VIctory-7900XTX; `VILOCITY_PORT_GUARD=0` turns it
   off). Two night walks with it switched every 4 s and every frame captured: 1.7 and 2.6 ms

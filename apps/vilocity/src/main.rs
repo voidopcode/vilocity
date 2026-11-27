@@ -228,6 +228,11 @@ fn in_sandbox(me: &Path, run: &[OsString], game: Option<&Path>) -> Result<i32, S
     {
         grants.push(sandbox::Grant { path: dir, write: false });
     }
+    // (Vilocity) Microsoft's D3D12 Agility SDK runtime beside us (`D3D12\`, put there on
+    // Windows 10 by the play script): read, for a Direct3D 12 with shader model 6.6.
+    if let Some(dir) = me.parent().map(|dir| dir.join("D3D12")).filter(|dir| dir.is_dir()) {
+        grants.push(sandbox::Grant { path: dir, write: false });
+    }
     println!(
         "sandbox: no network; reads {}; writes only {} and {}",
         game.map_or("no game".into(), |game| game.display().to_string()),

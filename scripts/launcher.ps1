@@ -450,11 +450,12 @@ function Test-Fit([double]$ram, [double]$commit = 99) {
     # but are hardly tested here; older cards have no mesh shaders.
     if ($card -match 'GTX|GT \d|Radeon (RX [45]\d\d0|R[579]|HD)|Intel\(R\) (UHD|HD|Iris)') { $no += "$card has no mesh shaders (an NVIDIA RTX 20 series or newer, or an AMD RX 6000 or newer, is needed)" }
     elseif ($card -notmatch 'RTX') { $limits += "$card is not an NVIDIA RTX card: it should have what the game needs, but it is hardly tested" }
-    if ($ram -lt 24) { $no += ("{0:N0} GB of RAM: the game takes about 22 GB at 1080p (32 GB is the least that works)" -f $ram) }
+    # (Advice, not a gate: only what cannot work at all stops PLAY. An 8 GB card and less RAM run, worse.)
+    if ($ram -lt 24) { $limits += ("{0:N0} GB of RAM: the game takes about 22 GB at 1080p, so Windows moves part of it to the page file: expect stutters, and let Windows manage the page file's size" -f $ram) }
     elseif ($ram -lt 31) { $limits += ("{0:N0} GB of RAM: tight; close other programs" -f $ram) }
     # (An RTX 5070 PC's log: 6.8 GB of RAM free but 3.7 GB of commit, a small page file; the engine then held back textures.)
     if ($ram -ge 24 -and $commit -lt 28) { $limits += ("{0:N0} GB free with the page file: let Windows manage the page file's size" -f $commit) }
-    if ($cardGB -gt 0 -and $cardGB -lt 10) { $no += ("{0:N0} GB on the card: the game takes about 7.5 GB at 1080p besides what Windows holds (12 GB is the least that works)" -f $cardGB) }
+    if ($cardGB -gt 0 -and $cardGB -lt 10) { $limits += ("{0:N0} GB on the card: the game takes about 7.5 GB at 1080p besides what Windows holds, so it runs with less kept on the card and textures can load late or look wrong; close other programs that use the card" -f $cardGB) }
     if ([Environment]::OSVersion.Version.Build -lt 22000) { $limits += "Windows 10 may lack shader model 6.6" }
     $big = $cardGB -ge 14 -and $ram -ge 40
     $picture = if ($big) { "1080p for the best frame rate; 1440p works while other programs leave the card free" } else { "1080p (1440p and 4K need a 16 GB card and 40 GB of RAM)" }

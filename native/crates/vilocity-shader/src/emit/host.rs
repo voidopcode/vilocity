@@ -92,6 +92,70 @@ pub fn shader_model(device: &ID3D12Device) -> windows::core::Result<D3D_SHADER_M
     Ok(sm.HighestShaderModel)
 }
 
+/// (Vilocity) Microsoft's D3D12 Agility SDK runtime (`D3D12Core.dll` of this version) in a
+/// `D3D12` folder beside the executable. Windows 10's own runtime stops at shader model 6.5
+/// whatever the card, and the game's shaders need 6.6 (issue 3, and an RTX 5070 on Windows
+/// 10); Windows 10 22H2 from build 19045.3393 (KB5029331) and Windows 11 load this one
+/// through `ID3D12SDKConfiguration1::CreateDeviceFactory`, with no exports of ours and no
+/// developer mode. It is used only where the system's device lacks shader model 6.6, so
+/// Windows 11 runs on its own runtime as before (`VILOCITY_AGILITY=1`: always, to test it;
+/// `=0`: never).
+pub const AGILITY_VERSION: u32 = 620;
+const AGILITY_PATH: &[u8] = b".\\D3D12\\\0";
+static AGILITY_USED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the device came from the Agility SDK's runtime ([`AGILITY_VERSION`]).
+pub fn agility_used() -> bool {
+    AGILITY_USED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn agility_factory() -> Option<&'static ID3D12DeviceFactory> {
+    static FACTORY: std::sync::OnceLock<Option<ID3D12DeviceFactory>> = std::sync::OnceLock::new();
+    FACTORY
+        .get_or_init(|| {
+            let exe = std::env::current_exe().ok()?;
+            if !exe.parent()?.join("D3D12").join("D3D12Core.dll").is_file() {
+                return None;
+            }
+            // SAFETY: plain runtime queries; the path is a NUL-terminated string that lives forever.
+            unsafe {
+                let mut config: Option<ID3D12SDKConfiguration1> = None;
+                D3D12GetInterface(&CLSID_D3D12SDKConfiguration, &mut config).ok()?;
+                config?.CreateDeviceFactory(AGILITY_VERSION, PCSTR(AGILITY_PATH.as_ptr())).ok()
+            }
+        })
+        .as_ref()
+}
+
+/// `device`, or one of the same card from the Agility SDK's runtime when `device` lacks shader
+/// model 6.6 (or `VILOCITY_AGILITY=1`) and that runtime is there and has it.
+fn agility_instead(device: ID3D12Device, adapter: Option<&IDXGIAdapter1>) -> ID3D12Device {
+    let asked = std::env::var("VILOCITY_AGILITY").ok();
+    let wanted = match asked.as_deref().map(str::trim) {
+        Some("0") => false,
+        Some("1") => true,
+        _ => shader_model(&device).map_or(true, |sm| sm.0 < D3D_SHADER_MODEL_6_6.0),
+    };
+    let Some(factory) = wanted.then(agility_factory).flatten() else {
+        return device;
+    };
+    let mut other: Option<ID3D12Device> = None;
+    // SAFETY: plain device creation on the same adapter (or the default one).
+    let made = unsafe {
+        match adapter {
+            Some(adapter) => factory.CreateDevice(adapter, D3D_FEATURE_LEVEL_12_0, &mut other),
+            None => factory.CreateDevice(None::<&windows::core::IUnknown>, D3D_FEATURE_LEVEL_12_0, &mut other),
+        }
+    };
+    match other {
+        Some(other) if made.is_ok() && shader_model(&other).is_ok_and(|sm| sm.0 >= D3D_SHADER_MODEL_6_6.0) => {
+            AGILITY_USED.store(true, std::sync::atomic::Ordering::Relaxed);
+            other
+        }
+        _ => device,
+    }
+}
+
 /// The device of the run and of the pipelines made ahead: the same card for both.
 /// An index or a part of a name in `VILOCITY_D3D12_ADAPTER` comes first. Otherwise
 /// the first card Windows counts as high performance that has shader model 6.6 (on a
@@ -108,7 +172,8 @@ pub fn create_preferred_device() -> windows::core::Result<ID3D12Device> {
                 Some(adapter) => D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_0, &mut device)?,
                 None => D3D12CreateDevice(None, D3D_FEATURE_LEVEL_12_0, &mut device)?,
             }
-            device.ok_or_else(windows::core::Error::empty)
+            let device = device.ok_or_else(windows::core::Error::empty)?;
+            Ok(agility_instead(device, adapter))
         };
         if !requested.is_empty() {
             let factory: IDXGIFactory4 = CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0))?;
