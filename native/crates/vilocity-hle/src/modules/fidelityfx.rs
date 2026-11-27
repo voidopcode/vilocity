@@ -39,6 +39,14 @@
 
 #![allow(non_snake_case)]
 
+// (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+// With `VILOCITY_DLSS=1` and Streamline loaded, the title's imports of the
+// loader go through `dlss`'s functions first, which take the upscale
+// dispatches for DLSS and call what is here (or the console's own loader)
+// for the rest. Nothing of it is used otherwise.
+pub mod dlss;
+pub use dlss::Interpose;
+
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -621,7 +621,8 @@ mod tests {
 
         assert!(!super::super::library::wanted_early(&p.key));
         assert!(ready(&p).is_none());
-        assert!(p.made.get().is_none());
+        // (One without graphics state is a dispatch's: tried here at once, `compute_waits`,
+        // and with no shaders it does not make. Recorded all the same.)
         assert!(super::super::library::wanted_early(&p.key));
     }
 

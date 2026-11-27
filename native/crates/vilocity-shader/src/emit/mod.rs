@@ -447,10 +447,10 @@ fn translate_plain(container: &[u8]) -> Result<HostShader, ShaderError> {
 }
 
 /// Whether the program of `input` is one `list` names (shader hashes as the log
-/// prints them, with commas); every program with no list.
+/// prints them, with commas); none with no list.
 fn wave_wide_hash_matches(list: Option<&std::ffi::OsStr>, input: &[u8]) -> bool {
     let Some(list) = list.filter(|s| !s.is_empty()) else {
-        return true;
+        return false;
     };
     let Some(list) = list.to_str() else {
         return false;
@@ -467,8 +467,8 @@ mod wide_only_tests {
     #[test]
     fn a_list_keeps_the_wide_form_to_the_programs_it_names() {
         let hash = &blake3::hash(b"program").to_hex()[..16];
-        assert!(wave_wide_hash_matches(None, b"program"));
-        assert!(wave_wide_hash_matches(Some(OsStr::new("")), b"program"));
+        assert!(!wave_wide_hash_matches(None, b"program"));
+        assert!(!wave_wide_hash_matches(Some(OsStr::new("")), b"program"));
         assert!(wave_wide_hash_matches(Some(OsStr::new(&format!("0123456789abcdef, {}", hash.to_uppercase()))), b"program"));
         assert!(!wave_wide_hash_matches(Some(OsStr::new("0123456789abcdef")), b"program"));
     }
@@ -593,11 +593,13 @@ pub fn emit(
                 [0x58, 0x1d, 0xab, 0x2c, 0xd8, 0xbc, 0xf2, 0x2e, 0x5c, 0x96, 0x4b, 0x98, 0xe9, 0x03, 0x48, 0xd1]
                     | [0x24, 0x31, 0xbb, 0xe7, 0xdc, 0x15, 0x4a, 0xd7, 0x59, 0xd2, 0x0b, 0xc9, 0x54, 0x82, 0x9c, 0x1c]
             );
-        // `VILOCITY_WAVE_WIDE_ONLY=<hash>,...` (the hashes of the log) keeps the opt-in to
-        // those programs (TaynanGT/Vice-Tay).
-        let wide_on = wide_option.as_ref().map_or(scene_kernel, |v| {
-            v == "1" && wave_wide_hash_matches(std::env::var_os("VILOCITY_WAVE_WIDE_ONLY").as_deref(), c.input)
-        });
+        // `VILOCITY_WAVE_WIDE_ONLY=<hash>,...` (the hashes of the log): the wide form for
+        // those programs too, as for the two kernels above; `VILOCITY_WAVE_WIDE` still
+        // wins (TaynanGT/Vice-Tay's rule). The list used to count only with
+        // `VILOCITY_WAVE_WIDE=1`, which took the form from the two kernels: black
+        // blocks on water in daylight.
+        let listed = wave_wide_hash_matches(std::env::var_os("VILOCITY_WAVE_WIDE_ONLY").as_deref(), c.input);
+        let wide_on = wide_option.as_ref().map_or(scene_kernel || listed, |v| v == "1");
         // A single guest wave can iterate an active-lane loop until both host
         // halves have finished. The precise latch and convergence conditions
         // for the driver compute route are checked by widen().

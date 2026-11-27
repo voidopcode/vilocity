@@ -142,14 +142,40 @@ pub(crate) fn available_physical_ram() -> Option<u64> {
 /// be let go, in milliseconds, and how many bytes of them go at most (the
 /// longest idle first): none but those of ten minutes while what is in use
 /// of the card (`used`: without what our own blocks have free, with what is
-/// kept free for others) is under 88 % of its budget, else enough to come
-/// down to 85 %. `VILOCITY_TEXTURE_KEEP=0`: [`vram_idle_ms`]' older rule,
+/// kept free for others) is under 75 % of its budget, else enough to come
+/// down to 70 % (the two shares: `VILOCITY_TEXTURE_KEEP_PERCENT`). `VILOCITY_TEXTURE_KEEP=0`: [`vram_idle_ms`]' older rule,
 /// all that are idle; `=1`: that rule with its two longer times.
 ///
 /// (By those times everything idle for 2.5 s went from 75 % of the budget
 /// on: 61,000 of them in the first 300 s of session play-1125-0203, at 78 to
 /// 80 %, of which 13,000 were made and uploaded again.)
 pub(crate) fn vram_keep(budget: u64, used: u64) -> (u64, u64) {
+    // (Vilocity) `VILOCITY_TEXTURE_KEEP_PERCENT=<from>,<down to>` (75,70 unless set; it was
+    // 88,85): from what share of the budget the idle ones go, and down to which. At 88
+    // the card ran 2 % under the line at which no new texture is made (90,
+    // `resource::room`), and a scene that loads 7 GB of textures in half a minute
+    // crossed it: thousands of textures then waited (faces and skin without theirs)
+    // while 3 to 4 GB of copies whose title memory was long unmapped stayed. In the
+    // opening's six minutes at 1080p on a card of 16 GB: with 88,85 the card had no
+    // room 321 s in; with 75,70 never, the same 324,000 uploads, the same frame rate.
+    static PERCENTS: OnceLock<[u64; 2]> = OnceLock::new();
+    let [from, to] = *PERCENTS.get_or_init(|| {
+        keep_percents(&std::env::var("VILOCITY_TEXTURE_KEEP_PERCENT").unwrap_or_default())
+    });
+    vram_keep_at(budget, used, from, to)
+}
+
+/// `"88,85"` as the two shares of [`vram_keep`]: between 30 and 95, the second no
+/// more than the first; anything else is 75 and 70.
+fn keep_percents(set: &str) -> [u64; 2] {
+    let mut parts = set.split(',').map(|p| p.trim().parse::<u64>().ok().filter(|v| (30..=95).contains(v)));
+    match (parts.next().flatten(), parts.next().flatten()) {
+        (Some(from), Some(to)) if to <= from => [from, to],
+        _ => [75, 70],
+    }
+}
+
+fn vram_keep_at(budget: u64, used: u64, from: u64, to: u64) -> (u64, u64) {
     const KEPT_MS: u64 = 600_000;
     const IDLE_MS: u64 = 5_000;
     const SHORT_MS: u64 = 1_500;
@@ -157,12 +183,12 @@ pub(crate) fn vram_keep(budget: u64, used: u64) -> (u64, u64) {
         return (IDLE_MS, u64::MAX);
     }
     let share = |percent: u64| budget / 100 * percent;
-    if used < share(88) {
+    if used < share(from) {
         (KEPT_MS, u64::MAX)
     } else if used < share(95) {
-        (IDLE_MS, used - share(85))
+        (IDLE_MS, used - share(to))
     } else {
-        (SHORT_MS, used - share(85))
+        (SHORT_MS, used - share(to))
     }
 }
 
@@ -960,7 +986,8 @@ fn create() -> windows::core::Result<Host> {
             D3D12CreateDevice(&adapter, D3D_FEATURE_LEVEL_12_0, &mut device)?;
             tracing::info!("host device on the software adapter (WARP)");
         } else {
-            D3D12CreateDevice(None, D3D_FEATURE_LEVEL_12_0, &mut device)?;
+            // (The card: `create_preferred_device`, as for the pipelines made ahead.)
+            device = Some(vilocity_shader::emit::host::create_preferred_device()?);
             // Whether a GPU hang ends the run or freezes the PC (#1054).
             crate::tdr::log();
         }
@@ -1003,10 +1030,18 @@ fn create() -> windows::core::Result<Host> {
         let messages = debug
             .then(|| device.cast::<ID3D12InfoQueue>().ok())
             .flatten();
-        let queue: ID3D12CommandQueue = device.CreateCommandQueue(&D3D12_COMMAND_QUEUE_DESC {
-            Type: D3D12_COMMAND_LIST_TYPE_DIRECT,
-            ..Default::default()
-        })?;
+        // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+        // Streamline is given the device (DLSS, `VILOCITY_DLSS`); for frame
+        // generation (`VILOCITY_FRAMEGEN`) the direct queue is made through
+        // its device proxy. Without Streamline loaded: `None`, the queue as
+        // before.
+        let queue: ID3D12CommandQueue = match crate::streamline::device_made(&device) {
+            Some(queue) => queue,
+            None => device.CreateCommandQueue(&D3D12_COMMAND_QUEUE_DESC {
+                Type: D3D12_COMMAND_LIST_TYPE_DIRECT,
+                ..Default::default()
+            })?,
+        };
         let fence: ID3D12Fence = device.CreateFence(0, D3D12_FENCE_FLAG_NONE)?;
         let event = CreateEventW(None, false, false, None)?;
         let rtvs: ID3D12DescriptorHeap =
@@ -1259,6 +1294,13 @@ pub(crate) struct HostList {
     /// depends on ([`HostList::changed_something`]); no two lists have the
     /// same.
     epoch: std::sync::atomic::AtomicU64,
+    // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+    /// The upscaling (`crate::streamline`) recorded in the list, noted for
+    /// the present after its submission; 0 for none.
+    upscale: std::sync::atomic::AtomicU64,
+    /// The copy of the colour without the interface (`crate::streamline`)
+    /// recorded in the list, noted likewise; 0 for none.
+    hudless: std::sync::atomic::AtomicU64,
     /// Counts the list in [`ALIVE`] while it lives.
     _alive: Counted,
     /// The texts of the markers `note_op` set, in order (for device-removed
@@ -4168,6 +4210,8 @@ impl Host {
                 batch_args: Mutex::default(),
                 coming: Mutex::default(),
                 epoch: std::sync::atomic::AtomicU64::new(next_epoch()),
+                upscale: std::sync::atomic::AtomicU64::new(0),
+                hudless: std::sync::atomic::AtomicU64::new(0),
                 _alive: Counted::new(),
                 #[cfg(feature = "diagnostics")]
                 notes,
@@ -5541,6 +5585,22 @@ impl Host {
         // and the ranges shaders write are per host copy, not per submission.
         let mut stage = crate::timeline::span("submit: the submission lock");
         let mut submitted = self.submitted.lock().unwrap_or_else(|e| e.into_inner());
+        // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+        // Upscalings these lists recorded, in submission order: the next
+        // present tags the latest (frame generation; no list is looked at
+        // without it).
+        if crate::streamline::framegen_planned() {
+            for run in runs {
+                let id = run.take_upscale();
+                if id != 0 {
+                    crate::streamline::submitted(id);
+                }
+                let id = run.take_hudless();
+                if id != 0 {
+                    crate::streamline::hudless_submitted(id);
+                }
+            }
+        }
         let was_working = working(true);
         submitting(1, runs.len());
         #[cfg(feature = "diagnostics")]
@@ -6380,6 +6440,9 @@ impl HostList {
         let started = std::time::Instant::now();
         let _resetting = crate::timeline::span("resetting a host list");
         self._alive.used();
+        // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+        self.upscale.store(0, Ordering::Relaxed);
+        self.hudless.store(0, Ordering::Relaxed);
         *self.coming.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *self.deferred() = Deferred::default();
         self.states.lock().unwrap_or_else(|e| e.into_inner()).clear();
@@ -7310,6 +7373,33 @@ impl HostList {
     /// reset.
     pub(crate) fn used(&self, key: usize) -> bool {
         self.deferred().textures.contains(&key)
+    }
+
+    // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+    /// The list recorded upscaling `id` (`crate::streamline`).
+    pub(crate) fn mark_upscale(&self, id: u64) {
+        self.upscale.store(id, Ordering::Relaxed);
+    }
+
+    /// The upscaling the list recorded, taken (0 for none).
+    pub(crate) fn take_upscale(&self) -> u64 {
+        self.upscale.swap(0, Ordering::Relaxed)
+    }
+
+    /// The list recorded copy `id` of the colour without the interface
+    /// (`crate::streamline`, frame generation).
+    pub(crate) fn mark_hudless(&self, id: u64) {
+        self.hudless.store(id, Ordering::Relaxed);
+    }
+
+    /// The copy the list recorded (0 for none).
+    pub(crate) fn hudless(&self) -> u64 {
+        self.hudless.load(Ordering::Relaxed)
+    }
+
+    /// As [`HostList::hudless`], taken.
+    pub(crate) fn take_hudless(&self) -> u64 {
+        self.hudless.swap(0, Ordering::Relaxed)
     }
 
     /// Runs `work` when the list is submitted, in order with its copies.
@@ -8689,7 +8779,7 @@ impl Host {
 
 /// The swap chain formats a presented texture can be copied into: its own
 /// family's.
-fn swap_format(format: DXGI_FORMAT) -> Option<DXGI_FORMAT> {
+pub(crate) fn swap_format(format: DXGI_FORMAT) -> Option<DXGI_FORMAT> {
     Some(match format.0 {
         27..=32 => DXGI_FORMAT_R8G8B8A8_UNORM,
         87 | 90 | 91 => DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -8796,6 +8886,8 @@ impl Meter {
         crate::descriptor::sync_line(frames);
         late_line(frames);
         crate::queue::behind_line(frames);
+        // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+        crate::streamline::line(frames);
         card_clock_line(frames, ms);
         #[cfg(feature = "diagnostics")]
         spans::line(frames);
@@ -9099,6 +9191,8 @@ impl Host {
         if (p.width, p.height, p.format) != (width, height, format) {
             // Presents sent ahead hold back buffers until they have run.
             settle_now(WHY_SYNC);
+            // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+            crate::streamline::resizing();
             // SAFETY: no back buffer is held; every submission was waited for.
             let resized = unsafe {
                 p.swap_chain
@@ -9318,7 +9412,21 @@ impl Host {
             #[cfg(feature = "diagnostics")]
             crate::replay::record::present(texture, state);
             let mut showing = crate::timeline::span("the host's Present");
+            // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+            // Frame generation: the frame's markers, constants and tags
+            // (`None`, and nothing done or timed, without it).
+            let presenting = crate::streamline::present_begins(
+                frame,
+                crate::streamline::Planes {
+                    base: (texture, state_u32),
+                    overlay: overlay.filter(|_| composed),
+                    size: [width, height],
+                },
+            );
+            let called = crate::streamline::present_called(&presenting);
             let _ = p.swap_chain.Present(0, DXGI_PRESENT(0));
+            crate::streamline::present_returned(called);
+            crate::streamline::present_ends(presenting);
             showing.next("the frame meter");
             #[cfg(feature = "diagnostics")]
             p.panel.frame(p.meter.line_due());
@@ -9329,6 +9437,15 @@ impl Host {
             #[cfg(not(feature = "diagnostics"))]
             Some(false)
         }
+    }
+
+    // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+    /// Lets the swap chain and what presents with it go, once everything
+    /// sent has run (`vilocity native upscaler-check`: before Streamline is
+    /// shut down; nothing presents afterwards).
+    pub(crate) fn drop_presenter(&self) {
+        settle_now(WHY_SYNC);
+        *self.presenter.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     fn presenter(
@@ -9358,9 +9475,37 @@ impl Host {
                 SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
                 ..Default::default()
             };
-            let swap_chain = factory
-                .CreateSwapChainForHwnd(&self.queue, hwnd, &desc, None, None)?
-                .cast::<IDXGISwapChain3>()?;
+            // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+            // With frame generation, through Streamline's factory proxy and
+            // on its queue proxy: the swap chain is its proxy. (`None`
+            // without it: the swap chain is made as before.)
+            let proxied = crate::streamline::swap_chain_factory(&factory).map(|(proxy, queue)| {
+                proxy
+                    .CreateSwapChainForHwnd(&queue, hwnd, &desc, None, None)
+                    .and_then(|s| s.cast::<IDXGISwapChain3>())
+            });
+            let swap_chain = match proxied {
+                Some(Ok(swap_chain)) => {
+                    crate::streamline::swap_chain_made(true, None);
+                    // Frame generation must be off across a change between
+                    // windowed and full screen (Streamline's guide, 12.0):
+                    // the system's own Alt+Enter is not taken for this window.
+                    if let Ok(parent) = swap_chain.GetParent::<IDXGIFactory1>() {
+                        let _ = parent.MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER);
+                    }
+                    swap_chain
+                }
+                Some(Err(e)) => {
+                    crate::streamline::swap_chain_made(false, Some(&e));
+                    factory.CreateSwapChainForHwnd(&self.queue, hwnd, &desc, None, None)?.cast::<IDXGISwapChain3>()?
+                }
+                // (`VILOCITY_STREAMLINE_PRESENT=1`, DLSS without frame
+                // generation: Streamline's proxy of it, for its present hook;
+                // the swap chain itself otherwise.)
+                None => crate::streamline::present_hooked(
+                    factory.CreateSwapChainForHwnd(&self.queue, hwnd, &desc, None, None)?.cast::<IDXGISwapChain3>()?,
+                ),
+            };
             let copy = self.new_list()?;
             copy.close();
             tracing::info!(width, height, format = format.0, "presenting to a window");
@@ -10711,12 +10856,18 @@ mod batch {   // Batch::texture_due lives here; `mod tests` is already taken at 
     fn textures_are_kept_while_the_card_has_room() {
         use super::vram_keep;
         let gib = 1 << 30;
-        assert_eq!(vram_keep(100 * gib, 87 * gib).0, 600_000);
-        // Past it: the longest idle ones, enough to come down to 85 %.
-        let (ms, bytes) = vram_keep(100 * gib, 90 * gib);
-        assert_eq!((ms, bytes), (5_000, 5 * gib));
-        assert_eq!(vram_keep(100 * gib, 120 * gib), (1_500, 35 * gib));
+        assert_eq!(vram_keep(100 * gib, 74 * gib).0, 600_000);
+        // Past it: the longest idle ones, enough to come down to 70 %.
+        let (ms, bytes) = vram_keep(100 * gib, 80 * gib);
+        assert_eq!((ms, bytes), (5_000, 10 * gib));
+        assert_eq!(vram_keep(100 * gib, 120 * gib), (1_500, 50 * gib));
         assert_eq!(vram_keep(0, 7).0, 5_000);
+        // The shares as set; a setting not understood is 75 and 70.
+        assert_eq!(super::keep_percents("88,85"), [88, 85]);
+        assert_eq!(super::keep_percents(""), [75, 70]);
+        assert_eq!(super::keep_percents("70,75"), [75, 70]);
+        assert_eq!(super::vram_keep_at(100 * gib, 90 * gib, 88, 85), (5_000, 5 * gib));
+        assert_eq!(super::vram_keep_at(100 * gib, 87 * gib, 88, 85).0, 600_000);
     }
 
     #[test]

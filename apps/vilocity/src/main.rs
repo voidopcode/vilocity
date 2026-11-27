@@ -188,7 +188,8 @@ fn play(args: &[OsString]) -> i32 {
 }
 
 /// The native engine's `run` in the sandbox: it reads the game's folder (and
-/// the folder of `VILOCITY_FSR_DLL`, if set) and keeps its cache and data in the
+/// the folder of `VILOCITY_FSR_DLL`, if set, and with `VILOCITY_DLSS=1` the
+/// folder `VILOCITY_STREAMLINE_DIR`) and keeps its cache and data in the
 /// configured folders, the only ones it may write. `game`: `None` for a command
 /// that reads no game (`warm`).
 #[cfg(windows)]
@@ -216,6 +217,16 @@ fn in_sandbox(me: &Path, run: &[OsString], game: Option<&Path>) -> Result<i32, S
         && let Some(dir) = dll.parent()
     {
         grants.push(sandbox::Grant { path: dir.to_path_buf(), write: false });
+    }
+    // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+    // NVIDIA's Streamline, if DLSS is asked for (`VILOCITY_DLSS=1`) and the
+    // launcher names its folder: it is read. (A folder that is not there is
+    // not granted: the grant would fail and stop the game, and the engine
+    // says that Streamline is missing.)
+    if std::env::var("VILOCITY_DLSS").is_ok_and(|v| v.trim() == "1")
+        && let Some(dir) = std::env::var_os("VILOCITY_STREAMLINE_DIR").map(PathBuf::from).filter(|dir| dir.is_dir())
+    {
+        grants.push(sandbox::Grant { path: dir, write: false });
     }
     println!(
         "sandbox: no network; reads {}; writes only {} and {}",

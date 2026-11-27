@@ -53,15 +53,51 @@ pub fn run(
     // A title that relaunched itself: the old process must be gone first.
     vilocity_hle::modules::lifecycle::wait_for_previous();
     let cfg = vilocity_core::Config::load()?;
+    // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+    // DLSS and frame generation (`VILOCITY_DLSS`, `VILOCITY_FRAMEGEN`): Streamline
+    // is loaded before anything of the title or the host GPU, and fails soft;
+    // only if it offers one of them does the title render through its
+    // FidelityFX path, which DLSS takes over (`upscaler_path::prepare_upscaler`).
+    // Without `VILOCITY_DLSS=1` nothing else is read and nothing is loaded:
+    // `asked` is all off, `available` too, and `upscaler` is `None`.
+    let asked = vilocity_hle::streamline::Asked::from_env(false).map_err(anyhow::Error::msg)?;
+    let available = vilocity_hle::streamline::init(&asked);
+    let upscaler = (available.dlss || available.framegen).then_some(asked.mode);
+    if asked.any() {
+        println!(
+            "upscaling      DLSS {}, frame generation {}{}",
+            if available.dlss { "on" } else { "asked, not available" },
+            if available.framegen { "on" } else if asked.framegen { "asked, not available" } else { "off" },
+            upscaler.map(|m| format!(", scene at the {} scale ({})", m.name(), m.scale())).unwrap_or_default()
+        );
+    }
     let original = std::fs::read(exe).with_context(|| format!("reading {}", exe.display()))?;
-    let prepared = vilocity_loader::prepare(&original)?;
+    let mut prepared = vilocity_loader::prepare(&original)?;
     let hash = prepared.original_hash.to_hex();
     match vilocity_game::identify(&hash) {
         Some(build) => println!("build          {} ({hash})", build.label),
         None => println!("build          unknown ({hash})"),
     }
 
-    let images = cfg.cache_subdir("images")?;
+    // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+    // With DLSS available the image is patched to the title's FidelityFX
+    // path and goes to a folder of its own, beside the stock one; without it
+    // (`None`) the image and its folder are as before.
+    let images = match upscaler.map(|mode| (mode, crate::upscaler_path::prepare_upscaler(&mut prepared, mode))) {
+        Some((mode, Ok(()))) => {
+            println!(
+                "display        the title's output, scene at {} of it through its FidelityFX path ({})",
+                mode.scale(),
+                mode.name()
+            );
+            cfg.cache_subdir(&format!("images/upscaler-{}", mode.name()))?
+        }
+        Some((_, Err(e))) => {
+            println!("upscaling      the title's FidelityFX path was not patched in: {e:#}");
+            cfg.cache_subdir("images")?
+        }
+        None => cfg.cache_subdir("images")?,
+    };
     vilocity_hle::modules::d3d12x::use_shader_cache(cfg.cache_subdir("shaders")?);
     let image = vilocity_loader::load(&prepared, &images)?;
     // The program is mapped from the copy `load` wrote: the file's bytes
@@ -163,7 +199,12 @@ pub fn run(
         show(name, dll.bind_imports(&with_dlls, policy)?);
     }
     let exe_name = exe.file_name().unwrap_or_default().to_string_lossy();
-    show(&exe_name, image.bind_imports(&with_dlls, policy)?);
+    // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+    // The title's FidelityFX calls go through ours when DLSS or frame
+    // generation is on (bound as before otherwise: `Interpose` gives back
+    // what `with_dlls` resolves).
+    let interposed = vilocity_hle::modules::fidelityfx::Interpose { inner: &with_dlls };
+    show(&exe_name, image.bind_imports(&interposed, policy)?);
     if execute {
         let size = image.info().size_of_image as usize;
         // SAFETY: the image stays mapped, and nothing of it has run yet.

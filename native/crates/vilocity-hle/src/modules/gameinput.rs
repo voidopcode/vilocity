@@ -1384,8 +1384,9 @@ mod host {
     /// Debugging aid: `VILOCITY_KEYS=<seconds>:<key>,...` holds each key for
     /// 0.2 s that long after input starts (`<from>-<to>:<key>`: all that
     /// time), with or without focus. A key is a
-    /// letter, a digit, or `Enter`, `Esc`, `Tab`, `Back`, `Up`, `Down`,
-    /// `Left`, `Right` (the stand-in pad's table maps them to buttons).
+    /// letter, a digit, or `Enter`, `Esc`, `Tab`, `Back`, `Space`, `Shift`,
+    /// `Up`, `Down`, `Left`, `Right` (the stand-in pad's table maps them to
+    /// buttons).
     fn scripted() -> Vec<u8> {
         static SCRIPT: LazyLock<(Instant, Vec<(Duration, Duration, u8)>)> = LazyLock::new(|| {
             let list = std::env::var("VILOCITY_KEYS").unwrap_or_default();
@@ -1396,6 +1397,8 @@ mod host {
                     "Esc" => 0x1B,
                     "Tab" => 0x09,
                     "Back" => 0x08,
+                    "Space" => 0x20,
+                    "Shift" => 0xA0,
                     "Up" => 0x26,
                     "Down" => 0x28,
                     "Left" => 0x25,

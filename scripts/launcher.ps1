@@ -86,7 +86,7 @@ $exe = Join-Path $root "target\release\vilocity.exe"
 # What the window remembers, with what it starts from. (The game folder: the user's
 # variable as it is now, not as this window's parent had it.)
 $known = [Environment]::GetEnvironmentVariable('VILOCITY_GTA6_DIR', 'User'); if (-not $known) { $known = $env:VILOCITY_GTA6_DIR }
-$set = @{ game = $known; mode = 0; cap = 0; sharp = 0.0; fsr = $true; hud = $true; sandbox = $true; night = $true; full = $true; logwin = $true; leave = $false; extra = "" }
+$set = @{ game = $known; mode = 0; cap = 0; sharp = 0.0; fsr = $true; hud = $true; sandbox = $true; night = $true; full = $true; logwin = $true; rays = $false; dlss = $false; framegen = $false; leave = $false; extra = "" }
 if (Test-Path $file) {
     try { $old = Get-Content $file -Raw | ConvertFrom-Json; foreach ($k in @($set.Keys)) { if ($null -ne $old.$k) { $set[$k] = $old.$k } } } catch {}
 }
@@ -96,7 +96,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
 
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Vilocity" Width="1080" Height="720" MinWidth="960" MinHeight="640" WindowStartupLocation="CenterScreen"
+        Title="Vilocity" Width="1200" Height="800" ResizeMode="CanMinimize" WindowStartupLocation="CenterScreen"
         Background="#0A0B10" Foreground="#EDEFF5" FontFamily="Segoe UI" FontSize="13">
   <Window.Resources>
     <LinearGradientBrush x:Key="Accent" StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#7C5CFF" Offset="0"/><GradientStop Color="#4F8BFF" Offset="1"/></LinearGradientBrush>
@@ -201,6 +201,10 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
             <StackPanel Grid.Column="1"><TextBlock Style="{StaticResource Head}" Text="GAME FOLDER" Margin="0,0,0,6"/><TextBox x:Name="Game" ToolTip="The folder that holds game_scarlett_master.exe"/></StackPanel>
           </Grid>
         </Border>
+        <Border Style="{StaticResource Card}" Margin="0,14,0,0"><StackPanel>
+          <TextBlock Style="{StaticResource Head}" Text="KEYS" Margin="0,0,0,6"/>
+          <TextBlock Style="{StaticResource Dim}" Text="On foot: W A S D move, the mouse looks, Space jumps, Shift runs, F gets in and out. In a car press G for the driving keys (W accelerates, S brakes, Space is the handbrake) and G again on foot; the frame rate panel says which keys hold. F11: full screen. Esc frees the mouse. All keys: Tools, Keys."/>
+        </StackPanel></Border>
       </StackPanel></ScrollViewer>
       <!-- This PC: what it is, what it gets, what is missing. -->
       <ScrollViewer x:Name="Page1" VerticalScrollBarVisibility="Auto" Visibility="Collapsed"><StackPanel>
@@ -218,6 +222,9 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
           <Slider x:Name="Sharp" Minimum="0" Maximum="1" TickFrequency="0.1" IsSnapToTickEnabled="True" Margin="0,6,0,0"/>
         </StackPanel></Border>
         <Border Style="{StaticResource Card}" Margin="0,0,0,14"><StackPanel>
+          <CheckBox x:Name="Dlss" ToolTip="DLSS Super Resolution in place of the game's own upscaling. NVIDIA's Streamline SDK is not part of Vilocity: download it from github.com/NVIDIA-RTX/Streamline/releases and unpack it into %LOCALAPPDATA%\vilocity\streamline"><TextBlock x:Name="DlssText" TextWrapping="Wrap" Text="DLSS (NVIDIA RTX cards): a sharper picture from the same frame"/></CheckBox>
+          <CheckBox x:Name="FrameGen" ToolTip="DLSS Frame Generation, with DLSS. The controls answer at the real frame rate"><TextBlock TextWrapping="Wrap" Text="Frame generation (DLSS, RTX 40 and 50): a made-up frame between every two, twice the frame rate shown"/></CheckBox>
+          <CheckBox x:Name="Rays" ToolTip="VILOCITY_BVH_BUILDER=1. Not measured here on an AMD card; other forks report 10-16 fps with it against 24 without on an RX 7900 XTX"><TextBlock TextWrapping="Wrap" Text="Ray tracing: the game's own traced light. For AMD Radeon cards; on NVIDIA cards it runs at 3 to 5 frames a second"/></CheckBox>
           <CheckBox x:Name="Night" ToolTip="VILOCITY_AMBIENT_FLOOR=0.05: the least light the stand-in for the traced light gives a surface"><TextBlock TextWrapping="Wrap" Text="Brighter nights: a little light where no lamp reaches"/></CheckBox>
           <CheckBox x:Name="Smooth" ToolTip="Written into the NVIDIA driver's profile for vilocity.exe when you press PLAY; nothing else of the driver is changed"><TextBlock TextWrapping="Wrap" Text="NVIDIA Smooth Motion: the driver shows a made-up picture between every two (twice the frame rate shown; RTX 40 and 50)"/></CheckBox>
           <CheckBox x:Name="Fsr"><TextBlock TextWrapping="Wrap" Text="AMD's PC upscaler, if its DLL is installed (a little faster)"/></CheckBox>
@@ -252,7 +259,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
 </Window>
 '@
 $w = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
-$ui = @{}; foreach ($n in 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Sandbox', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4') { $ui[$n] = $w.FindName($n) }
+$ui = @{}; foreach ($n in 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Sandbox', 'Dlss', 'DlssText', 'FrameGen', 'Rays', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4') { $ui[$n] = $w.FindName($n) }
 # The rail: one page shown at a time. The log's page shows the end of the newest log, read again while it is open.
 $showLog = {
     $newest = Get-ChildItem (Join-Path $home_ "logs") -Filter "gta6-*.log" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
@@ -275,7 +282,13 @@ if (Test-Path $logo) { $picture = New-Object Windows.Media.Imaging.BitmapImage (
 $ui.Game.Text = [string]$set.game
 $ui["Mode$([math]::Min([int]$set.mode, 2))"].IsChecked = $true; $ui["Cap$([math]::Min([int]$set.cap, 2))"].IsChecked = $true
 $ui.Sharp.Value = [double]$set.sharp; $ui.Fsr.IsChecked = [bool]$set.fsr; $ui.Hud.IsChecked = [bool]$set.hud
-$ui.Full.IsChecked = [bool]$set.full; $ui.LogWindow.IsChecked = [bool]$set.logwin; $ui.Sandbox.IsChecked = [bool]$set.sandbox; $ui.Night.IsChecked = [bool]$set.night; $ui.Leave.IsChecked = [bool]$set.leave; $ui.Extra.Text = [string]$set.extra
+$ui.Full.IsChecked = [bool]$set.full; $ui.LogWindow.IsChecked = [bool]$set.logwin; $ui.Rays.IsChecked = [bool]$set.rays; $ui.Dlss.IsChecked = [bool]$set.dlss; $ui.FrameGen.IsChecked = [bool]$set.framegen; $ui.Sandbox.IsChecked = [bool]$set.sandbox; $ui.Night.IsChecked = [bool]$set.night; $ui.Leave.IsChecked = [bool]$set.leave; $ui.Extra.Text = [string]$set.extra
+# DLSS: to be chosen only with NVIDIA's Streamline SDK there (the user's own download); it says so otherwise.
+$sl = if ($env:VILOCITY_STREAMLINE_DIR) { $env:VILOCITY_STREAMLINE_DIR } else { Join-Path $home_ "streamline" }
+if (-not ((Test-Path (Join-Path $sl "sl.interposer.dll")) -or (Test-Path (Join-Path $sl "bin\x64\sl.interposer.dll")))) {
+    $ui.Dlss.IsEnabled = $false; $ui.FrameGen.IsEnabled = $false
+    $ui.DlssText.Text = "DLSS (NVIDIA RTX cards): needs NVIDIA's Streamline SDK, which is not part of Vilocity. Download it from github.com/NVIDIA-RTX/Streamline/releases and unpack it into $sl"
+}
 # Smooth Motion as the driver holds it now for vilocity.exe; no NVIDIA driver: no such option.
 $smooth = @{ driver = $null }
 try { $smooth.driver = [NvSmooth]::Get('vilocity.exe') -eq 1; $ui.Smooth.IsChecked = $smooth.driver } catch { $ui.Smooth.Visibility = 'Collapsed' }
@@ -291,7 +304,7 @@ function Save-Choices {
     New-Item -ItemType Directory -Force $home_ | Out-Null
     @{ game = $ui.Game.Text.Trim(); mode = (Mode); cap = (Cap); sharp = [math]::Round($ui.Sharp.Value, 1)
        fsr = [bool]$ui.Fsr.IsChecked; hud = [bool]$ui.Hud.IsChecked; sandbox = [bool]$ui.Sandbox.IsChecked; night = [bool]$ui.Night.IsChecked
-       full = [bool]$ui.Full.IsChecked; logwin = [bool]$ui.LogWindow.IsChecked; leave = [bool]$ui.Leave.IsChecked; extra = $ui.Extra.Text.Trim() } | ConvertTo-Json | Set-Content $file
+       full = [bool]$ui.Full.IsChecked; logwin = [bool]$ui.LogWindow.IsChecked; rays = [bool]$ui.Rays.IsChecked; dlss = [bool]$ui.Dlss.IsChecked; framegen = [bool]$ui.FrameGen.IsChecked; leave = [bool]$ui.Leave.IsChecked; extra = $ui.Extra.Text.Trim() } | ConvertTo-Json | Set-Content $file
 }
 
 # One line of the check list: a dot (green: fine, yellow: it works but, red: it will not start) and what was found.
@@ -407,7 +420,14 @@ $ui.Warm.Add_Click({
 })
 
 $ui.Play.Add_Click({
-    if ($state.started) { Get-Process vilocity -ErrorAction SilentlyContinue | Stop-Process -Force; return }
+    if ($state.started) {
+        # The play script with all it started (its step, the game, the panel, the log window): ending
+        # only vilocity.exe let the script go on to its next step, and the game started all the same.
+        if ($state.proc -and -not $state.proc.HasExited) { & taskkill.exe /PID $state.proc.Id /T /F 2>&1 | Out-Null }
+        Get-Process vilocity -ErrorAction SilentlyContinue | Stop-Process -Force
+        $state.started = $null; $state.proc = $null; $ui.Play.Content = "PLAY"; & $refresh; $ui.Status.Text = "Stopped."
+        return
+    }
     Save-Choices
     # Smooth Motion into the driver's profile for vilocity.exe, when the box differs from what the driver holds.
     $note = ""
@@ -426,10 +446,10 @@ $ui.Play.Add_Click({
     if ($ui.Full.IsChecked) { $vars.VILOCITY_FULLSCREEN = "1" }
     foreach ($pair in ($ui.Extra.Text -split ';')) { $k, $v = $pair -split '=', 2; if ($k -and $k.Trim() -match '^VILOCITY_[A-Z0-9_]+$' -and $null -ne $v) { $vars[$k.Trim()] = $v.Trim() } }
     $sets = ($vars.GetEnumerator() | ForEach-Object { "`$env:$($_.Key) = '$($_.Value -replace "'", "''")'; " }) -join ''
-    $switches = "-NoMonitor" + " -Picture " + @("1080p", "4k", "1440p")[(Mode)] + $(if (-not $ui.Sandbox.IsChecked) { " -NoSandbox" }) + $(if ($ui.LogWindow.IsChecked) { " -LogWindow" })
+    $switches = "-NoMonitor" + " -Picture " + @("1080p", "4k", "1440p")[(Mode)] + $(if (-not $ui.Sandbox.IsChecked) { " -NoSandbox" }) + $(if ($ui.LogWindow.IsChecked) { " -LogWindow" }) + $(if ($ui.Rays.IsChecked) { " -RayTracing" }) + $(if (($ui.Dlss.IsChecked -or $ui.FrameGen.IsChecked) -and $ui.Dlss.IsEnabled) { " -Dlss quality" }) + $(if ($ui.FrameGen.IsChecked -and $ui.Dlss.IsEnabled) { " -FrameGen" })
     $play = Join-Path $PSScriptRoot "play-gta6.ps1"
     $cmd = "$sets & '$($play -replace "'", "''")' -Game '$($ui.Game.Text.Trim().Trim('"') -replace "'", "''")' $switches"
-    Start-Process powershell -WindowStyle Hidden -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "`"$($cmd -replace '"', '\"')`"" | Out-Null
+    $state.proc = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "`"$($cmd -replace '"', '\"')`""
     $state.started = Get-Date; $state.seen = $false; $ui.Play.Content = "STOP"; $ui.Status.Text = "Starting...$note"
 })
 
@@ -442,8 +462,13 @@ $timer.Add_Tick({
         if ($ui.Leave.IsChecked -and -not $state.seen) { $w.Close(); return }
         $state.seen = $true
         $ui.Status.Text = if ($g.MainWindowTitle -match '([\d.]+) fps ([\d.]+) ms/frame') { "Running: {0} fps ({1} ms a frame). F8 hides the panel, Esc frees the mouse." -f $Matches[1], $Matches[2] } else { "Running." }
-    } elseif (Get-CimInstance Win32_Process -Filter "Name='vilocity.exe'" | Where-Object CommandLine -like '*native shaders*') {
-        $ui.Status.Text = "Translating the game's shaders (once per build, about a minute)..."
+    } elseif (-not $state.seen -and $state.proc -and -not $state.proc.HasExited) {
+        # The play script is still at its steps before the game; it is not "did not start" while it runs
+        # (said after 45 seconds, PLAY came back and a second press started a second game).
+        $step = (Get-CimInstance Win32_Process -Filter "Name='vilocity.exe'" | Select-Object -ExpandProperty CommandLine) -join ' '
+        $ui.Status.Text = if ($step -like '*native shaders*') { "Translating the game's shaders (once per build, about a minute)..." }
+            elseif ($step -like '*warm*') { "Preparing this build's pipelines (once per build, a few minutes)..." }
+            else { "Starting..." }
     } elseif ($state.seen -or ((Get-Date) - $state.started).TotalSeconds -gt 45) {
         $ui.Status.Text = if ($state.seen) { "The game closed." } else { "The game did not start: see Logs." }
         $state.started = $null; $ui.Play.Content = "PLAY"; & $refresh

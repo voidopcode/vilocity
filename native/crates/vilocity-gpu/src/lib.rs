@@ -80,6 +80,9 @@ mod shadow;
 #[cfg(windows)]
 mod tiles;
 pub mod signature;
+// (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+#[cfg(windows)]
+pub mod streamline;
 mod switch;
 #[cfg(all(windows, feature = "diagnostics"))]
 mod ab;

@@ -11,6 +11,9 @@ mod replay;
 mod run;
 mod shader;
 mod translate;
+// (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+#[cfg(windows)]
+mod upscaler_path;
 #[cfg(windows)]
 mod warm;
 
@@ -154,6 +157,25 @@ enum Command {
     Replay(replay::Replay),
     /// Show the resolved configuration and check it.
     Config,
+    // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+    /// Check NVIDIA Streamline, DLSS and DLSS Frame Generation on this PC
+    /// without the title (`VILOCITY_STREAMLINE_DIR`, `VILOCITY_DLSS_MODE`,
+    /// `VILOCITY_DLSS_PRESET`): what loads and what this GPU supports; with
+    /// --device, the host device handed over and DLSS run three times on
+    /// stand-in textures; with --present too, three seconds of presents with
+    /// frame generation in a window of ours.
+    #[cfg(windows)]
+    UpscalerCheck {
+        /// The output size, `<width>x<height>`.
+        #[arg(long, default_value = "2560x1440")]
+        output: String,
+        /// Make the host device and run DLSS on it.
+        #[arg(long)]
+        device: bool,
+        /// Present for three seconds with frame generation (with --device).
+        #[arg(long)]
+        present: bool,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -232,6 +254,18 @@ pub fn main(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         #[cfg(all(windows, feature = "diagnostics"))]
         Command::Replay(options) => replay::run(options),
         Command::Config => show_config(),
+        // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+        #[cfg(windows)]
+        Command::UpscalerCheck { output, device, present } => {
+            let size = output
+                .split_once(['x', 'X'])
+                .and_then(|(w, h)| Some([w.trim().parse().ok()?, h.trim().parse().ok()?]))
+                .ok_or_else(|| anyhow::anyhow!("--output {output}: not <width>x<height>"))?;
+            for line in vilocity_hle::streamline::check(size, device || present, present) {
+                println!("{line}");
+            }
+            Ok(())
+        }
     }
 }
 

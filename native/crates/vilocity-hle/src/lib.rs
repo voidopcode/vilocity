@@ -24,6 +24,10 @@ pub mod runtime;
 pub use host::HostPolicy;
 pub use registry::{HleExport, HleModule, registry};
 pub use vilocity_gpu::console;
+// (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+/// DLSS and frame generation (`VILOCITY_DLSS`, `VILOCITY_FRAMEGEN`).
+#[cfg(windows)]
+pub use vilocity_gpu::streamline;
 #[cfg(all(windows, feature = "diagnostics"))]
 pub use vilocity_gpu::replay;
 

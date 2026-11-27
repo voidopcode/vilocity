@@ -62,6 +62,104 @@ fn err(e: windows::core::Error) -> String {
     e.message().to_string()
 }
 
+// (Vilocity: the pick of the graphics card is TaynanGT/Vice-Tay's, from the
+// kaultakaulta75-dev/Vice-Tay-7800X3D tree, GPL-3.0-or-later, as this.)
+fn software(desc: &DXGI_ADAPTER_DESC1) -> bool {
+    desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0
+        || (desc.VendorId == 0x1414 && desc.DeviceId == 0x8c)
+}
+
+fn adapter_matches(requested: &str, index: u32, name: &str) -> bool {
+    if let Ok(wanted) = requested.parse::<u32>() {
+        wanted == index
+    } else {
+        !requested.is_empty() && name.to_lowercase().contains(&requested.to_lowercase())
+    }
+}
+
+fn shader_model(device: &ID3D12Device) -> windows::core::Result<D3D_SHADER_MODEL> {
+    let mut sm = D3D12_FEATURE_DATA_SHADER_MODEL {
+        HighestShaderModel: D3D_SHADER_MODEL_6_6,
+    };
+    // SAFETY: a feature structure of the requested type and size.
+    unsafe {
+        device.CheckFeatureSupport(
+            D3D12_FEATURE_SHADER_MODEL,
+            (&raw mut sm).cast(),
+            size_of_val(&sm) as u32,
+        )?;
+    }
+    Ok(sm.HighestShaderModel)
+}
+
+/// The device of the run and of the pipelines made ahead: the same card for both.
+/// An index or a part of a name in `VILOCITY_D3D12_ADAPTER` comes first. Otherwise
+/// the first card Windows counts as high performance that has shader model 6.6 (on a
+/// laptop with two, the default device is often the one built into the processor:
+/// a few frames a second), then Windows' default if none is listed.
+pub fn create_preferred_device() -> windows::core::Result<ID3D12Device> {
+    let requested = std::env::var("VILOCITY_D3D12_ADAPTER").unwrap_or_default();
+    let requested = requested.trim();
+    // SAFETY: plain adapter queries and device creation.
+    unsafe {
+        let create = |adapter: Option<&IDXGIAdapter1>| -> windows::core::Result<ID3D12Device> {
+            let mut device = None;
+            match adapter {
+                Some(adapter) => D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_0, &mut device)?,
+                None => D3D12CreateDevice(None, D3D_FEATURE_LEVEL_12_0, &mut device)?,
+            }
+            device.ok_or_else(windows::core::Error::empty)
+        };
+        if !requested.is_empty() {
+            let factory: IDXGIFactory4 = CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0))?;
+            for index in 0.. {
+                let Ok(adapter) = factory.EnumAdapters1(index) else {
+                    break;
+                };
+                let desc = adapter.GetDesc1()?;
+                let name = String::from_utf16_lossy(&desc.Description);
+                if !software(&desc) && adapter_matches(requested, index, name.trim_end_matches('\0'))
+                {
+                    return create(Some(&adapter));
+                }
+            }
+            return Err(windows::core::Error::new(
+                DXGI_ERROR_NOT_FOUND,
+                format!("VILOCITY_D3D12_ADAPTER={requested} matched no hardware adapter"),
+            ));
+        }
+        if let Ok(factory) = CreateDXGIFactory2::<IDXGIFactory6>(DXGI_CREATE_FACTORY_FLAGS(0)) {
+            for index in 0.. {
+                let Ok(adapter) = factory.EnumAdapterByGpuPreference::<IDXGIAdapter1>(
+                    index,
+                    DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+                ) else {
+                    break;
+                };
+                if adapter.GetDesc1().is_ok_and(|desc| !software(&desc))
+                    && let Ok(device) = create(Some(&adapter))
+                    && shader_model(&device).is_ok_and(|sm| sm.0 >= D3D_SHADER_MODEL_6_6.0)
+                {
+                    return Ok(device);
+                }
+            }
+        }
+        create(None)
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn an_explicit_adapter_matches_an_index_or_name() {
+    let nvidia = "NVIDIA GeForce RTX 3050 Laptop GPU";
+    let integrated = "Intel(R) UHD Graphics";
+    assert!(adapter_matches("1", 1, nvidia));
+    assert!(!adapter_matches("1", 0, integrated));
+    assert!(adapter_matches("geforce rtx 3050", 1, nvidia));
+    assert!(!adapter_matches("nvidia", 0, integrated));
+    assert!(!adapter_matches("", 0, integrated));
+}
+
 impl Host {
     /// The default adapter, or WARP with `warp` (or `VILOCITY_WARP=1`).
     pub fn new(warp: bool) -> Result<Self, String> {
@@ -85,7 +183,7 @@ impl Host {
                 let adapter: IDXGIAdapter = factory.EnumWarpAdapter().map_err(err)?;
                 D3D12CreateDevice(&adapter, D3D_FEATURE_LEVEL_12_0, &mut device).map_err(err)?;
             } else {
-                D3D12CreateDevice(None, D3D_FEATURE_LEVEL_12_0, &mut device).map_err(err)?;
+                device = Some(create_preferred_device().map_err(err)?);
                 // A machine without a graphics card gives the software
                 // adapter as its default device (a hosted test runner,
                 // whose first adapter is a display stub that cannot make a

@@ -33,6 +33,19 @@
 //! The air of a room is lit by the same probes: without rays they hold the
 //! sky's light indoors too, a brown veil at sunset. `VILOCITY_AMBIENT_AIR`
 //! bounds what the air scatters by a multiple of the light around.
+//!
+//! (Vilocity: the stand-in for reflections is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+//! Reflections are traced too, at half the picture's size: rays the
+//! title's screen-space march resolves (`CS_ResolveScreenSpace`) take the
+//! light seen on screen; the others go to the structures, find nothing, and
+//! `CS_RayMiss` gives each the sky's light from the sky's cube maps (in a
+//! cutscene frame, capture haze2: 10 to 30 against 0.01 to 0.1 for the room
+//! the eyes and floors are in, and blue). `VILOCITY_AMBIENT_SPECULAR` puts in,
+//! right after that program, the same estimate taken along the reflected
+//! direction ([`Role::Miss`]); the screen-space resolve that comes next
+//! still writes what it found over it.
+
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use std::sync::{Mutex, OnceLock};
 
@@ -51,6 +64,9 @@ pub(crate) enum Role {
     /// Adds the lamps' light to what the air scatters (the last program
     /// that writes that volume before it is summed up along the view).
     Air,
+    /// Gives the reflection rays that found nothing the sky's light
+    /// (`CS_RayMiss`, not `CS_RayMiss_Volumetrics` nor the screen probes').
+    Miss,
 }
 
 /// The program's part in this, by its name in the container.
@@ -62,9 +78,19 @@ pub(crate) fn role(container: &[u8]) -> Option<Role> {
         Some(Role::Radiance)
     } else if has(b"CS_AccumulateLocalLightInscatteringVolume") {
         Some(Role::Air)
+    } else if is_miss(container) {
+        Some(Role::Miss)
     } else {
         None
     }
+}
+
+/// `CS_RayMiss_` and the eight hex digits of a variant's hash.
+fn is_miss(container: &[u8]) -> bool {
+    const NAME: &[u8] = b"CS_RayMiss_";
+    container.windows(NAME.len() + 9).any(|w| {
+        w.starts_with(NAME) && w[NAME.len()..NAME.len() + 8].iter().all(u8::is_ascii_hexdigit) && w[NAME.len() + 8] == b'_'
+    })
 }
 
 /// Where the resolve writes the diffuse light (R9G9B9E5 as 32-bit integers)
@@ -75,6 +101,14 @@ pub(crate) const DEPTH: (u8, u32) = (0, 464);
 pub(crate) const RADIANCE: (u8, u32) = (1, 16);
 /// Where the light the air scatters is.
 pub(crate) const AIR: (u8, u32) = (1, 32);
+/// Where the miss program writes the reflected light (R11G11B10, half the
+/// picture's size) and where it reads the depth it is given (a 32-bit depth
+/// of the picture's size).
+pub(crate) const MISS_LIGHT: (u8, u32) = (1, 104);
+pub(crate) const MISS_DEPTH: (u8, u32) = (0, 1000);
+/// The miss program's first root constant: which surfaces its rays are of.
+pub(crate) const MISS_OPAQUE: u32 = 0;
+pub(crate) const MISS_ALPHA: u32 = 1;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Set {
@@ -97,9 +131,47 @@ fn set() -> Set {
     *SET.get_or_init(|| parse(&std::env::var("VILOCITY_AMBIENT").unwrap_or_default()))
 }
 
-/// Whether the stand-in is on: set, and the title's rays find nothing.
+/// Whether a stand-in is on (for the diffuse light or for reflections):
+/// set, and the title's rays find nothing.
 pub(crate) fn on() -> bool {
-    set() != Set::Off && !crate::pipeline::builder_runs()
+    (set() != Set::Off || specular().is_some()) && !crate::pipeline::builder_runs()
+}
+
+/// `VILOCITY_AMBIENT_SPECULAR=<share>[,<sky>]`: reflections whose rays found
+/// nothing take `share` of the estimate along the reflected direction
+/// instead of the sky's light; `sky` (0 to 1, 0 if not given) of them stays
+/// the title's sky, made no brighter than the estimate. Unset or 0: the
+/// title's sky.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Specular {
+    share: f32,
+    sky: f32,
+}
+
+fn parse_specular(set: &str) -> Option<Specular> {
+    let mut parts = set.split(',').map(|t| t.trim().parse::<f32>().ok().filter(|v| v.is_finite()));
+    let share = parts.next().flatten().filter(|v| *v > 0.0)?;
+    let sky = parts.next().flatten().map_or(0.0, |v| v.clamp(0.0, 1.0));
+    Some(Specular { share, sky })
+}
+
+fn specular() -> Option<Specular> {
+    static SET: OnceLock<Option<Specular>> = OnceLock::new();
+    let set = *SET.get_or_init(|| parse_specular(&std::env::var("VILOCITY_AMBIENT_SPECULAR").unwrap_or_default()));
+    // In one run by turns (`VILOCITY_AB=<s>,VILOCITY_AMBIENT_SPECULAR`): as set (1,0.5 if not), and off.
+    #[cfg(feature = "diagnostics")]
+    match crate::ab::pick("VILOCITY_AMBIENT_SPECULAR") {
+        Some(true) => return set.or(Some(Specular { share: 1.0, sky: 0.5 })),
+        Some(false) => return None,
+        None => {}
+    }
+    set
+}
+
+/// (Vilocity) Whether the stand-in for reflections is set: without it the
+/// miss program's dispatches are not looked at.
+pub(crate) fn reflections() -> bool {
+    specular().is_some()
 }
 
 /// (Vilocity) The least light the stand-in gives a surface, whatever the estimate
@@ -145,6 +217,46 @@ fn leftover_mode(set: &str) -> u32 {
     }
 }
 
+// (Vilocity: the mean that settles by the clock is TaynanGT/Vice-Tay's, from the
+// kaultakaulta75-dev/Vice-Tay-7800X3D tree, GPL-3.0-or-later, as this.)
+/// How the slow mean of the light around follows the frames
+/// (`VILOCITY_AMBIENT_SETTLE=<time constant in ms>[,<jump factor>]`; unset: 250,3;
+/// 0: 0.04 of the way a frame, as before, which is 25 frames: 0.8 s at the console's
+/// 30 frames a second, longer below). Set, it is the same share of the way a second
+/// whatever the frame rate, and a change by more than the jump factor (0: none) is
+/// taken at once, as a new room is.
+fn settle() -> Option<[f32; 2]> {
+    static SET: OnceLock<Option<[f32; 2]>> = OnceLock::new();
+    *SET.get_or_init(|| settle_of(&std::env::var("VILOCITY_AMBIENT_SETTLE").unwrap_or_else(|_| "250,3".to_owned())))
+}
+
+fn settle_of(set: &str) -> Option<[f32; 2]> {
+    let mut parts = set.split(',').map(|p| p.trim().parse::<f32>().ok());
+    let ms = parts.next().flatten().filter(|v| v.is_finite() && *v > 0.0)?;
+    let jump = parts.next().flatten().filter(|v| v.is_finite() && *v >= 0.0).unwrap_or(3.0);
+    Some([ms, jump])
+}
+
+/// The share of the way the slow mean goes at this frame's keeping
+/// ([`Role::Radiance`], once a frame; the other passes do not read it): by the
+/// milliseconds since the last one, the first and one after a pause of over a
+/// second as a frame of 30.
+fn follow(role: Role) -> f32 {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    let Some([ms, _]) = settle().filter(|_| role == Role::Radiance) else {
+        return 0.04;
+    };
+    let now = crate::host::now_ms();
+    let last = LAST.swap(now, Relaxed);
+    share(ms, if last == 0 { 33.0 } else { now.saturating_sub(last) as f32 })
+}
+
+fn share(ms: f32, dt: f32) -> f32 {
+    let dt = if dt > 1000.0 { 33.0 } else { dt.max(1.0) };
+    1.0 - (-dt / ms).exp()
+}
+
 /// Strength and radius of the creases' shade.
 fn shade() -> [f32; 2] {
     static SET: OnceLock<[f32; 2]> = OnceLock::new();
@@ -161,7 +273,7 @@ fn shade() -> [f32; 2] {
 }
 
 const SOURCE: &str = r#"
-#define RS "RootConstants(num32BitConstants=13, b0), DescriptorTable(SRV(t0)), DescriptorTable(UAV(u0)), UAV(u1), UAV(u2)"
+#define RS "RootConstants(num32BitConstants=14, b0), DescriptorTable(SRV(t0)), DescriptorTable(UAV(u0)), UAV(u1), UAV(u2)"
 #define CX 64
 #define CY 36
 #define CELLS (CX * CY)
@@ -171,7 +283,7 @@ cbuffer Set : register(b0) {
     float level; float constant; float strength; float radius;
     float near; float tan_y; uint width; uint height;
     float follow; float most; float air; uint leftover;
-    float least;
+    float least; float jump;
 };
 Texture2D<float> depth : register(t0);
 // Cells: the light they send out (then, at CELLS, the slow mean), from
@@ -213,7 +325,10 @@ void mean() {
     for (uint i = 0; i < CELLS; i++) sum += cells[i].rgb;
     float4 was = cells[CELLS];
     float3 now = sum / CELLS;
-    cells[CELLS] = float4(was.a > 0.0 ? lerp(was.rgb, now, follow) : now, 1.0);
+    // (`jump` > 0: a change of more than that factor either way is followed at once.)
+    float a = max(dot(now, LUMA), 1e-5), b = max(dot(was.rgb, LUMA), 1e-5);
+    bool jumped = jump > 0.0 && max(a / b, b / a) > jump;
+    cells[CELLS] = float4(was.a > 0.0 ? lerp(was.rgb, now, jumped ? 1.0 : follow) : now, 1.0);
 }
 #endif
 
@@ -279,6 +394,62 @@ void clear_air(uint3 at : SV_DispatchThreadID) {
     float3 c = scattered[at];
     float has = dot(c, LUMA);
     if (has > cap) scattered[at] = c * (cap / has);
+}
+#endif
+
+#ifdef REFLECT
+RWTexture2D<float3> reflected : register(u0);
+// Each texel of the reflections' image (half the picture's size): the light
+// the points around send along the reflected direction, as `raise` takes it
+// along the normal; `level` is the share, `constant` the share of the
+// title's sky kept, made no brighter than that.
+[RootSignature(RS)]
+[numthreads(8, 8, 1)]
+void reflect_light(uint3 at : SV_DispatchThreadID) {
+    uint w, h;
+    reflected.GetDimensions(w, h);
+    if (at.x >= w || at.y >= h) return;
+    float2 size = float2(width, height);
+    int2 p = int2((float2(at.xy) + 0.5) * size / float2(w, h));
+    float3 c = seen(p, size);
+    // Nothing is reflected by the sky.
+    if (c.z >= 999.0) return;
+    float3 l = seen(p + int2(-1, 0), size), r = seen(p + int2(1, 0), size);
+    float3 u = seen(p + int2(0, -1), size), d = seen(p + int2(0, 1), size);
+    float3 dx = abs(l.z - c.z) < abs(r.z - c.z) ? c - l : r - c;
+    float3 dy = abs(u.z - c.z) < abs(d.z - c.z) ? c - u : d - c;
+    float3 n = normalize(cross(dy, dx) + float3(0, 0, -1e-9));
+    if (dot(n, c) > 0.0) n = -n;
+    float3 v = normalize(c);
+    float3 ray = v - 2.0 * dot(v, n) * n;
+    float2 g = (float2(p) + 0.5) / size * float2(PX, PY) - 0.5;
+    int2 g0 = int2(floor(g));
+    float2 f = g - float2(g0);
+    float4 sr = 0, sg = 0, sb = 0;
+    float sum = 0;
+    for (int k = 0; k < 4; k++) {
+        int2 q = clamp(g0 + int2(k & 1, k >> 1), int2(0, 0), int2(PX, PY) - 1);
+        float z = seen(int2((float2(q) + 0.5) * size / float2(PX, PY)), size).z;
+        float2 b = float2(k & 1 ? f.x : 1 - f.x, k >> 1 ? f.y : 1 - f.y);
+        float wgt = (b.x * b.y + 1e-3) / (0.02 + abs(z - c.z) / c.z);
+        uint at0 = (q.y * PX + q.x) * 3;
+        sr += wgt * points[at0];
+        sg += wgt * points[at0 + 1];
+        sb += wgt * points[at0 + 2];
+        sum += wgt;
+    }
+    float3 all = float3(sr.w, sg.w, sb.w) / sum;
+    // Radiance from the first moments: three times the direction's share
+    // for an even spread of directions, a little less for a smooth image.
+    float3 found = all + 2.0 * float3(dot(sr.xyz, ray), dot(sg.xyz, ray), dot(sb.xyz, ray)) / sum;
+    found = clamp(found, 0.1 * all, 3.0 * all);
+    found = lerp(found, cells[CELLS].rgb, 0.2) * level;
+    found = any(isnan(found)) || any(isinf(found)) ? 0.0 : max(found, 0.0);
+    float3 was = reflected[at.xy];
+    was = any(isnan(was)) || any(isinf(was)) ? 0.0 : max(was, 0.0);
+    float has = dot(was, LUMA);
+    was *= min(1.0, dot(found, LUMA) / max(has, 1e-6));
+    reflected[at.xy] = lerp(found, was, constant);
 }
 #endif
 
@@ -390,6 +561,7 @@ struct Pass {
     gather: ID3D12PipelineState,
     raise: ID3D12PipelineState,
     air: ID3D12PipelineState,
+    reflect: ID3D12PipelineState,
     cells: ID3D12Resource,
     points: ID3D12Resource,
 }
@@ -421,6 +593,7 @@ fn make(device: &ID3D12Device, buffer: impl Fn(u64) -> Option<ID3D12Resource>) -
     let gather = pipeline("GATHER", s!("gather"))?;
     let raise = pipeline("RAISE", s!("raise"))?;
     let air = pipeline("AIR", s!("clear_air"))?;
+    let reflect = pipeline("REFLECT", s!("reflect_light"))?;
     let made = |bytes| buffer(bytes).ok_or_else(windows::core::Error::empty);
     Ok(Pass {
         root: root.ok_or_else(windows::core::Error::empty)?,
@@ -430,6 +603,7 @@ fn make(device: &ID3D12Device, buffer: impl Fn(u64) -> Option<ID3D12Resource>) -
         gather,
         raise,
         air,
+        reflect,
         cells: made(CELL_BYTES)?,
         points: made(POINT_BYTES)?,
     })
@@ -465,6 +639,95 @@ pub(crate) struct Views {
     /// The size of the image, and how many slices it has.
     pub(crate) size: [u32; 2],
     pub(crate) slices: u32,
+    /// The size of the depth (the image's but for [`Role::Miss`]).
+    pub(crate) depth_size: [u32; 2],
+}
+
+/// For the line every ten seconds: what the stand-in for reflections did.
+struct Said {
+    /// Dispatches of the miss program it followed, frames they were in,
+    /// and those it left as they were: of water, and before a frame's
+    /// light was kept (or no tables).
+    ran: AtomicU64,
+    frames: AtomicU64,
+    water: AtomicU64,
+    not_ready: AtomicU64,
+    last_frame: AtomicU64,
+    /// Bit 0 opaque surfaces, 1 alpha, 2 water, 3 others.
+    layers: AtomicU64,
+}
+
+static SAID_MISS: Said = Said {
+    ran: AtomicU64::new(0),
+    frames: AtomicU64::new(0),
+    water: AtomicU64::new(0),
+    not_ready: AtomicU64::new(0),
+    last_frame: AtomicU64::new(u64::MAX),
+    layers: AtomicU64::new(0),
+};
+
+/// What came of a dispatch of the miss program, counted for the line.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum MissNote {
+    Ran(u32),
+    Water,
+    NotReady,
+}
+
+/// Counts what came of a dispatch of the miss program; every ten seconds an
+/// info line says it, so a run shows that the stand-in ran and where.
+pub(crate) fn note_miss(note: MissNote) {
+    use AtomicOrdering::Relaxed;
+    if specular().is_none() {
+        return;
+    }
+    let s = &SAID_MISS;
+    match note {
+        MissNote::Ran(layer) => {
+            s.ran.fetch_add(1, Relaxed);
+            s.layers.fetch_or(1 << layer.min(3), Relaxed);
+            let frame = crate::frame::current();
+            if s.last_frame.swap(frame, Relaxed) != frame {
+                s.frames.fetch_add(1, Relaxed);
+            }
+        }
+        MissNote::Water => {
+            s.water.fetch_add(1, Relaxed);
+        }
+        MissNote::NotReady => {
+            s.not_ready.fetch_add(1, Relaxed);
+        }
+    }
+    static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    let now = std::time::Instant::now();
+    let Some(since) = *last else {
+        *last = Some(now);
+        return;
+    };
+    if now.duration_since(since).as_secs_f32() < 10.0 {
+        return;
+    }
+    *last = Some(now);
+    let layers = s.layers.swap(0, Relaxed);
+    let named: Vec<&str> = [(1, "opaque"), (2, "alpha"), (4, "water"), (8, "other")]
+        .iter()
+        .filter(|(bit, _)| layers & bit != 0)
+        .map(|(_, name)| *name)
+        .collect();
+    let Specular { share, sky } = specular().unwrap_or(Specular { share: 0.0, sky: 0.0 });
+    tracing::info!(
+        "a stand-in for reflections (VILOCITY_AMBIENT_SPECULAR={share},{sky}) in the last {:.0} s: \
+         {} frames, {} dispatches of CS_RayMiss followed (surfaces: {}), each by an estimate along \
+         the reflected direction put in right after it (before CS_ResolveScreenSpace); {} of water or the alpha layer \
+         and {} before a frame's light was kept left as the title had them",
+        now.duration_since(since).as_secs_f32(),
+        s.frames.swap(0, Relaxed),
+        s.ran.swap(0, Relaxed),
+        if named.is_empty() { "none".to_owned() } else { named.join(", ") },
+        s.water.swap(0, Relaxed),
+        s.not_ready.swap(0, Relaxed),
+    );
 }
 
 /// After the title's program of that role, in `list` with the program's view
@@ -475,12 +738,21 @@ pub(crate) fn after(list: &HostList, role: Role, views: &Views) -> bool {
     let Some(pass) = pass() else {
         return false;
     };
-    let (level, constant) = match set() {
-        Set::Off => return false,
-        Set::Estimate(level) => (level, 0.0f32),
-        Set::Constant(level) => (0.0, level),
+    // The share of the estimate, and the constant (for reflections: the
+    // share of the title's sky kept); the keep runs for either stand-in.
+    let (level, constant) = match (role, set(), specular()) {
+        (Role::Miss, _, Some(s)) => (s.share, s.sky),
+        (Role::Miss, _, None) => return false,
+        (Role::Radiance, Set::Off, Some(_)) => (0.0, 0.0),
+        (_, Set::Off, _) => return false,
+        (_, Set::Estimate(level), _) => (level, 0.0f32),
+        (_, Set::Constant(level), _) => (0.0, level),
     };
-    if role != Role::Radiance && constant == 0.0 && !KEPT.load(Ordering::Relaxed) {
+    let estimate = role == Role::Miss || constant == 0.0;
+    if role != Role::Radiance && estimate && !KEPT.load(Ordering::Relaxed) {
+        if role == Role::Miss {
+            note_miss(MissNote::NotReady);
+        }
         return false;
     }
     if role == Role::Air && (constant > 0.0 || air() == 0.0) {
@@ -489,7 +761,7 @@ pub(crate) fn after(list: &HostList, role: Role, views: &Views) -> bool {
     static SAID: Mutex<u32> = Mutex::new(0);
     {
         let mut said = SAID.lock().unwrap_or_else(|e| e.into_inner());
-        if *said < 4 {
+        if *said < 5 {
             *said += 1;
             tracing::info!(?role, size = ?views.size, level, constant, "a stand-in for the indirect light");
         }
@@ -498,17 +770,18 @@ pub(crate) fn after(list: &HostList, role: Role, views: &Views) -> bool {
     list.keep(&pass.points);
     let [strength, radius] = shade();
     let floats = [level, constant, strength, radius, 0.1, 0.45];
-    let mut words = [0u32; 13];
+    let mut words = [0u32; 14];
     for (to, v) in words.iter_mut().zip(floats) {
         *to = v.to_bits();
     }
-    words[6] = views.size[0];
-    words[7] = views.size[1];
-    words[8] = 0.04f32.to_bits();
+    words[6] = views.depth_size[0];
+    words[7] = views.depth_size[1];
+    words[8] = follow(role).to_bits();
     words[9] = 4.0f32.to_bits();
     words[10] = air().to_bits();
     words[11] = leftover();
     words[12] = least().to_bits();
+    words[13] = settle().map_or(0.0, |s| s[1]).to_bits();
     let l = &list.list;
     // SAFETY: an open list with the heap of the views set; the title's
     // program has just used both views, so their textures are in the states
@@ -516,7 +789,7 @@ pub(crate) fn after(list: &HostList, role: Role, views: &Views) -> bool {
     unsafe {
         uav_barrier(l);
         l.SetComputeRootSignature(&pass.root);
-        l.SetComputeRoot32BitConstants(0, 13, words.as_ptr().cast(), 0);
+        l.SetComputeRoot32BitConstants(0, 14, words.as_ptr().cast(), 0);
         l.SetComputeRootDescriptorTable(1, views.depth);
         l.SetComputeRootDescriptorTable(2, views.image);
         l.SetComputeRootUnorderedAccessView(3, pass.cells.GetGPUVirtualAddress());
@@ -540,6 +813,13 @@ pub(crate) fn after(list: &HostList, role: Role, views: &Views) -> bool {
                 }
                 run(&pass.raise, views.size[0].div_ceil(8), views.size[1].div_ceil(8), 1);
             }
+            Role::Miss => {
+                // The points afresh, from this frame's depth: the diffuse
+                // stand-in makes them later in the frame.
+                run(&pass.place, 8, 9, 1);
+                run(&pass.gather, 20, 45, 1);
+                run(&pass.reflect, views.size[0].div_ceil(8), views.size[1].div_ceil(8), 1);
+            }
         }
     }
     true
@@ -557,6 +837,14 @@ mod tests {
         assert_eq!(parse("0.8"), Set::Estimate(0.8));
         assert_eq!(parse("constant:0.3"), Set::Constant(0.3));
         assert_eq!(parse("constant:nan"), Set::Off);
+        // The settling: 250 ms and a jump of 3 unless set; 0 is the old share a frame.
+        assert_eq!(settle_of("250,3"), Some([250.0, 3.0]));
+        assert_eq!(settle_of("400"), Some([400.0, 3.0]));
+        assert_eq!(settle_of("0"), None);
+        // A frame of 250 ms goes 63% of the way, one of 33 ms 12%; a pause counts as a frame.
+        assert!((share(250.0, 250.0) - 0.632).abs() < 0.001);
+        assert!((share(250.0, 33.0) - 0.124).abs() < 0.001);
+        assert_eq!(share(250.0, 5000.0), share(250.0, 33.0));
         // The leftover: off unless set otherwise; the shader reads 0, 1, 2.
         assert_eq!(leftover_mode(""), 2);
         assert_eq!(leftover_mode("keep"), 0);
@@ -566,11 +854,25 @@ mod tests {
     }
 
     #[test]
+    fn specular_settings() {
+        assert_eq!(parse_specular(""), None);
+        assert_eq!(parse_specular("0"), None);
+        assert_eq!(parse_specular("off"), None);
+        assert_eq!(parse_specular("1"), Some(Specular { share: 1.0, sky: 0.0 }));
+        assert_eq!(parse_specular("0.6, 0.25"), Some(Specular { share: 0.6, sky: 0.25 }));
+        assert_eq!(parse_specular("0.6,7"), Some(Specular { share: 0.6, sky: 1.0 }));
+        assert_eq!(parse_specular("0.6,x"), Some(Specular { share: 0.6, sky: 0.0 }));
+    }
+
+    #[test]
     fn roles_by_name() {
         assert_eq!(role(b"..CS_ScreenProbes_TemporalResolve_a911b49c_Wrapped.."), Some(Role::Resolve));
         assert_eq!(role(b"..CS_CacheScreenSpaceRadiance_eed2fc35.."), Some(Role::Radiance));
         assert_eq!(role(b"CS_AccumulateLocalLightInscatteringVolume_7e2f5eef"), Some(Role::Air));
         assert_eq!(role(b"CS_TemporalResolve"), None);
+        assert_eq!(role(b"..CS_RayMiss_de6b91a6_Wrapped.."), Some(Role::Miss));
+        assert_eq!(role(b"..CS_RayMiss_Volumetrics_3c5d8c00_Wrapped.."), None);
+        assert_eq!(role(b"..CS_ScreenProbe_RayMiss_80a88544_Wrapped.."), None);
     }
 
     /// The passes compile with the system's compiler and the host takes them.

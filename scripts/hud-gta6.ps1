@@ -50,10 +50,10 @@ $cores = [Environment]::ProcessorCount
 # What the panel shows; $null: not known (yet).
 $s = @{ fps = $null; ms = $null; draws = $null; gameCpu = $null; pcCpu = $null; gpu = $null; vramUsed = $null; vramAll = $null
         gameVram = $null; gameShared = $null; gameRam = $null; gameCommit = $null; ram = $null; ramAll = $null }
-$state = @{ id = 0; owner = [IntPtr]::Zero; lastCpu = $null; lastAt = $null; seen = $false; hidden = $false; f8 = $false; tick = 0 }
+$state = @{ keys = "on foot"; logAt = 0L; id = 0; owner = [IntPtr]::Zero; lastCpu = $null; lastAt = $null; seen = $false; hidden = $false; f8 = $false; tick = 0 }
 $pc = try { New-Object Diagnostics.PerformanceCounter('Processor', '% Processor Time', '_Total') } catch { $null }
 
-$PW = 250; $PH = 132
+$PW = 250; $PH = 152
 $form = New-Object HudForm
 $form.FormBorderStyle = 'None'; $form.TopMost = $true; $form.ShowInTaskbar = $false
 $form.BackColor = [Drawing.Color]::FromArgb(14, 16, 22); $form.Opacity = 0.86
@@ -102,6 +102,7 @@ $form.Add_Paint({
     & $row 64 "GPU" ("{0}%   {1} of {2} GB" -f (N $s.gpu "N0"), (N $s.vramUsed), (N $s.vramAll)) $s.vramUsed $s.vramAll $s.gameVram
     & $row 86 "GAME" ("video {0} GB   shared {1} GB" -f (N $s.gameVram), (N $s.gameShared)) $null $null $null
     & $row 104 "RAM" ("game {0}   PC {1} of {2} GB" -f (N $s.gameRam), (N $s.ram), (N $s.ramAll "N0")) $s.ram $s.ramAll $s.gameRam
+    & $row 126 "KEYS" $(if ($state.keys -eq "driving") { "driving: W S A D   (G: on foot)" } else { "on foot   (G: driving keys)" }) $null $null $null
 })
 
 # The game's process and window: looked for until found, then kept.
@@ -152,6 +153,16 @@ $timer.Add_Tick({
         try {
             $vm = Get-CimInstance Win32_PerfRawData_GPUPerformanceCounters_GPUProcessMemory | Where-Object Name -like "pid_$($g.Id)_*"
             $s.gameVram = ($vm | Measure-Object DedicatedUsage -Sum).Sum / 1GB; $s.gameShared = ($vm | Measure-Object SharedUsage -Sum).Sum / 1GB
+        } catch {}
+    }
+    # Which keys hold: the engine writes "keys layout=drive" or "walk" at each press of G.
+    if ($Log -and (Test-Path $Log)) {
+        try {
+            $fs = [IO.File]::Open($Log, 'Open', 'Read', 'ReadWrite')
+            if ($fs.Length -lt $state.logAt) { $state.logAt = 0 }
+            [void]$fs.Seek($state.logAt, 'Begin'); $new = (New-Object IO.StreamReader($fs)).ReadToEnd(); $state.logAt = $fs.Length; $fs.Close()
+            $last = [regex]::Matches($new, 'binds: keys layout="?(walk|drive)') | Select-Object -Last 1
+            if ($last) { $state.keys = if ($last.Groups[1].Value -eq "drive") { "driving" } else { "on foot" } }
         } catch {}
     }
     Place $win

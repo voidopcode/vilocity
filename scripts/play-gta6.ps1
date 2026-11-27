@@ -17,6 +17,19 @@ param(
     [switch]$Describe,
     # A console window that shows the engine's log as it is written.
     [switch]$LogWindow,
+    # The game's own ray-traced light (VILOCITY_BVH_BUILDER=1). For AMD Radeon cards, which
+    # run its 64-wide programs as they are: other forks measure 10-16 fps with it against 24
+    # without on an RX 7900 XTX. On an NVIDIA card it runs at 3-5 fps (measured, RTX 5080).
+    [switch]$RayTracing,
+    # DLSS on an NVIDIA RTX card, in place of the game's own upscaling: off, or the mode.
+    # It runs through NVIDIA's Streamline SDK, which you download yourself (NVIDIA's licence):
+    # its bin\x64 folder is named by VILOCITY_STREAMLINE_DIR, or is %LOCALAPPDATA%\vilocity\streamline.
+    [ValidateSet('off', 'quality', 'balanced', 'performance', 'dlaa')][string]$Dlss = 'off',
+    # DLSS Frame Generation (RTX 40 and 50): a made-up frame between every two, so twice the
+    # frame rate shown; the controls answer at the real one. Needs the same Streamline SDK.
+    [switch]$FrameGen,
+    # Only what a start does before the game (shaders translated, pipelines made ahead), then back.
+    [switch]$PrepareOnly,
     # For trying the settings of another PC: "nvidia,8,16,12" is the card's maker, its
     # video memory and the PC's memory in GB, and the processor's threads.
     [string]$As,
@@ -49,7 +62,13 @@ if (-not $Defaults) {
         VILOCITY_RELAY = "2"; VILOCITY_RELAY_COPY = "1"; VILOCITY_WIDE_BACK = "1"   # what shaders wrote is copied back by threads of its own
         VILOCITY_CARD_REHASH_RUNS = "1"; VILOCITY_CARD_STEPS = "2"; VILOCITY_CARD_AWAKE = "1"
         VILOCITY_CARD_BUFFERS_MIN_KB = "64"
-        VILOCITY_JOIN_COPIES = "1"; VILOCITY_JOIN_PARTS = "8"
+        # (Not set any more: VILOCITY_JOIN_COPIES=1 and VILOCITY_JOIN_PARTS=8.) With them, and
+        # with the game a frame ahead of what is sent, the character was drawn torn (his
+        # body pulled into long bands) in single frames while he walks: 183 to 193 of
+        # 2,800 frames on the night street, counted frame by frame; without the two and
+        # with VILOCITY_SUBMIT_FRAMES=0, 2 to 19, for 1 to 2 ms a frame. None at all only
+        # with VILOCITY_CARD_STEPS=0 (58 ms a frame in place of 41): the fault is in there.
+        VILOCITY_SUBMIT_FRAMES = "0"
         VILOCITY_INDIRECT_WINDOW = "1"; VILOCITY_INDIRECT_BATCH = "2"
         VILOCITY_MAP_THREADS = "1"; VILOCITY_THIN = "1"; VILOCITY_UPLOAD_AHEAD = "1"
         VILOCITY_SHOW_AFTER = "1"
@@ -93,6 +112,10 @@ if (-not $Defaults) {
     # it off here too). On an RTX 5080 at 3,500-6,500 draws a frame: a median of
     # 35.9 ms against 37.6-39.9 ms with the loop.
     if ($pc.maker -eq 'nvidia') { $settings.VILOCITY_CARD_AWAKE = "0" }
+    # (Not set: VILOCITY_WAVE_WIDE_ONLY with TaynanGT/Vice-Tay's list of the game's programs
+    # written for waves of 64 lanes. On an RTX 5080 the light-through-fog ones then run and
+    # leave grey rectangles on open water, as that project notes too. To try single ones:
+    # 6f225b641c5b0708,5dc3b25986622949,369cbe906ea72764,2cc4c197ee29e291,a10179ab7eda0dc3.)
     # Video memory. The game wants about 11 GB of it as a Series S. Under 14 GB a
     # texture's levels get memory when they are used (ZigZagBoi1/ScarlettPort: 18.9 to
     # 22.0 fps on a 16 GB RX 9060 XT); under 10 GB also less of title buffers is kept
@@ -102,6 +125,10 @@ if (-not $Defaults) {
         $settings.VILOCITY_CARD_BUFFERS_MB = "1536"; $settings.VILOCITY_CARD_WINDOWS_MB = "1024"; $why += "less kept on the card"
         if ($Picture -ne '1080p') { $Picture = '1080p'; $why += "the 1080p picture (the others need more video memory)" }
     }
+    if ($RayTracing) {
+        $settings.VILOCITY_BVH_BUILDER = "1"
+        $why += $(if ($pc.maker -eq 'amd') { "the game's ray tracing" } else { "the game's ray tracing (made for AMD cards: 3-5 fps on an NVIDIA one)" })
+    }
     $said = "This PC: {0} with {1:N0} GB, {2:N0} GB of memory, {3} threads. Settings: {4}." -f $pc.card, $pc.vram, $pc.ram, $pc.threads, $(if ($why) { $why -join '; ' } else { "the engine's own" })
     if ($pc.maker -eq 'intel' -or $pc.maker -eq 'other') { $said += " Not tried on this maker's cards." }
     if ($pc.ram -gt 0 -and $pc.ram -lt 30) { $said += " With under 32 GB of memory the game needs a large page file (it takes 23 to 30 GB)." }
@@ -109,6 +136,18 @@ if (-not $Defaults) {
     if ($Describe) { foreach ($name in $settings.Keys) { Write-Host ("  {0} = {1}" -f $name, $(if (Test-Path "Env:$name") { (Get-Item "Env:$name").Value + " (set before)" } else { $settings[$name] })) }; return }
     foreach ($name in $settings.Keys) {
         if (-not (Test-Path "Env:$name")) { Set-Item "Env:$name" $settings[$name] }
+    }
+}
+# DLSS: only with an NVIDIA card and the Streamline SDK's files there (louketa/foxhound's way).
+if ($Dlss -ne 'off' -and -not $Defaults) {
+    $sl = if ($env:VILOCITY_STREAMLINE_DIR) { $env:VILOCITY_STREAMLINE_DIR } else { Join-Path $env:LOCALAPPDATA "vilocity\streamline" }
+    if (-not (Test-Path (Join-Path $sl "sl.interposer.dll")) -and (Test-Path (Join-Path $sl "bin\x64\sl.interposer.dll"))) { $sl = Join-Path $sl "bin\x64" }
+    if ($pc.maker -eq 'nvidia' -and (Test-Path (Join-Path $sl "sl.interposer.dll"))) {
+        $env:VILOCITY_STREAMLINE_DIR = $sl; $env:VILOCITY_DLSS = "1"; $env:VILOCITY_DLSS_MODE = $Dlss
+        if ($FrameGen -and (Test-Path (Join-Path $sl "sl.dlss_g.dll"))) { $env:VILOCITY_FRAMEGEN = "1"; Write-Host "DLSS Frame Generation on." }
+        Write-Host "DLSS ($Dlss) through the Streamline SDK in $sl."
+    } else {
+        Write-Host "DLSS is not on: it needs an NVIDIA RTX card and NVIDIA's Streamline SDK (sl.interposer.dll) in $sl."
     }
 }
 # The console the title is shown, and the size of the screen it is told of.
@@ -122,6 +161,12 @@ $monitor = Join-Path $PSScriptRoot "monitor-gta6.ps1"
 $fsr = Join-Path $env:LOCALAPPDATA "vilocity\fidelityfx\amd_fidelityfx_upscaler_dx12.dll"
 if ($env:VILOCITY_FSR_DLL -eq "off") { Remove-Item Env:VILOCITY_FSR_DLL }
 elseif (-not $env:VILOCITY_FSR_DLL -and (Test-Path $fsr)) { $env:VILOCITY_FSR_DLL = $fsr }
+
+# One game at a time: two that start together share the card, the caches and DLSS's
+# own files (of three started at once, two died while DLSS loaded).
+if (Get-CimInstance Win32_Process -Filter "Name='vilocity.exe'" | Where-Object CommandLine -like '*native run*') {
+    Write-Host "The game is already running: close it first."; return
+}
 
 # Once per build of the engine: every shader of the game translated ahead (a few
 # minutes), so that none is translated while playing.
@@ -162,6 +207,7 @@ if ($env:VILOCITY_WARM -ne "0" -and (Test-Path (Join-Path $cache "pipelines\know
     Write-Host "Checking the shader pipelines made ahead (minutes after an update, seconds otherwise)..."
     if ($NoSandbox) { & $exe native warm --used } else { & $exe warm --used }
 }
+if ($PrepareOnly) { Write-Host "Prepared."; return }
 
 $watch = if (-not $NoMonitor) { Start-Process powershell -PassThru -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$monitor`" -Log `"$log`"" }
 # The in-game HUD: frame rate and memory on the right of the game's window

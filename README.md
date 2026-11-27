@@ -104,18 +104,71 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 07:39
+**Latest test run:** 2026-11-27 10:35
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 27.7 fps, 36 ms a frame |
-| Best while playing | 33.9 fps |
-| Last frame | 31.9 fps, 31 ms, 2567 draws, 261 dropped without a pipeline |
+| Frame rate while playing (typical) | 24.0 fps, 42 ms a frame |
+| Best while playing | 28.9 fps |
+| Last frame | 24.4 fps, 41 ms, 9061 draws, 1603 dropped without a pipeline |
 | Shaders that failed to translate | compute 5 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: the launcher is new, and it sets the engine for the PC it runs on. A rail on
+Latest: DLSS on NVIDIA cards, every frame checked for faults, and what that found.
+Measured on one PC (Ryzen 9 9950X3D, RTX 5080, 62 GB), with runs that take the
+keyboard and whose every frame was captured and counted.
+- **DLSS Super Resolution** takes the place of the game's own FSR upscale
+  (louketa/foxhound's Streamline integration, ported): `scripts\play-gta6.ps1 -Dlss
+  quality` (or `balanced`, `performance`, `dlaa`), and a box in the launcher's Options.
+  It needs NVIDIA's Streamline SDK unpacked at `%LOCALAPPDATA%\vilocity\streamline`
+  (NVIDIA's download: nothing of it is in this repository; its library is loaded only
+  if its signature checks, and never fetches anything). In six minutes of the opening
+  at 1440p upscaled to 4K: 8,878 frames, all of them upscaled by DLSS, none failed,
+  24 to 40 fps, inside the sandbox. Frame generation has its switch (`-FrameGen`) and
+  has not been run yet.
+- **The character drawn torn.** Counting frames that differ from both their neighbours
+  found the flicker: while he walks on the night street his body is pulled into long
+  bands in single frames, 183 to 193 of 2,800 frames, in the version before this one
+  too. It comes from the steps done on the card ahead of the flights
+  (`VILOCITY_CARD_STEPS`): none at all with it off, at 58 ms a frame in place of 41.
+  Without the joined copies and parts and with the game held until its frame is sent
+  (`VILOCITY_SUBMIT_FRAMES=0`, now what the play script sets): 2 to 19, for 1 to 2 ms a
+  frame; 0 of 2,742 frames walking in daylight. Not closed: the fault itself is still in
+  there.
+- **Memory of the card.** Copies of textures nothing uses went only from 88 % of the
+  card's budget on, 2 % under the line at which no new texture is made; when a scene
+  loaded 7 GB of textures in half a minute thousands of textures waited (faces and skin
+  without theirs) while 3 to 4 GB of copies whose game memory was long unmapped stayed.
+  They go from 75 % on now (`VILOCITY_TEXTURE_KEEP_PERCENT`): in the opening's six
+  minutes the card had no room once before, 321 s in, and never after, with the same
+  324,000 uploads and the same frame rate.
+- **Memory.** A view of memory the game placed is told apart by the fields its kind
+  uses only (TaynanGT/Vice-Tay's fix, from kaultakaulta75-dev/Vice-Tay-7800X3D): 53
+  million such views in five minutes are 33,690 shapes and one table entry, where the
+  table grew for the whole run.
+- **Keys.** The game's own controls page was read: A jumps and climbs, the left stick's
+  click runs. Space (A) and Shift (the click) do that, seen in frames; G changes to the
+  driving keys, where W accelerates (a motorbike ridden down the street).
+- **The launcher.** STOP ends the play script with all it started (it ended only the
+  step under way, and the game then started all the same); a second PLAY cannot start
+  a second game (three started at once: two died while DLSS loaded); the steps before
+  the game are named while they run; boxes for DLSS, frame generation and the game's
+  ray tracing; a window of one size. `scripts\play-gta6.ps1 -PrepareOnly` does a start's
+  one-time steps and comes back.
+- The card Windows counts as high performance is taken on a PC with two
+  (`VILOCITY_D3D12_ADAPTER=<index or name>` names another), and the stand-in light
+  follows a change of place by the clock, not by frames (both after Vice-Tay). A
+  stand-in for reflections whose rays find nothing (foxhound's) is in, off
+  (`VILOCITY_AMBIENT_SPECULAR=1,1`): 150 pairs of frames with and without it showed no
+  harm; the case it is for (a puddle under a roof mirrors the full sky, white with black
+  squares, and the exposure falls) has not been compared yet.
+- Known and open: with the pause menu up the blurred picture behind it drifts to green
+  and magenta; the town of the current story save runs at 23 to 24 fps (9,000 to
+  10,000 draws); the list of light programs in the wide form leaves grey rectangles on
+  open water and is not set.
+
+Before that: the launcher is new, and it sets the engine for the PC it runs on. A rail on
 the left (Play, This PC, Options, Tools, Log), the game with its own picture and PLAY
 (the game's pictures are read from your copy; none is in this repository), and the
 picture to choose: 1080p (the game's Series S picture), 1440p or 4K (its Series X
@@ -559,6 +612,8 @@ Vilocity stands on other people's emulators and forks. Thank you to all of them.
 | [DoubleGhosty/cool_fox](https://github.com/DoubleGhosty/cool_fox) | the shared lock of the write guards (renderer port 6, c781843) |
 | [ZigZagBoi1/ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort) | 40 shader variants and a blending repair (from DexNom), levels on demand taking effect |
 | [LooperSalty/AnyXboxX](https://github.com/LooperSalty/AnyXboxX) | the launcher's NVIDIA Smooth Motion switch (the driver settings it writes) |
+| [louketa/foxhound](https://github.com/louketa/foxhound) (lucas-3080) | DLSS through NVIDIA's Streamline (56dba41), the stand-in for reflections |
+| TaynanGT/Vice-Tay, by way of kaultakaulta75-dev/Vice-Tay-7800X3D | placed views told apart by the fields they use and a cap on views without a resource, the pick of the graphics card, the stand-in light that settles by the clock |
 
 **Runtime parts, not shipped with Vilocity:** AMD FidelityFX (FSR) if you download it, and DXC
 from the Windows SDK.

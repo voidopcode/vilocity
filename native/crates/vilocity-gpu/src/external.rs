@@ -116,9 +116,27 @@ pub fn same_family(a: u32, b: u32) -> bool {
 /// One title list's host list, open for a PC library to record onto.
 pub struct Pass<'a> {
     list: &'a crate::host::HostList,
+    // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+    /// The library's work may have set more than a compute library sets
+    /// ([`Pass::all_again`]).
+    again: bool,
 }
 
 impl Pass<'_> {
+    // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+    /// The host list itself, for work of ours in this crate (`crate::streamline`).
+    pub(crate) fn host_list(&self) -> &crate::host::HostList {
+        self.list
+    }
+
+    /// After this pass everything the title set on its list is set again
+    /// (`crate::draw::State::replay`), not only what a compute library sets
+    /// (`crate::draw::State::after_external`): as foxhound does after DLSS
+    /// recorded an upscaling.
+    pub(crate) fn all_again(&mut self) {
+        self.again = true;
+    }
+
     /// The host `ID3D12GraphicsCommandList` (no reference taken).
     pub fn command_list(&self) -> *mut c_void {
         self.list.list.as_raw()
@@ -407,11 +425,18 @@ pub fn record(list: *const c_void, f: impl FnOnce(&mut Pass)) -> bool {
         // left in the unordered access state in between gets no transition
         // that would order the two.
         uav_barrier(host);
-        f(&mut Pass { list: host });
+        let mut pass = Pass { list: host, again: false };
+        f(&mut pass);
         uav_barrier(host);
         // Textures changed: draws after this bring theirs up to date again.
         host.changed_something();
-        state.after_external();
+        // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
+        // After DLSS all of it is set again (`Pass::all_again`).
+        if pass.again {
+            state.replay(host);
+        } else {
+            state.after_external();
+        }
     })
 }
 
