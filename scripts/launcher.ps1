@@ -86,7 +86,7 @@ $exe = Join-Path $root "target\release\vilocity.exe"
 # What the window remembers, with what it starts from. (The game folder: the user's
 # variable as it is now, not as this window's parent had it.)
 $known = [Environment]::GetEnvironmentVariable('VILOCITY_GTA6_DIR', 'User'); if (-not $known) { $known = $env:VILOCITY_GTA6_DIR }
-$set = @{ game = $known; mode = 0; cap = 0; sharp = 0.0; fsr = $true; hud = $true; sandbox = $true; night = $true; full = $true; logwin = $true; rays = $false; dlss = $false; framegen = $false; leave = $false; extra = "" }
+$set = @{ game = $known; mode = 0; cap = 0; sharp = 0.0; fsr = $true; hud = $true; sandbox = $true; night = $true; full = $true; logwin = $true; rays = $false; dlss = $false; framegen = $false; steady = $false; leave = $false; extra = "" }
 if (Test-Path $file) {
     try { $old = Get-Content $file -Raw | ConvertFrom-Json; foreach ($k in @($set.Keys)) { if ($null -ne $old.$k) { $set[$k] = $old.$k } } } catch {}
 }
@@ -224,6 +224,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
         <Border Style="{StaticResource Card}" Margin="0,0,0,14"><StackPanel>
           <CheckBox x:Name="Dlss" ToolTip="DLSS Super Resolution in place of the game's own upscaling. NVIDIA's Streamline SDK is not part of Vilocity: download it from github.com/NVIDIA-RTX/Streamline/releases and unpack it into %LOCALAPPDATA%\vilocity\streamline"><TextBlock x:Name="DlssText" TextWrapping="Wrap" Text="DLSS (NVIDIA RTX cards): a sharper picture from the same frame"/></CheckBox>
           <CheckBox x:Name="FrameGen" ToolTip="DLSS Frame Generation, with DLSS. The controls answer at the real frame rate"><TextBlock TextWrapping="Wrap" Text="Frame generation (DLSS, RTX 40 and 50): a made-up frame between every two, twice the frame rate shown"/></CheckBox>
+          <CheckBox x:Name="Steady" ToolTip="VILOCITY_SUBMIT_DEPTH=1. Measured: 2 to 5 torn frames in 2,600 while walking at night against 2 to 33; the opening at 29.7 frames a second against 31"><TextBlock TextWrapping="Wrap" Text="Steadier picture: fewer frames in which a character is drawn torn (seen at night), about 1.5 ms a frame slower"/></CheckBox>
           <CheckBox x:Name="Rays" ToolTip="VILOCITY_BVH_BUILDER=1. Not measured here on an AMD card; other forks report 10-16 fps with it against 24 without on an RX 7900 XTX"><TextBlock TextWrapping="Wrap" Text="Ray tracing: the game's own traced light. For AMD Radeon cards; on NVIDIA cards it runs at 3 to 5 frames a second"/></CheckBox>
           <CheckBox x:Name="Night" ToolTip="VILOCITY_AMBIENT_FLOOR=0.05: the least light the stand-in for the traced light gives a surface"><TextBlock TextWrapping="Wrap" Text="Brighter nights: a little light where no lamp reaches"/></CheckBox>
           <CheckBox x:Name="Smooth" ToolTip="Written into the NVIDIA driver's profile for vilocity.exe when you press PLAY; nothing else of the driver is changed"><TextBlock TextWrapping="Wrap" Text="NVIDIA Smooth Motion: the driver shows a made-up picture between every two (twice the frame rate shown; RTX 40 and 50)"/></CheckBox>
@@ -259,7 +260,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
 </Window>
 '@
 $w = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
-$ui = @{}; foreach ($n in 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Sandbox', 'Dlss', 'DlssText', 'FrameGen', 'Rays', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4') { $ui[$n] = $w.FindName($n) }
+$ui = @{}; foreach ($n in 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Sandbox', 'Dlss', 'DlssText', 'FrameGen', 'Steady', 'Rays', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4') { $ui[$n] = $w.FindName($n) }
 # The rail: one page shown at a time. The log's page shows the end of the newest log, read again while it is open.
 $showLog = {
     $newest = Get-ChildItem (Join-Path $home_ "logs") -Filter "gta6-*.log" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
@@ -282,7 +283,7 @@ if (Test-Path $logo) { $picture = New-Object Windows.Media.Imaging.BitmapImage (
 $ui.Game.Text = [string]$set.game
 $ui["Mode$([math]::Min([int]$set.mode, 2))"].IsChecked = $true; $ui["Cap$([math]::Min([int]$set.cap, 2))"].IsChecked = $true
 $ui.Sharp.Value = [double]$set.sharp; $ui.Fsr.IsChecked = [bool]$set.fsr; $ui.Hud.IsChecked = [bool]$set.hud
-$ui.Full.IsChecked = [bool]$set.full; $ui.LogWindow.IsChecked = [bool]$set.logwin; $ui.Rays.IsChecked = [bool]$set.rays; $ui.Dlss.IsChecked = [bool]$set.dlss; $ui.FrameGen.IsChecked = [bool]$set.framegen; $ui.Sandbox.IsChecked = [bool]$set.sandbox; $ui.Night.IsChecked = [bool]$set.night; $ui.Leave.IsChecked = [bool]$set.leave; $ui.Extra.Text = [string]$set.extra
+$ui.Full.IsChecked = [bool]$set.full; $ui.LogWindow.IsChecked = [bool]$set.logwin; $ui.Rays.IsChecked = [bool]$set.rays; $ui.Steady.IsChecked = [bool]$set.steady; $ui.Dlss.IsChecked = [bool]$set.dlss; $ui.FrameGen.IsChecked = [bool]$set.framegen; $ui.Sandbox.IsChecked = [bool]$set.sandbox; $ui.Night.IsChecked = [bool]$set.night; $ui.Leave.IsChecked = [bool]$set.leave; $ui.Extra.Text = [string]$set.extra
 # DLSS: to be chosen only with NVIDIA's Streamline SDK there (the user's own download); it says so otherwise.
 $sl = if ($env:VILOCITY_STREAMLINE_DIR) { $env:VILOCITY_STREAMLINE_DIR } else { Join-Path $home_ "streamline" }
 if (-not ((Test-Path (Join-Path $sl "sl.interposer.dll")) -or (Test-Path (Join-Path $sl "bin\x64\sl.interposer.dll")))) {
@@ -312,7 +313,7 @@ function Save-Choices {
     New-Item -ItemType Directory -Force $home_ | Out-Null
     @{ game = $ui.Game.Text.Trim(); mode = (Mode); cap = (Cap); sharp = [math]::Round($ui.Sharp.Value, 1)
        fsr = [bool]$ui.Fsr.IsChecked; hud = [bool]$ui.Hud.IsChecked; sandbox = [bool]$ui.Sandbox.IsChecked; night = [bool]$ui.Night.IsChecked
-       full = [bool]$ui.Full.IsChecked; logwin = [bool]$ui.LogWindow.IsChecked; rays = [bool]$ui.Rays.IsChecked; dlss = [bool]$ui.Dlss.IsChecked; framegen = [bool]$ui.FrameGen.IsChecked; leave = [bool]$ui.Leave.IsChecked; extra = $ui.Extra.Text.Trim() } | ConvertTo-Json | Set-Content $file
+       full = [bool]$ui.Full.IsChecked; logwin = [bool]$ui.LogWindow.IsChecked; rays = [bool]$ui.Rays.IsChecked; steady = [bool]$ui.Steady.IsChecked; dlss = [bool]$ui.Dlss.IsChecked; framegen = [bool]$ui.FrameGen.IsChecked; leave = [bool]$ui.Leave.IsChecked; extra = $ui.Extra.Text.Trim() } | ConvertTo-Json | Set-Content $file
 }
 
 # One line of the check list: a dot (green: fine, yellow: it works but, red: it will not start) and what was found.
@@ -451,6 +452,7 @@ $ui.Play.Add_Click({
     }
     if (-not $ui.Fsr.IsChecked) { $vars.VILOCITY_FSR_DLL = "off" }
     if ($ui.Night.IsChecked) { $vars.VILOCITY_AMBIENT_FLOOR = "0.05" }
+    if ($ui.Steady.IsChecked) { $vars.VILOCITY_SUBMIT_DEPTH = "1" }
     if ($ui.Full.IsChecked) { $vars.VILOCITY_FULLSCREEN = "1" }
     foreach ($pair in ($ui.Extra.Text -split ';')) { $k, $v = $pair -split '=', 2; if ($k -and $k.Trim() -match '^VILOCITY_[A-Z0-9_]+$' -and $null -ne $v) { $vars[$k.Trim()] = $v.Trim() } }
     $sets = ($vars.GetEnumerator() | ForEach-Object { "`$env:$($_.Key) = '$($_.Value -replace "'", "''")'; " }) -join ''

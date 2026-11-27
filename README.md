@@ -104,13 +104,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 11:41
+**Latest test run:** 2026-11-27 12:14
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 23.1 fps, 43 ms a frame |
-| Best while playing | 34.4 fps |
-| Last frame | 23.7 fps, 42 ms, 7786 draws, 168 dropped without a pipeline |
+| Frame rate while playing (typical) | 29.5 fps, 34 ms a frame |
+| Best while playing | 44.5 fps |
+| Last frame | 32.9 fps, 30 ms, 4984 draws, 48 dropped without a pipeline |
 | Shaders that failed to translate | compute 5 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -138,7 +138,10 @@ keyboard and whose every frame was captured and counted.
   (`VILOCITY_SUBMIT_FRAMES=0`, now what the play script sets): 2 to 33 over five runs,
   for 2 ms a frame (42.7 against 40.7); 0 of 2,742 frames walking in daylight. It has a price in the opening: 32 ms a
   frame at the median in place of 29 (31 fps for 34), and its crowd scene still shows
-  3 torn frames (6 before). Not closed: the fault itself is still in there.
+  3 torn frames (6 before). The launcher's "Steadier picture" (`VILOCITY_SUBMIT_DEPTH=1`:
+  the game at most one submission ahead) leaves 2 to 5 on that street for 1 to 2 ms
+  more; it is off unless ticked, as the opening then runs at 29.7 fps for 31. Not
+  closed: the fault itself is still in there.
 - **Memory of the card.** Copies of textures nothing uses went only from 88 % of the
   card's budget on, 2 % under the line at which no new texture is made; when a scene
   loaded 7 GB of textures in half a minute thousands of textures waited (faces and skin
