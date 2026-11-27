@@ -40,9 +40,12 @@ pub(crate) enum Knob {
     Haze,
     /// The torn-frame fix at the next start (`VILOCITY_CARD_STEPS=0`): 0 off, 1 on.
     TornFix,
+    /// How strongly the light stand-in shades creases (`VILOCITY_AMBIENT_SHADE`'s
+    /// first value; 1 as it is, 0 none).
+    Shade,
 }
 
-pub(crate) const KNOBS: [Knob; 12] = [
+pub(crate) const KNOBS: [Knob; 13] = [
     Knob::Light,
     Knob::Night,
     Knob::Fog,
@@ -55,6 +58,7 @@ pub(crate) const KNOBS: [Knob; 12] = [
     Knob::DlssModel,
     Knob::Haze,
     Knob::TornFix,
+    Knob::Shade,
 ];
 
 impl Knob {
@@ -73,6 +77,7 @@ impl Knob {
             Knob::DlssModel => "dlssmodel",
             Knob::Haze => "haze",
             Knob::TornFix => "tornfix",
+            Knob::Shade => "shade",
         }
     }
 }

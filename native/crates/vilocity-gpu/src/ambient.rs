@@ -790,6 +790,8 @@ pub(crate) fn after(list: &HostList, role: Role, views: &Views) -> bool {
     list.keep(&pass.cells);
     list.keep(&pass.points);
     let [strength, radius] = shade();
+    // (The in-game menu's, live.)
+    let strength = crate::live::get(crate::live::Knob::Shade).unwrap_or(strength);
     // In one run by turns (`VILOCITY_AB=<s>,VILOCITY_AMBIENT_SHADE`): as set, and no creases' shade.
     #[cfg(feature = "diagnostics")]
     let strength = if crate::ab::pick("VILOCITY_AMBIENT_SHADE") == Some(false) { 0.0 } else { strength };

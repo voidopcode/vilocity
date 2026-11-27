@@ -126,6 +126,12 @@ const FOG: Item = Item {
     choices: &[("Game", 0.0), ("1.0", 1.0), ("1.5", 1.5), ("2.0", 2.0), ("3.0", 3.0)],
     help: "Lower: less haze indoors and at sunset",
 };
+const SHADE: Item = Item {
+    name: "Shade in creases",
+    knob: Knob::Shade,
+    choices: &[("Off", 0.0), ("0.5", 0.5), ("1.0", 1.0)],
+    help: "The light stand-in's darkening of corners and folds (faces too)",
+};
 const REFLECTIONS: Item = Item {
     name: "Reflections stand-in",
     knob: Knob::Reflections,
@@ -147,9 +153,9 @@ const CAP: Item = Item {
 
 /// The settings of an NVIDIA card (DLSS, frame generation), and of the others
 /// (the game's own AMD FSR, no frame generation).
-static NVIDIA_ITEMS: [Item; 12] =
-    [PICTURE, UPSCALER_NVIDIA, DLSS_MODEL, FRAME_GEN, CAP, LIGHT, NIGHT, FOG, REFLECTIONS, HAZE, STEADY, TORN_FIX];
-static OTHER_ITEMS: [Item; 10] = [PICTURE, UPSCALER_OTHER, CAP, LIGHT, NIGHT, FOG, REFLECTIONS, HAZE, STEADY, TORN_FIX];
+static NVIDIA_ITEMS: [Item; 13] =
+    [PICTURE, UPSCALER_NVIDIA, DLSS_MODEL, FRAME_GEN, CAP, LIGHT, SHADE, NIGHT, FOG, REFLECTIONS, HAZE, STEADY, TORN_FIX];
+static OTHER_ITEMS: [Item; 11] = [PICTURE, UPSCALER_OTHER, CAP, LIGHT, SHADE, NIGHT, FOG, REFLECTIONS, HAZE, STEADY, TORN_FIX];
 
 /// The settings this PC's card has.
 fn items() -> &'static [Item] {
@@ -192,6 +198,11 @@ fn at_start(knob: Knob) -> f32 {
         },
         Knob::Haze => f32::from(u8::from(std::env::var("VILOCITY_LEAVE_OUT").is_ok_and(|v| v.contains("731a39171b568298")))),
         Knob::TornFix => f32::from(u8::from(std::env::var("VILOCITY_CARD_STEPS").is_ok_and(|v| v.trim() == "0"))),
+        Knob::Shade => std::env::var("VILOCITY_AMBIENT_SHADE")
+            .ok()
+            .and_then(|v| v.split(',').next().and_then(|s| s.trim().parse::<f32>().ok()))
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .unwrap_or(1.0),
     }
 }
 

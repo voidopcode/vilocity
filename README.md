@@ -120,8 +120,10 @@ inside the game, a first start no longer ends at the world's first frame, and wh
 hunt for the torn frames ruled out.
 - **Every setting, in the launcher and on F1, kept together.** The launcher's options
   have a list for each of the game's settings (upscaler, DLSS model, frame generation,
-  light in the shade, brighter nights, fog light cap, reflections stand-in, heat haze,
-  steadier picture, torn-frame fix), the picture buttons included. They and the game's
+  light in the shade, shade in creases, brighter nights, fog light cap, reflections
+  stand-in, heat haze, steadier picture, torn-frame fix), the picture buttons included.
+  "Shade in creases" (live) is how strongly the light stand-in darkens corners and folds,
+  faces included: its 0.6 m reach is the suspect for dark patches on faces in close-ups. They and the game's
   F1 menu read and write one file (`menu.txt` in the data folder), so each shows what
   the other changed; those marked `*` apply when the game starts (the play script reads
   them). New on F1 too: picture, DLSS model, heat haze, torn-frame fix (after
