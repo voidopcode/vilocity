@@ -113,9 +113,18 @@ loads saves and gets into the world. The world is where the work is now.
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: clothes and faces drawn with another texture's colours, the 4-7 fps drops
-explained and shown on the overlay, and what the picture tests of 2026-11-27 evening
-ruled out.
+Latest: "will it work on this PC" in the launcher, clothes and faces drawn with another
+texture's colours, the 4-7 fps drops explained and shown on the overlay, and what the
+picture tests of 2026-11-27 evening ruled out.
+- **Will it work on this PC.** The launcher's This PC page now begins with an answer:
+  yes, yes at 1080p, it may with problems, or no, with the reasons, from what the game
+  was measured to take: at 1080p about 22 GB of RAM and 7.5 GB of the card, at 1440p
+  and 4K about 27 GB and 13 GB. No: under 24 GB of RAM, under 10 GB on the card, no AVX2,
+  or a card without mesh shaders (GTX, older Radeon, Intel UHD). It may: 24-31 GB of
+  RAM, a small page file (an RTX 5070 PC's log: 3.7 GB of commit free, textures held
+  back), a card other than an NVIDIA RTX, Windows 10.
+- **Measure** (launcher, Play page): runs the diagnostics build, whose log says where
+  each frame's time and the memory go, for measuring from one's own play.
 - **Striped clothes (a texture showing an old picture).** A texture picked by index is
   looked at again 4, 12, 40, 120 and 400 frames after its upload, and uploaded again if
   its memory changed. Textures some of whose pages the title also maps at other

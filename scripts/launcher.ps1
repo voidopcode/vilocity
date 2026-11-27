@@ -2,8 +2,8 @@
 # options and play GTA VI. Start it with "Vilocity Launcher.cmd" in the repository's
 # folder. It runs scripts\play-gta6.ps1, which holds the engine's settings; what is
 # chosen here is kept in %LOCALAPPDATA%\vilocity\launcher.json.
-#   scripts\launcher.ps1 [-Shot <file.png>]   (-Shot: draw the window to a picture and leave)
-param([string]$Shot)
+#   scripts\launcher.ps1 [-Shot <file.png> [-Page <0-4>]]   (-Shot: draw the window, at that page, to a picture and leave)
+param([string]$Shot, [int]$Page = 0)
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
 
 # NVIDIA Smooth Motion (the driver's own frame generation, RTX 40 and 50 series) for one
@@ -99,7 +99,7 @@ $exe = Join-Path $root "target\release\vilocity.exe"
 # What the window remembers, with what it starts from. (The game folder: the user's
 # variable as it is now, not as this window's parent had it.)
 $known = [Environment]::GetEnvironmentVariable('VILOCITY_GTA6_DIR', 'User'); if (-not $known) { $known = $env:VILOCITY_GTA6_DIR }
-$set = @{ game = $known; mode = 0; cap = 1; sharp = 0.0; fsr = $true; hud = $true; sandbox = $true; night = $true; full = $true; logwin = $true; rays = $false; dlss = $false; framegen = $false; steady = $false; leave = $false; extra = "" }
+$set = @{ game = $known; mode = 0; cap = 1; sharp = 0.0; fsr = $true; hud = $true; sandbox = $true; night = $true; full = $true; logwin = $true; measure = $false; rays = $false; dlss = $false; framegen = $false; steady = $false; leave = $false; extra = "" }
 if (Test-Path $file) {
     try { $old = Get-Content $file -Raw | ConvertFrom-Json; foreach ($k in @($set.Keys)) { if ($null -ne $old.$k) { $set[$k] = $old.$k } } } catch {}
 }
@@ -204,7 +204,8 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
             <StackPanel Grid.Column="1" Margin="24,0,0,0" VerticalAlignment="Center">
               <CheckBox x:Name="Full" ToolTip="In a window the picture is shrunk to fit the desktop, which softens it"><TextBlock Text="Full screen (F11 switches)"/></CheckBox>
               <CheckBox x:Name="Hud"><TextBlock Text="Frame rate panel (F8 hides it)"/></CheckBox>
-              <CheckBox x:Name="LogWindow" Margin="0" ToolTip="A console that shows what the engine writes while the game runs"><TextBlock Text="Live log window"/></CheckBox>
+              <CheckBox x:Name="LogWindow" ToolTip="A console that shows what the engine writes while the game runs"><TextBlock Text="Live log window"/></CheckBox>
+              <CheckBox x:Name="Measure" Margin="0" ToolTip="Runs the diagnostics build (target\diag, made with: cargo build --profile diag -p vilocity --features diagnostics), whose log says where each frame's time and the memory go; a little slower. Without that build the usual one runs."><TextBlock Text="Measure (log where time and memory go)"/></CheckBox>
             </StackPanel>
           </Grid>
         </Border>
@@ -279,7 +280,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
 </Window>
 '@
 $w = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
-$ui = @{}; foreach ($n in 'Settings', 'SettingsNote', 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Sandbox', 'Dlss', 'DlssText', 'FrameGen', 'Steady', 'Rays', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4') { $ui[$n] = $w.FindName($n) }
+$ui = @{}; foreach ($n in 'Settings', 'SettingsNote', 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Measure', 'Sandbox', 'Dlss', 'DlssText', 'FrameGen', 'Steady', 'Rays', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4') { $ui[$n] = $w.FindName($n) }
 # The rail: one page shown at a time. The log's page shows the end of the newest log, read again while it is open.
 $showLog = {
     $newest = Get-ChildItem (Join-Path $home_ "logs") -Filter "gta6-*.log" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
@@ -302,7 +303,7 @@ if (Test-Path $logo) { $picture = New-Object Windows.Media.Imaging.BitmapImage (
 $ui.Game.Text = [string]$set.game
 $ui["Mode$([math]::Min([int]$set.mode, 2))"].IsChecked = $true; $ui["Cap$([math]::Min([int]$set.cap, 2))"].IsChecked = $true
 $ui.Sharp.Value = [double]$set.sharp; $ui.Fsr.IsChecked = [bool]$set.fsr; $ui.Hud.IsChecked = [bool]$set.hud
-$ui.Full.IsChecked = [bool]$set.full; $ui.LogWindow.IsChecked = [bool]$set.logwin; $ui.Rays.IsChecked = [bool]$set.rays; $ui.Steady.IsChecked = [bool]$set.steady; $ui.Dlss.IsChecked = [bool]$set.dlss; $ui.FrameGen.IsChecked = [bool]$set.framegen; $ui.Sandbox.IsChecked = [bool]$set.sandbox; $ui.Night.IsChecked = [bool]$set.night; $ui.Leave.IsChecked = [bool]$set.leave; $ui.Extra.Text = [string]$set.extra
+$ui.Full.IsChecked = [bool]$set.full; $ui.LogWindow.IsChecked = [bool]$set.logwin; $ui.Measure.IsChecked = [bool]$set.measure; $ui.Rays.IsChecked = [bool]$set.rays; $ui.Steady.IsChecked = [bool]$set.steady; $ui.Dlss.IsChecked = [bool]$set.dlss; $ui.FrameGen.IsChecked = [bool]$set.framegen; $ui.Sandbox.IsChecked = [bool]$set.sandbox; $ui.Night.IsChecked = [bool]$set.night; $ui.Leave.IsChecked = [bool]$set.leave; $ui.Extra.Text = [string]$set.extra
 # DLSS: to be chosen only with NVIDIA's Streamline SDK there (the user's own download); it says so otherwise.
 $sl = if ($env:VILOCITY_STREAMLINE_DIR) { $env:VILOCITY_STREAMLINE_DIR } else { Join-Path $home_ "streamline" }
 if (-not ((Test-Path (Join-Path $sl "sl.interposer.dll")) -or (Test-Path (Join-Path $sl "bin\x64\sl.interposer.dll")))) {
@@ -335,7 +336,7 @@ function Save-Choices {
     New-Item -ItemType Directory -Force $home_ | Out-Null
     @{ game = $ui.Game.Text.Trim(); mode = (Mode); cap = (Cap); sharp = [math]::Round($ui.Sharp.Value, 1)
        fsr = [bool]$ui.Fsr.IsChecked; hud = [bool]$ui.Hud.IsChecked; sandbox = [bool]$ui.Sandbox.IsChecked; night = [bool]$ui.Night.IsChecked
-       full = [bool]$ui.Full.IsChecked; logwin = [bool]$ui.LogWindow.IsChecked; rays = [bool]$ui.Rays.IsChecked; steady = [bool]$ui.Steady.IsChecked; dlss = [bool]$ui.Dlss.IsChecked; framegen = [bool]$ui.FrameGen.IsChecked; leave = [bool]$ui.Leave.IsChecked; extra = $ui.Extra.Text.Trim() } | ConvertTo-Json | Set-Content $file
+       full = [bool]$ui.Full.IsChecked; logwin = [bool]$ui.LogWindow.IsChecked; measure = [bool]$ui.Measure.IsChecked; rays = [bool]$ui.Rays.IsChecked; steady = [bool]$ui.Steady.IsChecked; dlss = [bool]$ui.Dlss.IsChecked; framegen = [bool]$ui.FrameGen.IsChecked; leave = [bool]$ui.Leave.IsChecked; extra = $ui.Extra.Text.Trim() } | ConvertTo-Json | Set-Content $file
 }
 
 # One line of the check list: a dot (green: fine, yellow: it works but, red: it will not start) and what was found.
@@ -422,7 +423,45 @@ function Test-Machine {
     Add-Check ok ("Processor: {0}, {1} cores" -f ($cpu.Name.Trim() -replace '\s+', ' '), $cpu.NumberOfCores)
     $vc = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64' -ErrorAction SilentlyContinue
     if (-not $vc -or $vc.Installed -ne 1) { Add-Check warn "Visual C++ runtime (x64): not found. The game needs it: https://aka.ms/vs/17/release/vc_redist.x64.exe" }
+    $verdict = Test-Fit $ram $commit
+    Add-Check $verdict.level $verdict.text
+    # The answer first.
+    $last = $ui.Checks.Children[$ui.Checks.Children.Count - 1]; $ui.Checks.Children.Remove($last); $ui.Checks.Children.Insert(0, $last)
+    if ($verdict.level -eq 'bad') { $ready = $false }
     $ready
+}
+
+# Whether the game will work on this PC, from what it was measured to take on 2026-11-27 (an RTX 5080 with 62 GB
+# of RAM, and the logs of a second PC with a 16 GB card): at 1080p about 22 GB of RAM and 7.5 GB of the card, at
+# 1440p and 4K about 27 GB and 13 GB. The card's own memory from its driver's record (the WMI figure stops at 4 GB).
+function Test-Fit([double]$ram, [double]$commit = 99) {
+    $card = $null; $cardGB = 0.0
+    Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}' -ErrorAction SilentlyContinue | ForEach-Object {
+        $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+        $bytes = [double]($p.'HardwareInformation.qwMemorySize')
+        if ($bytes / 1GB -gt $cardGB) { $cardGB = $bytes / 1GB; $card = [string]$p.DriverDesc }
+    }
+    if (-not $card) { $card = (Get-CimInstance Win32_VideoController | Select-Object -First 1).Name }
+    if (-not ("CpuFeature" -as [type])) { Add-Type 'using System.Runtime.InteropServices; public static class CpuFeature { [DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(uint f); }' }
+    $avx2 = [CpuFeature]::IsProcessorFeaturePresent(40)
+    $no = @(); $limits = @()
+    if (-not $avx2) { $no += "the processor has no AVX2" }
+    # Shader model 6.6 and mesh shaders: RTX 20 series and newer (tested: RTX 5080); AMD RX 6000 and newer have them
+    # but are hardly tested here; older cards have no mesh shaders.
+    if ($card -match 'GTX|GT \d|Radeon (RX [45]\d\d0|R[579]|HD)|Intel\(R\) (UHD|HD|Iris)') { $no += "$card has no mesh shaders (an NVIDIA RTX 20 series or newer, or an AMD RX 6000 or newer, is needed)" }
+    elseif ($card -notmatch 'RTX') { $limits += "$card is not an NVIDIA RTX card: it should have what the game needs, but it is hardly tested" }
+    if ($ram -lt 24) { $no += ("{0:N0} GB of RAM: the game takes about 22 GB at 1080p (32 GB is the least that works)" -f $ram) }
+    elseif ($ram -lt 31) { $limits += ("{0:N0} GB of RAM: tight; close other programs" -f $ram) }
+    # (An RTX 5070 PC's log: 6.8 GB of RAM free but 3.7 GB of commit, a small page file; the engine then held back textures.)
+    if ($ram -ge 24 -and $commit -lt 28) { $limits += ("{0:N0} GB free with the page file: let Windows manage the page file's size" -f $commit) }
+    if ($cardGB -gt 0 -and $cardGB -lt 10) { $no += ("{0:N0} GB on the card: the game takes about 7.5 GB at 1080p besides what Windows holds (12 GB is the least that works)" -f $cardGB) }
+    if ([Environment]::OSVersion.Version.Build -lt 22000) { $limits += "Windows 10 may lack shader model 6.6" }
+    $big = $cardGB -ge 14 -and $ram -ge 40
+    $picture = if ($big) { "1080p for the best frame rate; 1440p works while other programs leave the card free" } else { "1080p (1440p and 4K need a 16 GB card and 40 GB of RAM)" }
+    if ($no) { return @{ level = 'bad'; text = "Will it work on this PC: no. " + ($no -join "; ") + "." } }
+    if ($limits) { return @{ level = 'warn'; text = "Will it work on this PC: it may, with problems. " + ($limits -join "; ") + ". Picture: $picture." } }
+    $at = if ($big) { "yes" } else { "yes, at 1080p" }
+    @{ level = 'ok'; text = ("Will it work on this PC: {0}. {1}, {2:N0} GB on the card, {3:N0} GB of RAM. Picture: {4}. (Measured on an RTX 5080: 24-28 fps at 1080p.)" -f $at, ($card -replace 'NVIDIA GeForce ', ''), $cardGB, $ram, $picture) }
 }
 
 function Game-Process {
@@ -534,7 +573,7 @@ $ui.Play.Add_Click({
     if ($ui.Full.IsChecked) { $vars.VILOCITY_FULLSCREEN = "1" }
     foreach ($pair in ($ui.Extra.Text -split ';')) { $k, $v = $pair -split '=', 2; if ($k -and $k.Trim() -match '^VILOCITY_[A-Z0-9_]+$' -and $null -ne $v) { $vars[$k.Trim()] = $v.Trim() } }
     $sets = ($vars.GetEnumerator() | ForEach-Object { "`$env:$($_.Key) = '$($_.Value -replace "'", "''")'; " }) -join ''
-    $switches = "-NoMonitor" + " -Picture " + @("1080p", "4k", "1440p")[(Mode)] + $(if (-not $ui.Sandbox.IsChecked) { " -NoSandbox" }) + $(if ($ui.LogWindow.IsChecked) { " -LogWindow" }) + $(if ($ui.Rays.IsChecked) { " -RayTracing" }) + $(if (($ui.Dlss.IsChecked -or $ui.FrameGen.IsChecked) -and $ui.Dlss.IsEnabled) { " -Dlss quality" }) + $(if ($ui.FrameGen.IsChecked -and $ui.Dlss.IsEnabled) { " -FrameGen" })
+    $switches = "-NoMonitor" + " -Picture " + @("1080p", "4k", "1440p")[(Mode)] + $(if (-not $ui.Sandbox.IsChecked) { " -NoSandbox" }) + $(if ($ui.LogWindow.IsChecked) { " -LogWindow" }) + $(if ($ui.Measure.IsChecked -and (Test-Path (Join-Path $root "target\diag\vilocity.exe"))) { " -Diag" }) + $(if ($ui.Rays.IsChecked) { " -RayTracing" }) + $(if (($ui.Dlss.IsChecked -or $ui.FrameGen.IsChecked) -and $ui.Dlss.IsEnabled) { " -Dlss quality" }) + $(if ($ui.FrameGen.IsChecked -and $ui.Dlss.IsEnabled) { " -FrameGen" })
     $play = Join-Path $PSScriptRoot "play-gta6.ps1"
     $cmd = "$sets & '$($play -replace "'", "''")' -Game '$($ui.Game.Text.Trim().Trim('"') -replace "'", "''")' $switches"
     $state.proc = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "`"$($cmd -replace '"', '\"')`""
@@ -568,6 +607,7 @@ $w.Add_Closing({ if (-not $Shot) { Save-Choices } })
 
 if ($Shot) {
     # Draws the window as it is to a picture (for looking at the layout), then leaves without saving.
+    if ($Page) { $ui["Nav$Page"].IsChecked = $true }
     $w.Add_ContentRendered({
         $bmp = New-Object Windows.Media.Imaging.RenderTargetBitmap ([int]$w.ActualWidth), ([int]$w.ActualHeight), 96, 96, ([Windows.Media.PixelFormats]::Pbgra32)
         $bmp.Render($w); $enc = New-Object Windows.Media.Imaging.PngBitmapEncoder; $enc.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bmp))
