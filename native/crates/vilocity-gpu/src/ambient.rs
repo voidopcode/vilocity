@@ -102,6 +102,17 @@ pub(crate) fn on() -> bool {
     set() != Set::Off && !crate::pipeline::builder_runs()
 }
 
+/// (Vilocity) The least light the stand-in gives a surface, whatever the estimate
+/// (`VILOCITY_AMBIENT_FLOOR=<level>`; unset or 0: none). At night the picture the
+/// estimate is made of is nearly black, and so was everything no lamp reaches.
+fn least() -> f32 {
+    static SET: OnceLock<f32> = OnceLock::new();
+    *SET.get_or_init(|| {
+        let set = std::env::var("VILOCITY_AMBIENT_FLOOR").unwrap_or_default();
+        set.trim().parse().ok().filter(|v: &f32| v.is_finite() && *v > 0.0).unwrap_or(0.0)
+    })
+}
+
 /// The most the air scatters, as a multiple of the light around
 /// (`VILOCITY_AMBIENT_AIR=<multiple>`; unset or 0: what the title has).
 fn air() -> f32 {
@@ -150,7 +161,7 @@ fn shade() -> [f32; 2] {
 }
 
 const SOURCE: &str = r#"
-#define RS "RootConstants(num32BitConstants=12, b0), DescriptorTable(SRV(t0)), DescriptorTable(UAV(u0)), UAV(u1), UAV(u2)"
+#define RS "RootConstants(num32BitConstants=13, b0), DescriptorTable(SRV(t0)), DescriptorTable(UAV(u0)), UAV(u1), UAV(u2)"
 #define CX 64
 #define CY 36
 #define CELLS (CX * CY)
@@ -160,6 +171,7 @@ cbuffer Set : register(b0) {
     float level; float constant; float strength; float radius;
     float near; float tan_y; uint width; uint height;
     float follow; float most; float air; uint leftover;
+    float least;
 };
 Texture2D<float> depth : register(t0);
 // Cells: the light they send out (then, at CELLS, the slow mean), from
@@ -342,6 +354,9 @@ void raise(uint3 at : SV_DispatchThreadID) {
     found = all + 1.2 * float3(dot(sr.xyz, n), dot(sg.xyz, n), dot(sb.xyz, n)) / sum;
     found = clamp(found, 0.2 * all, 2.5 * all);
     found = lerp(found, cells[CELLS].rgb, 0.2) * level * open;
+    // (Vilocity) Never less than this much, in the night sky's colour: the estimate is
+    // made of what the picture shows, and a night street shows next to nothing.
+    found = max(found, float3(0.62, 0.72, 1.0) * least * open);
     float3 was = unpack(light[p]);
     // What the program left counts as far as it can be true: the sky's light
     // outdoors, not the blocks of other memory.
@@ -483,7 +498,7 @@ pub(crate) fn after(list: &HostList, role: Role, views: &Views) -> bool {
     list.keep(&pass.points);
     let [strength, radius] = shade();
     let floats = [level, constant, strength, radius, 0.1, 0.45];
-    let mut words = [0u32; 12];
+    let mut words = [0u32; 13];
     for (to, v) in words.iter_mut().zip(floats) {
         *to = v.to_bits();
     }
@@ -493,6 +508,7 @@ pub(crate) fn after(list: &HostList, role: Role, views: &Views) -> bool {
     words[9] = 4.0f32.to_bits();
     words[10] = air().to_bits();
     words[11] = leftover();
+    words[12] = least().to_bits();
     let l = &list.list;
     // SAFETY: an open list with the heap of the views set; the title's
     // program has just used both views, so their textures are in the states
@@ -500,7 +516,7 @@ pub(crate) fn after(list: &HostList, role: Role, views: &Views) -> bool {
     unsafe {
         uav_barrier(l);
         l.SetComputeRootSignature(&pass.root);
-        l.SetComputeRoot32BitConstants(0, 12, words.as_ptr().cast(), 0);
+        l.SetComputeRoot32BitConstants(0, 13, words.as_ptr().cast(), 0);
         l.SetComputeRootDescriptorTable(1, views.depth);
         l.SetComputeRootDescriptorTable(2, views.image);
         l.SetComputeRootUnorderedAccessView(3, pass.cells.GetGPUVirtualAddress());

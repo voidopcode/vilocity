@@ -260,7 +260,9 @@ fn icon(hwnd: HWND) {
     let title = crate::runtime::title();
     let folder = crate::runtime::main_image().and_then(crate::runtime::image_path).and_then(|exe| exe.parent().map(|p| p.to_path_buf()));
     if !title.name.is_empty() {
-        let name: Vec<u16> = title.name.encode_utf16().chain([0]).collect();
+        // A measured run says so: it takes no keys, and is not to be taken for a game to play.
+        let test = if super::gameinput::keys_only() { " [TEST RUN: takes no keys]" } else { "" };
+        let name: Vec<u16> = title.name.encode_utf16().chain(test.encode_utf16()).chain([0]).collect();
         // SAFETY: a window this thread made, and a NUL-terminated text.
         unsafe { wm::SetWindowTextW(hwnd, name.as_ptr()) };
     }

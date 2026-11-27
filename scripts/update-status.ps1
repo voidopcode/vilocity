@@ -14,8 +14,12 @@ $untranslated = @{}; $refused = @{}; $build = $null
 $reader = New-Object IO.StreamReader ([IO.File]::Open($log.FullName, 'Open', 'Read', 'ReadWrite'))
 while ($null -ne ($line = $reader.ReadLine())) {
     if ($line -match 'vilocity_gpu::host: ([\d.]+) fps, ([\d.]+) ms/frame.*?(\d+) draws/frame, dropped (\d+) without a host pipeline') {
-        $fps += [double]$Matches[1]; $ms += [double]$Matches[2]
-        $draws += [int]$Matches[3]; $dropped += [int]$Matches[4]
+        # Only frames of the world count: menus, the intro and loading screens draw a
+        # few dozen things at hundreds of frames a second, which says nothing of play.
+        if ([int]$Matches[3] -ge 1000) {
+            $fps += [double]$Matches[1]; $ms += [double]$Matches[2]
+            $draws += [int]$Matches[3]; $dropped += [int]$Matches[4]
+        }
     } elseif ($line -match 'shader does not translate.*stage="(\w+)" hash=(\w+)') {
         $untranslated["$($Matches[1]) $($Matches[2])"] = $Matches[1]
     } elseif ($line -match 'host \w+ pipeline refused.*shaders=\[(.*)\]') {
@@ -32,12 +36,12 @@ if ($fps.Count) {
     $sorted = $ms | Sort-Object
     $median = $sorted[[int][math]::Floor(($sorted.Count - 1) / 2)]
     $rows = @(
-        "| Best frame rate (menus included) | $(Fmt (($fps | Measure-Object -Maximum).Maximum) '0.0') fps |",
-        "| Median frame time | $(Fmt $median '0') ms |",
+        "| Frame rate while playing (typical) | $(Fmt (1000 / $median) '0.0') fps, $(Fmt $median '0') ms a frame |",
+        "| Best while playing | $(Fmt (($fps | Measure-Object -Maximum).Maximum) '0.0') fps |",
         "| Last frame | $(Fmt $fps[-1] '0.0') fps, $(Fmt $ms[-1] '0') ms, $($draws[-1]) draws, $($dropped[-1]) dropped without a pipeline |"
     )
 } else {
-    $rows = @("| Frame rate | no world frames measured in this run |")
+    $rows = @("| Frame rate while playing | no frames of the world in this run (menus only) |")
 }
 $byStage = $untranslated.Values | Group-Object | Sort-Object Name | ForEach-Object { "$($_.Name) $($_.Count)" }
 $rows += "| Shaders that failed to translate | $(if ($byStage) { $byStage -join ', ' } else { 'none' }) |"

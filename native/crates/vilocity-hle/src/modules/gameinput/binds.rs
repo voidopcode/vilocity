@@ -59,7 +59,7 @@ const PARTS: [(&str, Part); 24] = [
 ];
 
 /// The names of keys that are not a letter or a digit.
-const KEYS: [(&str, u8); 43] = [
+const KEYS: [(&str, u8); 67] = [
     ("LeftClick", 0x01),
     ("RightClick", 0x02),
     ("MiddleClick", 0x04),
@@ -68,6 +68,7 @@ const KEYS: [(&str, u8); 43] = [
     ("Backspace", 0x08),
     ("Tab", 0x09),
     ("Enter", 0x0D),
+    ("Pause", 0x13),
     ("CapsLock", 0x14),
     ("Esc", 0x1B),
     ("Space", 0x20),
@@ -81,6 +82,22 @@ const KEYS: [(&str, u8); 43] = [
     ("ArrowDown", 0x28),
     ("Insert", 0x2D),
     ("Delete", 0x2E),
+    ("Apps", 0x5D),
+    ("Num0", 0x60),
+    ("Num1", 0x61),
+    ("Num2", 0x62),
+    ("Num3", 0x63),
+    ("Num4", 0x64),
+    ("Num5", 0x65),
+    ("Num6", 0x66),
+    ("Num7", 0x67),
+    ("Num8", 0x68),
+    ("Num9", 0x69),
+    ("NumMultiply", 0x6A),
+    ("NumAdd", 0x6B),
+    ("NumSubtract", 0x6D),
+    ("NumDecimal", 0x6E),
+    ("NumDivide", 0x6F),
     ("F1", 0x70),
     ("F2", 0x71),
     ("F3", 0x72),
@@ -92,30 +109,41 @@ const KEYS: [(&str, u8); 43] = [
     ("F9", 0x78),
     ("F10", 0x79),
     ("F11", 0x7A),
+    ("F12", 0x7B),
+    ("ScrollLock", 0x91),
     ("Shift", 0xA0),
     ("RightShift", 0xA1),
     ("Ctrl", 0xA2),
     ("RightCtrl", 0xA3),
     ("RightAlt", 0xA5),
     ("Semicolon", 0xBA),
+    ("Equals", 0xBB),
     ("Comma", 0xBC),
     ("Minus", 0xBD),
     ("Period", 0xBE),
     ("Slash", 0xBF),
     ("Backquote", 0xC0),
+    ("LeftBracket", 0xDB),
+    ("Backslash", 0xDC),
+    ("RightBracket", 0xDD),
+    ("Quote", 0xDE),
 ];
 
 /// The file as it is made when there is none, and what holds without one.
 pub(super) const DEFAULT: &str = "\
 # Vilocity keys. Change the keys on the right of '='; save; the running title
 # takes them within a second. Several keys: separate them with commas.
-# Keys: letters, digits, F1 to F11, Shift, RightShift, Ctrl, RightCtrl,
+# Keys: letters, digits, F1 to F12, Shift, RightShift, Ctrl, RightCtrl,
 # RightAlt, Space, Enter, Esc, Tab, CapsLock, Backspace, Insert, Delete, Home,
-# End, PageUp, PageDown, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Comma,
-# Period, Slash, Semicolon, Minus, Backquote, LeftClick, RightClick,
-# MiddleClick, Mouse4, Mouse5. The mouse's motion is always the right stick.
-# Left Alt gives the mouse back and cannot be used. Delete this file to get
-# the one Vilocity comes with again.
+# End, PageUp, PageDown, Pause, ScrollLock, Apps, ArrowUp, ArrowDown, ArrowLeft,
+# ArrowRight, Comma, Period, Slash, Semicolon, Quote, Minus, Equals, Backquote,
+# LeftBracket, RightBracket, Backslash, Num0 to Num9, NumAdd, NumSubtract,
+# NumMultiply, NumDivide, NumDecimal, LeftClick, RightClick, MiddleClick,
+# Mouse4, Mouse5. The mouse's motion is always the right stick.
+# Every key does something. Left out on purpose: Left Alt and Esc give the
+# mouse back (Esc is the menu too), F8 hides the frame rate panel, and the
+# keys Windows keeps for itself (Windows, PrintScreen, NumLock).
+# Delete this file to get the one Vilocity comes with again.
 
 [general]
 # Switches between the two layouts below (the window's log says which).
@@ -126,53 +154,53 @@ MOVE_UP = W
 MOVE_DOWN = S
 MOVE_LEFT = A
 MOVE_RIGHT = D
-LT = RightClick, U
-RT = LeftClick, O
-A = Space, Enter
-B = R, Backspace
-X = X
-Y = F, Y
-LB = Tab, Mouse4
-RB = Q, Mouse5
-L3 = Shift, Ctrl, Z
-R3 = C, MiddleClick, H
-UP = ArrowUp, 1
-DOWN = ArrowDown, 2
-LEFT = ArrowLeft, 3
-RIGHT = ArrowRight, 4, E
-MENU = Esc, P
-VIEW = V
-LOOK_UP = I
-LOOK_DOWN = K
-LOOK_LEFT = J
-LOOK_RIGHT = L
+LT = RightClick, U, RightAlt, Num1
+RT = LeftClick, O, Num3
+A = Space, Enter, Num0, 9
+B = Ctrl, R, Backspace, B, RightCtrl, Delete, NumDecimal, 0
+X = X, CapsLock, Slash, 7, F9
+Y = F, E, Y, Insert, Backslash, 8, F10
+LB = Tab, Mouse4, Semicolon, 5, Num7, F6
+RB = Q, Mouse5, Quote, 6, Num9, F7
+L3 = Shift, RightShift, Z, F11
+R3 = C, MiddleClick, H, Num5, F12
+UP = ArrowUp, 1, T, PageUp, NumAdd, F2
+DOWN = ArrowDown, 2, N, PageDown, NumSubtract, F3
+LEFT = ArrowLeft, 3, LeftBracket, Minus, Comma, NumDivide, F4
+RIGHT = ArrowRight, 4, RightBracket, Equals, Period, NumMultiply, F5
+MENU = Esc, P, Home, Pause, Apps
+VIEW = V, M, Backquote, End, ScrollLock, F1
+LOOK_UP = I, Num8
+LOOK_DOWN = K, Num2
+LOOK_LEFT = J, Num4
+LOOK_RIGHT = L, Num6
 
 [drive]
 # W and S are the triggers (accelerate, brake), A and D steer.
-RT = W
-LT = S
+RT = W, O, Num3
+LT = S, U, RightAlt, Num1
 MOVE_LEFT = A
 MOVE_RIGHT = D
 MOVE_UP = ArrowUp
 MOVE_DOWN = ArrowDown
-LB = LeftClick, RightClick
-RB = Space
-A = Shift, Enter
-B = R, Backspace
-X = X
-Y = F, Y
-L3 = Ctrl, H
-R3 = C, MiddleClick
-UP = 1
-DOWN = 2
-LEFT = 3, ArrowLeft
-RIGHT = 4, E, ArrowRight
-MENU = Esc, P
-VIEW = V
-LOOK_UP = I
-LOOK_DOWN = K
-LOOK_LEFT = J
-LOOK_RIGHT = L
+LB = LeftClick, RightClick, Tab, Mouse4, Semicolon, 5, Num7, F6
+RB = Space, Q, Mouse5, Quote, 6, Num9, F7
+A = Shift, Enter, RightShift, Num0, 9
+B = R, Backspace, Ctrl, B, RightCtrl, Delete, NumDecimal, 0
+X = X, CapsLock, Slash, 7, F9
+Y = F, E, Y, Insert, Backslash, 8, F10
+L3 = H, Z, F11
+R3 = C, MiddleClick, Num5, F12
+UP = 1, T, PageUp, NumAdd, F2
+DOWN = 2, N, PageDown, NumSubtract, F3
+LEFT = 3, ArrowLeft, LeftBracket, Minus, Comma, NumDivide, F4
+RIGHT = 4, ArrowRight, RightBracket, Equals, Period, NumMultiply, F5
+MENU = Esc, P, Home, Pause, Apps
+VIEW = V, M, Backquote, End, ScrollLock, F1
+LOOK_UP = I, Num8
+LOOK_DOWN = K, Num2
+LOOK_LEFT = J, Num4
+LOOK_RIGHT = L, Num6
 ";
 
 /// The virtual key of a name, whatever its case.
@@ -370,14 +398,21 @@ mod tests {
             assert_eq!(keys.len(), all, "a key does two things");
             assert!(!keys.contains(&binds.switch[0]));
         }
+        // (Vilocity) Every key that has a name does something in both layouts, but the
+        // switch (G) and F8, which hides the frame rate panel.
+        for layout in [&binds.walk, &binds.drive] {
+            let named = KEYS.iter().map(|k| k.1).chain(b'A'..=b'Z').chain(b'0'..=b'9');
+            let free: Vec<u8> = named.filter(|vk| !layout.iter().any(|b| b.0 == *vk)).collect();
+            assert_eq!(free, [0x77, b'G'], "keys that do nothing");
+        }
         // Aiming and firing on foot; W is the accelerator at the wheel.
         assert_eq!(keys_of(&binds.walk, Part::LeftTrigger)[0], 0x02);
         assert_eq!(keys_of(&binds.walk, Part::RightTrigger)[0], 0x01);
         // Running on foot is Shift (and jumping Space).
         assert_eq!(keys_of(&binds.walk, Part::Button(LEFT_STICK))[0], 0xA0);
         assert_eq!(keys_of(&binds.walk, Part::Button(A))[0], b' ');
-        assert_eq!(keys_of(&binds.drive, Part::RightTrigger), [b'W']);
-        assert_eq!(keys_of(&binds.drive, Part::LeftTrigger), [b'S']);
+        assert_eq!(keys_of(&binds.drive, Part::RightTrigger)[0], b'W');
+        assert_eq!(keys_of(&binds.drive, Part::LeftTrigger)[0], b'S');
     }
 
     #[test]
@@ -403,7 +438,7 @@ mod tests {
         let mut now =
             Now { file: None, looked: None, changed: None, binds: None, driving: false, switch_was_down: false };
         let at = Instant::now();
-        let is_drive = |layout: Layout| keys_of(&layout, Part::RightTrigger) == [b'W'];
+        let is_drive = |layout: Layout| keys_of(&layout, Part::RightTrigger)[0] == b'W';
         assert!(!is_drive(now.layout(at, |_| false)));
         assert!(is_drive(now.layout(at, |vk| vk == b'G')));
         // Held: no second change.

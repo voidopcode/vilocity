@@ -82,7 +82,7 @@ $exe = Join-Path $root "target\release\vilocity.exe"
 # What the window remembers, with what it starts from. (The game folder: the user's
 # variable as it is now, not as this window's parent had it.)
 $known = [Environment]::GetEnvironmentVariable('VILOCITY_GTA6_DIR', 'User'); if (-not $known) { $known = $env:VILOCITY_GTA6_DIR }
-$set = @{ game = $known; mode = 0; cap = 0; sharp = 0.0; fsr = $true; hud = $true; sandbox = $true; lights = $false; leave = $false; extra = "" }
+$set = @{ game = $known; mode = 0; cap = 0; sharp = 0.0; fsr = $true; hud = $true; sandbox = $true; lights = $false; night = $true; leave = $false; extra = "" }
 if (Test-Path $file) {
     try { $old = Get-Content $file -Raw | ConvertFrom-Json; foreach ($k in @($set.Keys)) { if ($null -ne $old.$k) { $set[$k] = $old.$k } } } catch {}
 }
@@ -92,7 +92,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
 
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Vilocity" Width="960" Height="860" MinWidth="880" MinHeight="800" WindowStartupLocation="CenterScreen"
+        Title="Vilocity" Width="960" Height="900" MinWidth="880" MinHeight="840" WindowStartupLocation="CenterScreen"
         Background="#0B0D12" Foreground="#E6ECF5" FontFamily="Segoe UI" FontSize="13">
   <Window.Resources>
     <Style TargetType="TextBlock"><Setter Property="Foreground" Value="#E6ECF5"/></Style>
@@ -154,7 +154,8 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
           <CheckBox x:Name="Fsr"><TextBlock TextWrapping="Wrap" Text="AMD's PC upscaler, if its DLL is installed (a little faster)"/></CheckBox>
           <CheckBox x:Name="Hud"><TextBlock TextWrapping="Wrap" Text="Frame rate panel in the game (F8 hides it)"/></CheckBox>
           <CheckBox x:Name="Sandbox"><TextBlock TextWrapping="Wrap" Text="Sandbox: no network, none of your files (recommended)"/></CheckBox>
-          <CheckBox x:Name="Lights" ToolTip="Runs five of the game's programs that are left out on 32-lane cards (NVIDIA): light tiles, visibility and light through fog"><TextBlock TextWrapping="Wrap" Text="Lamp light and lit fog at night (on trial: slower)"/></CheckBox>
+          <CheckBox x:Name="Lights" ToolTip="Runs five of the game's programs that are left out on 32-lane cards (NVIDIA): light tiles, visibility and light through fog"><TextBlock TextWrapping="Wrap" Text="Five lighting shaders left out on NVIDIA cards (on trial: no change seen yet)"/></CheckBox>
+          <CheckBox x:Name="Night" ToolTip="VILOCITY_AMBIENT_FLOOR=0.05: the least light the stand-in for the traced light gives a surface"><TextBlock TextWrapping="Wrap" Text="Brighter nights: a little light where no lamp reaches (without it, unlit ground is black at night)"/></CheckBox>
           <CheckBox x:Name="Smooth" ToolTip="Written into the NVIDIA driver's profile for vilocity.exe when you press PLAY; nothing else of the driver is changed"><TextBlock TextWrapping="Wrap" Text="NVIDIA Smooth Motion: the driver shows a made-up picture between every two (twice the frame rate shown; RTX 40 and 50)"/></CheckBox>
           <CheckBox x:Name="Leave"><TextBlock TextWrapping="Wrap" Text="Close this window when the game starts"/></CheckBox>
           <TextBlock Style="{StaticResource Label}" Text="More settings" Margin="0,4,0,6"/>
@@ -174,7 +175,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
 </Window>
 '@
 $w = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
-$ui = @{}; foreach ($n in 'Logo', 'CoverBox', 'Cover', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Sandbox', 'Lights', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Play') { $ui[$n] = $w.FindName($n) }
+$ui = @{}; foreach ($n in 'Logo', 'CoverBox', 'Cover', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Sandbox', 'Lights', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Play') { $ui[$n] = $w.FindName($n) }
 # The logo, in the window, its title bar and its taskbar button.
 $logo = Join-Path $root "assets\logo-256.png"
 if (Test-Path $logo) { $picture = New-Object Windows.Media.Imaging.BitmapImage ([Uri]$logo); $ui.Logo.Source = $picture; $w.Icon = $picture }
@@ -182,7 +183,7 @@ if (Test-Path $logo) { $picture = New-Object Windows.Media.Imaging.BitmapImage (
 $ui.Game.Text = [string]$set.game
 $ui["Mode$([math]::Min([int]$set.mode, 1))"].IsChecked = $true; $ui["Cap$([math]::Min([int]$set.cap, 2))"].IsChecked = $true
 $ui.Sharp.Value = [double]$set.sharp; $ui.Fsr.IsChecked = [bool]$set.fsr; $ui.Hud.IsChecked = [bool]$set.hud
-$ui.Sandbox.IsChecked = [bool]$set.sandbox; $ui.Lights.IsChecked = [bool]$set.lights; $ui.Leave.IsChecked = [bool]$set.leave; $ui.Extra.Text = [string]$set.extra
+$ui.Sandbox.IsChecked = [bool]$set.sandbox; $ui.Lights.IsChecked = [bool]$set.lights; $ui.Night.IsChecked = [bool]$set.night; $ui.Leave.IsChecked = [bool]$set.leave; $ui.Extra.Text = [string]$set.extra
 # Smooth Motion as the driver holds it now for vilocity.exe; no NVIDIA driver: no such option.
 $smooth = @{ driver = $null }
 try { $smooth.driver = [NvSmooth]::Get('vilocity.exe') -eq 1; $ui.Smooth.IsChecked = $smooth.driver } catch { $ui.Smooth.Visibility = 'Collapsed' }
@@ -196,7 +197,7 @@ $ui.Sharp.Add_ValueChanged($sharpText); & $sharpText
 function Save-Choices {
     New-Item -ItemType Directory -Force $home_ | Out-Null
     @{ game = $ui.Game.Text.Trim(); mode = (Mode); cap = (Cap); sharp = [math]::Round($ui.Sharp.Value, 1)
-       fsr = [bool]$ui.Fsr.IsChecked; hud = [bool]$ui.Hud.IsChecked; sandbox = [bool]$ui.Sandbox.IsChecked; lights = [bool]$ui.Lights.IsChecked
+       fsr = [bool]$ui.Fsr.IsChecked; hud = [bool]$ui.Hud.IsChecked; sandbox = [bool]$ui.Sandbox.IsChecked; lights = [bool]$ui.Lights.IsChecked; night = [bool]$ui.Night.IsChecked
        leave = [bool]$ui.Leave.IsChecked; extra = $ui.Extra.Text.Trim() } | ConvertTo-Json | Set-Content $file
 }
 
@@ -294,6 +295,7 @@ $ui.Play.Add_Click({
         VILOCITY_HUD = $(if ($ui.Hud.IsChecked) { "1" } else { "0" })
     }
     if (-not $ui.Fsr.IsChecked) { $vars.VILOCITY_FSR_DLL = "off" }
+    if ($ui.Night.IsChecked) { $vars.VILOCITY_AMBIENT_FLOOR = "0.05" }
     if ($ui.Lights.IsChecked) {
         # The light tiles, visibility and light through fog (wave64 programs in the wide form).
         $vars.VILOCITY_WAVE_WIDE = "1"

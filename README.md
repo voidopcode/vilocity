@@ -50,18 +50,31 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 02:10
+**Latest test run:** 2026-11-27 02:42
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 1104.7 fps |
-| Median frame time | 40 ms |
-| Last frame | 24.3 fps, 41 ms, 7128 draws, 2435 dropped without a pipeline |
-| Shaders that failed to translate | compute 2 |
+| Frame rate while playing (typical) | 22.5 fps, 44 ms a frame |
+| Best while playing | 23.4 fps |
+| Last frame | 22.6 fps, 44 ms, 6878 draws, 2422 dropped without a pipeline |
+| Shaders that failed to translate | compute 5 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: a launcher with a window. `Vilocity Launcher.cmd` opens it: it checks the
+Latest: every key of the keyboard does something now (the number pad, the function
+keys and the punctuation keys too; Ctrl crouches, E interacts, M is the map, T the
+phone), and every key can be named in the keys file. The two pictures measured in
+the same night street, with runs that take no keys (`VILOCITY_KEYS_ONLY=1`), on a
+Ryzen 9 9950X3D and an RTX 5080: as a Series S 41-43 ms a frame (24 fps), 23 GB;
+as a Series X 53-63 ms (17 fps), 26.5 GB, and visibly sharper with less noise. The
+Series S stays the default; the launcher's Quality is the Series X. With the title's
+own upscaler in place of AMD's PC one the Series S picture is slower (44-51 ms) and
+shows white blocks. New: `VILOCITY_AMBIENT_FLOOR=<level>` is the least light the
+stand-in for the traced light gives a surface; with 0.05 (the launcher's "Brighter
+nights") an unlit street at night is seen, where it was black. The table above
+counts only frames of the world, not menus.
+
+Earlier: a launcher with a window. `Vilocity Launcher.cmd` opens it: it checks the
 PC (video memory free and who holds it, memory, disk, the engine's build), shows
 the game's own name and cover from your game folder, and has the options (picture,
 frame rate, sharpening, upscaler, panel, sandbox) beside a PLAY button; the game's
@@ -345,20 +358,25 @@ in the window); Esc or left Alt gives it back.
 | Keys | Pad |
 |------|-----|
 | W A S D | left stick: move (driving: W accelerate, S brake, A / D steer) |
-| Mouse (or I J K L) | right stick: camera |
-| Left / right mouse button | RT / LT: fire / aim |
-| Space or Enter | A: jump, climb |
-| R or Backspace | B |
-| X | X |
-| F or Y | Y |
-| Tab or mouse 4 | LB |
-| Q or mouse 5 | RB |
-| Shift, Ctrl or Z | left stick click: run |
-| C, H or middle click | right stick click |
-| Arrows | D-pad |
+| Mouse, I J K L or the number pad's 8 4 2 6 | right stick: camera |
+| Left / right mouse button (or O / U) | RT / LT: fire / aim |
+| Space or Enter | A: jump, climb (driving: Shift or Enter) |
+| Ctrl, R or Backspace | B: crouch, back |
+| X or CapsLock | X: melee |
+| F, E or Y | Y: interact, get in and out |
+| Tab or mouse 4 | LB: holster |
+| Q or mouse 5 | RB: cover (driving: Space or Q, the handbrake) |
+| Shift or Z | left stick click: run (driving: H or Z) |
+| C, H or middle click | right stick click: look behind |
+| Arrows or 1 2 3 4 | D-pad (T: up, the phone; N: down; [ and ]: left and right) |
 | Esc or P | Menu |
-| V | View |
+| V or M | View: the map |
 | G | switches between the on-foot and the driving keys |
+
+Every other key does something too (the function keys, the number pad, the
+punctuation keys, Home, End, Insert, Delete and the rest each press a pad control),
+except G, F8 (the frame rate panel), Left Alt (gives the mouse back) and the keys
+Windows keeps for itself.
 
 The keys are in `%LOCALAPPDATA%\vilocity\data\keys.txt` (made on the first
 start): change them there and save, and the running game takes them within a
