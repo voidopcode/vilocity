@@ -104,13 +104,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 11:20
+**Latest test run:** 2026-11-27 11:41
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 25.6 fps, 39 ms a frame |
-| Best while playing | 30.2 fps |
-| Last frame | 29.9 fps, 33 ms, 4514 draws, 264 dropped without a pipeline |
+| Frame rate while playing (typical) | 23.1 fps, 43 ms a frame |
+| Best while playing | 34.4 fps |
+| Last frame | 23.7 fps, 42 ms, 7786 draws, 168 dropped without a pipeline |
 | Shaders that failed to translate | compute 5 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -131,12 +131,12 @@ keyboard and whose every frame was captured and counted.
   then runs alone and the launcher says what to switch on. Not seen running yet.
 - **The character drawn torn.** Counting frames that differ from both their neighbours
   found the flicker: while he walks on the night street his body is pulled into long
-  bands in single frames, 183 to 193 of 2,800 frames, in the version before this one
+  bands in single frames, 183 to 222 of 2,800 frames, in the version before this one
   too. It comes from the steps done on the card ahead of the flights
   (`VILOCITY_CARD_STEPS`): none at all with it off, at 58 ms a frame in place of 41.
   Without the joined copies and parts and with the game held until its frame is sent
-  (`VILOCITY_SUBMIT_FRAMES=0`, now what the play script sets): 2 to 19, for 1 to 2 ms a
-  frame; 0 of 2,742 frames walking in daylight. It has a price in the opening: 32 ms a
+  (`VILOCITY_SUBMIT_FRAMES=0`, now what the play script sets): 2 to 33 over five runs,
+  for 2 ms a frame (42.7 against 40.7); 0 of 2,742 frames walking in daylight. It has a price in the opening: 32 ms a
   frame at the median in place of 29 (31 fps for 34), and its crowd scene still shows
   3 torn frames (6 before). Not closed: the fault itself is still in there.
 - **Memory of the card.** Copies of textures nothing uses went only from 88 % of the

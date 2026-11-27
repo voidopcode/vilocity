@@ -64,9 +64,9 @@ if (-not $Defaults) {
         VILOCITY_CARD_BUFFERS_MIN_KB = "64"
         # (Not set any more: VILOCITY_JOIN_COPIES=1 and VILOCITY_JOIN_PARTS=8.) With them, and
         # with the game a frame ahead of what is sent, the character was drawn torn (his
-        # body pulled into long bands) in single frames while he walks: 183 to 193 of
+        # body pulled into long bands) in single frames while he walks: 183 to 222 of
         # 2,800 frames on the night street, counted frame by frame; without the two and
-        # with VILOCITY_SUBMIT_FRAMES=0, 2 to 19, for 1 to 2 ms a frame. None at all only
+        # with VILOCITY_SUBMIT_FRAMES=0, 2 to 33, for 2 ms a frame. None at all only
         # with VILOCITY_CARD_STEPS=0 (58 ms a frame in place of 41): the fault is in there.
         # The price, measured in the opening: 32 ms a frame at the median in place of 29.
         VILOCITY_SUBMIT_FRAMES = "0"
