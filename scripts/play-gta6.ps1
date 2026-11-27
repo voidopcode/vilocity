@@ -68,6 +68,7 @@ if (-not $Defaults) {
         # 2,800 frames on the night street, counted frame by frame; without the two and
         # with VILOCITY_SUBMIT_FRAMES=0, 2 to 19, for 1 to 2 ms a frame. None at all only
         # with VILOCITY_CARD_STEPS=0 (58 ms a frame in place of 41): the fault is in there.
+        # The price, measured in the opening: 32 ms a frame at the median in place of 29.
         VILOCITY_SUBMIT_FRAMES = "0"
         VILOCITY_INDIRECT_WINDOW = "1"; VILOCITY_INDIRECT_BATCH = "2"
         VILOCITY_MAP_THREADS = "1"; VILOCITY_THIN = "1"; VILOCITY_UPLOAD_AHEAD = "1"

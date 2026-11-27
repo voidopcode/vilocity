@@ -104,13 +104,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 10:54
+**Latest test run:** 2026-11-27 11:05
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 25.4 fps, 39 ms a frame |
-| Best while playing | 29.0 fps |
-| Last frame | 24.8 fps, 40 ms, 8887 draws, 260 dropped without a pipeline |
+| Frame rate while playing (typical) | 31.3 fps, 32 ms a frame |
+| Best while playing | 46.1 fps |
+| Last frame | 33.6 fps, 30 ms, 4969 draws, 49 dropped without a pipeline |
 | Shaders that failed to translate | compute 5 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -136,8 +136,9 @@ keyboard and whose every frame was captured and counted.
   (`VILOCITY_CARD_STEPS`): none at all with it off, at 58 ms a frame in place of 41.
   Without the joined copies and parts and with the game held until its frame is sent
   (`VILOCITY_SUBMIT_FRAMES=0`, now what the play script sets): 2 to 19, for 1 to 2 ms a
-  frame; 0 of 2,742 frames walking in daylight. Not closed: the fault itself is still in
-  there.
+  frame; 0 of 2,742 frames walking in daylight. It has a price in the opening: 32 ms a
+  frame at the median in place of 29 (31 fps for 34), and its crowd scene still shows
+  3 torn frames (6 before). Not closed: the fault itself is still in there.
 - **Memory of the card.** Copies of textures nothing uses went only from 88 % of the
   card's budget on, 2 % under the line at which no new texture is made; when a scene
   loaded 7 GB of textures in half a minute thousands of textures waited (faces and skin
