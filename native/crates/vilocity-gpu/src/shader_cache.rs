@@ -82,6 +82,9 @@ fn build() -> [u8; 32] {
             "VILOCITY_MESH_OUTPUT_STRICT",
             "VILOCITY_BVH_FENCES",
             "VILOCITY_BVH_BOUNDS",
+            // Whether groups of several host waves number their console
+            // threads by a counter (`VILOCITY_THREAD_TICKET=0`: not).
+            "VILOCITY_THREAD_TICKET",
             // (Neptune-VE) The NaN guard changes colour exports and typed
             // stores: a translation made without it must not serve a run
             // with it, nor the other way round.

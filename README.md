@@ -104,13 +104,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 15:02
+**Latest test run:** 2026-11-27 15:45
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 24.3 fps, 41 ms a frame |
-| Best while playing | 34.9 fps |
-| Last frame | 24.4 fps, 41 ms, 6600 draws, 111 dropped without a pipeline |
+| Frame rate while playing (typical) | 23.5 fps, 43 ms a frame |
+| Best while playing | 31.6 fps |
+| Last frame | 22.7 fps, 44 ms, 6687 draws, 190 dropped without a pipeline |
 | Shaders that failed to translate | compute 6 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -129,6 +129,15 @@ the torn frames ruled out.
   while 1,183 shaders were translated, then the same crash at the same address; with it,
   the bound reached once (12.9 s without a frame), no crash, and 21 to 29 fps a minute
   later.
+- **Two faults of every NVIDIA card, fixed** (both from trustno1-coder/VIctory-NVIDIA,
+  read line by line and ported with credit). Compute programs whose console threads
+  span several host waves numbered them by the first thread of each host wave rounded
+  down; NVIDIA fills groups of two dimensions 16 x 2 at a time, so two waves took the
+  same numbers: on this RTX 5080 the test program wrote 32 of its 64 places, now all 64
+  (`VILOCITY_THREAD_TICKET=0`: as before). And a list reset after the game replaced a
+  view heap at the same address gave back slots of the new heap, which other draws then
+  got as well. No change seen on the night street; all 292 translator and 371 engine
+  tests pass.
 - **Torn frames, what they are not.** Each of these was built and counted on the same
   116 s walk: a wait for the flights that write, through another host copy, memory a
   submission refreshes (as many torn frames, 12 ms a frame slower); a present that

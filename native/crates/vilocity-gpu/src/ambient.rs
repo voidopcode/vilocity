@@ -748,6 +748,12 @@ pub(crate) fn after(list: &HostList, role: Role, views: &Views) -> bool {
         (_, Set::Estimate(level), _) => (level, 0.0f32),
         (_, Set::Constant(level), _) => (0.0, level),
     };
+    // In one run by turns (`VILOCITY_AB=<s>,VILOCITY_AMBIENT`): as set, and the
+    // title's own diffuse light (the keep still runs, so the slow mean stays).
+    #[cfg(feature = "diagnostics")]
+    if role != Role::Miss && role != Role::Radiance && crate::ab::pick("VILOCITY_AMBIENT") == Some(false) {
+        return false;
+    }
     let estimate = role == Role::Miss || constant == 0.0;
     if role != Role::Radiance && estimate && !KEPT.load(Ordering::Relaxed) {
         if role == Role::Miss {
