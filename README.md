@@ -43,25 +43,41 @@ loads saves and gets into the world. The world is where the work is now.
 | 2 | Intro video with sound | ✅ works | ██████████ |
 | 3 | Start screen, profile and saves | ✅ works | ██████████ |
 | 4 | Loading into the world | ✅ works | ██████████ |
-| 5 | The world renders | 🟡 prologue cutscenes and the first room play, 4-8 fps (about 130-280 ms a frame, 200 ms median); every shader translates; some draws still dropped | ██████░░░░ |
-| 6 | The picture | 🟡 no rainbow glitter, no orange dashes, faces and rooms lit, window light and shadows on heads, no holes in the jumpsuits, smooth edges (AMD's PC FSR); ray-traced light stands in as a constant; the jumpsuits are orange in some runs and red in others | ████████░░ |
+| 5 | The world renders | 🟢 the saved game loads into the open world and plays; 26 console programs that need 64-lane waves have no form for 32-lane cards yet and their draws are dropped | █████████░ |
+| 6 | The picture | 🟢 shade, faces, skin, water and sky look as they should (the black shade, black arms, white loading screen and blocks on the water are gone); textures of what just came into view can appear late | █████████░ |
 | 7 | The world keeps running | 🟡 the loss 2-3 minutes in is fixed; a driver timeout some 7 minutes in remains (a longer GPU timeout is being tested) | █████░░░░░ |
-| 8 | Playable frame rate (30 fps) | 🔴 not yet: about 11 fps (90 ms a frame) as a Series S, the launcher's default now, with the card no longer the limit; about 3 fps as a Series X | ███░░░░░░░ |
+| 8 | Playable frame rate (30 fps) | 🟡 26-27 fps at 5,000 draws a frame and 17-19 fps at 10,000-11,000 (Ryzen 9 9950X3D, RTX 5080, as a Series S); it was 3-6 fps in the same place | ███████░░░ |
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-26 23:03, game build Series 1.0.2.1
+**Latest test run:** 2026-11-27 00:17
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 728.7 fps |
-| Median frame time | 156 ms |
-| Last frame | 6.5 fps, 153 ms, 5157 draws, 254 dropped without a pipeline |
-| Shaders that failed to translate | none |
+| Best frame rate (menus included) | 393.0 fps |
+| Median frame time | 51 ms |
+| Last frame | 18.8 fps, 53 ms, 11472 draws, 274 dropped without a pipeline |
+| Shaders that failed to translate | compute 5 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: daylight is no longer white. The title's average-luminance program
+Latest: the native engine is now cool_fox's (codec_d's VIctory fork, build
+30e54b4, GPL-3.0-or-later), in place of our own tree. Ours was some 60,000 lines
+behind the forks that draw shade right, and porting it over piece by piece did
+not converge. Kept from Vilocity: the one executable, the sandbox (and its hold
+on the mouse), the launcher, the monitor and the HUD. In the same saved game, on
+a Ryzen 9 9950X3D and an RTX 5080: shade is lit (it was black), arms and faces
+show, the loading screen is no longer white, the water has no blocks, and a frame
+takes 37-39 ms at 5,000 draws and 52-58 ms at 10,000-11,000 (171-315 ms before).
+Memory: the game's commit levels off near 24.7 GB over seven minutes (21.1 GB on
+entering the world). All keys of a pad are on the keyboard now, and can be changed
+in `%LOCALAPPDATA%\vilocity\data\keys.txt`. The launcher translates the game's
+shaders ahead once per build, and uses more worker threads on 16 cores or more.
+Tests: the engine's own suite passes, but for two of the indirect-argument tests
+that expect `VILOCITY_INDIRECT_REST=1` (they pass with it). Not done: 30 fps in
+busy places, and the 26 wave64 programs.
+
+Earlier: daylight is no longer white. The title's average-luminance program
 (`ComputeAverageDepthWeightedLuminanceFromHistogramCS`) has thread 0 write the
 histogram's running counts to shared memory, then a barrier, then every bin reads
 them; the barrier was translated as a fence without a wait, so on 32-lane cards
@@ -277,36 +293,42 @@ engine's own commands are under `vilocity native ...` and `vilocity compat ...`.
 
 ### GTA VI first run
 
-Translate every shader and build every pipeline ahead of time, so the game
-does not stop to do it while playing (again after an update of the shader
-translator):
-
-```powershell
-target\release\vilocity.exe native translate --cache --pipelines <game folder>\shaders.rpf <game folder>\game_scarlett_master.exe <game folder>\XboxBvhBuilder.dll
-```
-
-That fills the shader cache and the pipeline library. A second run skips what
-is already there. The library belongs to the GPU and driver it was built on.
-
-Then `scripts\play-gta6.ps1` starts the game with the frame-rate switches
-measured so far and opens `scripts\monitor-gta6.ps1`: frame rate, memory, CPU
+`scripts\play-gta6.ps1 -Game <game folder>` starts the game with the engine's
+measured settings and opens `scripts\monitor-gta6.ps1`: frame rate, memory, CPU
 and GPU use, where each frame's time goes, and the log's warnings and errors
-(logs in `%LOCALAPPDATA%\vilocity\logs`).
+(logs in `%LOCALAPPDATA%\vilocity\logs`). Once per build it first translates
+every shader of the game ahead (about a minute on 16 cores), so that none is
+translated while playing; the first session still stutters while the graphics
+driver builds its pipelines.
 
 ### Controls
 
+An Xbox controller works. So do keyboard and mouse: a left click in the game's
+window takes the mouse (it turns the camera, and the cursor is hidden and kept
+in the window); Esc or left Alt gives it back.
+
 | Keys | Pad |
 |------|-----|
-| Enter / Backspace | A / B |
-| Arrows | D-pad |
-| W A S D | left stick |
+| W A S D | left stick: move (driving: W accelerate, S brake, A / D steer) |
 | Mouse (or I J K L) | right stick: camera |
-| Left / right mouse button | right / left trigger: fire / aim |
+| Left / right mouse button | RT / LT: fire / aim |
+| Shift or Enter | A |
+| R or Backspace | B |
+| Space or X | X |
+| F or Y | Y |
+| Tab or mouse 4 | LB |
+| Q or mouse 5 | RB |
+| Ctrl or Z | left stick click |
+| C, H or middle click | right stick click |
+| Arrows | D-pad |
+| Esc or P | Menu |
+| V | View |
+| G | switches between the on-foot and the driving keys |
 
-The mouse works while the game's window has focus and no pad is connected; it
-holds the cursor in the window's middle. `VILOCITY_MOUSE_SENS` (pixels a poll for
-a full turn, 8) sets its speed, `VILOCITY_MOUSE=0` turns it off. XInput pads work too. The full keyboard map is in
-[`native/README.md`](native/README.md#getting-started).
+The keys are in `%LOCALAPPDATA%\vilocity\data\keys.txt` (made on the first
+start): change them there and save, and the running game takes them within a
+second. `VILOCITY_MOUSE_SENSITIVITY` (1.0) sets the mouse's speed. (Keys and
+mouse are proneonn/Vertex's, by way of cool_fox.)
 
 ### Sandbox
 
@@ -343,6 +365,11 @@ One Cargo workspace at the root; one `target\` folder for everything.
 ## Licence
 
 Vilocity is a modified version of GPL-licensed software, changed in November 2026.
+
+The native engine is cool_fox by codec_d (build 30e54b4), a fork of VIctory by
+Marvisak, with work from fxceless/victory-fork, avatarmanz/VIctory-7900XTX (the
+frame-rate unlock among it), tippythetaidum (the face fix, victory-fork #927)
+and proneonn/Vertex (keyboard and mouse).
 
 The native engine is GPL-3.0-or-later (`native/LICENSE`), the compat engine
 GPL-2.0-only (`compat/LICENSE`). `vilocity.exe` links both, which is fine for

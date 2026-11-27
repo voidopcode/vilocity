@@ -1,5 +1,11 @@
 # Vilocity
 
+> Since 2026-11-27 this engine is cool_fox's (codec_d's VIctory fork, build
+> 30e54b4), renamed. What follows was written for the tree before it: the
+> commands are now `inspect`, `census`, `shaders`, `warm`, `run` and `config`
+> (`vilocity native --help`), and switches named below may be gone or mean
+> something else. The settings in use are in `scripts/play-gta6.ps1`.
+
 Runs Grand Theft Auto VI (Xbox Series X|S) natively on Windows, from files
 the user supplies.
 

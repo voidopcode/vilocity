@@ -45,6 +45,12 @@ if (-not $Defaults) {
         # title's 30 frames a second (16.667: at most 60; 33.333: the title's own).
         VILOCITY_FRAME_INTERVAL_MS = "0"
     }
+    # 16 cores or more: more threads translate the lists and copy back (Vice-Tay's
+    # counts for a Ryzen 9 9950X3D). Measured here on that processor at 9,400-10,000
+    # draws a frame: 55-57 ms against 60-67 ms with the engine's 8, 6 and 4.
+    if ([Environment]::ProcessorCount -ge 32) {
+        $settings.VILOCITY_THIN_THREADS = "12"; $settings.VILOCITY_UNDER_THREADS = "8"; $settings.VILOCITY_LAND_THREADS = "6"
+    }
     foreach ($name in $settings.Keys) {
         if (-not (Test-Path "Env:$name")) { Set-Item "Env:$name" $settings[$name] }
     }
