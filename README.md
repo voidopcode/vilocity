@@ -104,28 +104,31 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 15:02
+**Latest test run:** 2026-11-27 15:39
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 24.3 fps, 41 ms a frame |
-| Best while playing | 34.9 fps |
-| Last frame | 24.4 fps, 41 ms, 6600 draws, 111 dropped without a pipeline |
-| Shaders that failed to translate | compute 6 |
+| Frame rate while playing (typical) | 26.9 fps, 37 ms a frame |
+| Best while playing | 46.0 fps |
+| Last frame | 17.9 fps, 56 ms, 1981 draws, 261 dropped without a pipeline |
+| Shaders that failed to translate | compute 4 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
 Latest: a first start no longer ends at the world's first frame, and what the hunt for
 the torn frames ruled out.
 - **First start on a PC that never ran the game** (issue 1, an RTX 5070 Ti): the first
-  frame of the world made every compute pipeline it uses on the spot, one after the
-  other (4 to 15 a second, the driver's cache being empty), stood 30 s, and the game's
-  own watchdog ended the run with a write to address 0. A frame's dispatches now wait so
-  for 12 s at most (`VILOCITY_PIPELINE_COMPUTE_WAIT_MS`) and then within the usual half
+  frame of the world waited while the shaders it uses were translated and compiled, one
+  after the other, stood 30 s, and the game's own watchdog ended the run with a write to
+  address 0. A frame's dispatches now wait for their pipelines 12 s at most
+  (`VILOCITY_PIPELINE_COMPUTE_WAIT_MS`), for the workers that make them and not for a
+  compile on the game's thread (one took 16 s here), and then within the usual half
   second; what a dropped one leaves wrong (a shirt in blocks of black and white) is
-  right on the next start. Checked here: the rule's test, and a start with every cache
-  warm, which is as before. Not checked here: the cold start itself (it would need this
-  PC's driver cache emptied).
+  right on the next start. Reproduced and checked here on the RTX 5080, with an empty
+  cache and the shaders translated while playing: without the bound no frame for 52 s
+  while 1,183 shaders were translated, then the same crash at the same address; with it,
+  the bound reached once (12.9 s without a frame), no crash, and 21 to 29 fps a minute
+  later.
 - **Torn frames, what they are not.** Each of these was built and counted on the same
   116 s walk: a wait for the flights that write, through another host copy, memory a
   submission refreshes (as many torn frames, 12 ms a frame slower); a present that
