@@ -104,13 +104,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 12:57
+**Latest test run:** 2026-11-27 13:09
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 28.7 fps, 35 ms a frame |
-| Best while playing | 29.6 fps |
-| Last frame | 29.6 fps, 34 ms, 5198 draws, 263 dropped without a pipeline |
+| Frame rate while playing (typical) | 33.2 fps, 30 ms a frame |
+| Best while playing | 47.7 fps |
+| Last frame | 33.1 fps, 30 ms, 4596 draws, 246 dropped without a pipeline |
 | Shaders that failed to translate | compute 6 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -176,6 +176,12 @@ keyboard and whose every frame was captured and counted.
   at those two choices. DLSS at the size of the output (`dlaa`) stops the game at its
   start and is not offered; balanced and performance run (1113x626 and 960x540 to
   1080p) and are no faster than quality: the frame is the processor's.
+- **Twelve minutes unattended** (the opening to the cell, 1080p, as the play script
+  sets it): no driver timeout, no error in the log, 33 fps at the median (30.0 ms; nine
+  frames in ten under 36.9 ms), memory 22 GB at first, 33 GB at its most, 27 GB at the
+  end. Faces in its close-ups are right (eyes, skin, soft shade). With another program
+  holding 2.5 GB of the card the card still had no room now and then (17 of 79 looks):
+  the launcher's check names such a program.
 - Known and open: with the pause menu up the blurred picture behind it drifts to green
   and magenta; the town of the current story save runs at 23 to 24 fps (9,000 to
   10,000 draws); the list of light programs in the wide form leaves grey rectangles on
