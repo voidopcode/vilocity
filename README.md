@@ -104,12 +104,14 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 19:13
+**Latest test run:** 2026-11-27 19:56
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing | no frames of the world in this run (menus only) |
-| Shaders that failed to translate | none |
+| Frame rate while playing (typical) | 22.1 fps, 45 ms a frame |
+| Best while playing | 42.5 fps |
+| Last frame | 24.2 fps, 41 ms, 6889 draws, 248 dropped without a pipeline |
+| Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
@@ -126,6 +128,12 @@ picture tests of 2026-11-27 evening ruled out.
 - **The launcher shows how far "Preparing the game's pipelines" is** ("1,200 of 3,517"):
   it looked stuck for minutes after an update. The play script keeps the step's lines in
   `logs\warm-progress.txt`; the step says how far it is every 100 pipelines.
+- **2 ms a frame: the write guards' lock rework is on by default** (renderer port #6, from
+  cool_fox c781843, design by avatarmanz/VIctory-7900XTX; `VILOCITY_PORT_GUARD=0` turns it
+  off). Two night walks with it switched every 4 s and every frame captured: 1.7 and 2.6 ms
+  a frame faster (the slowest tenth 3 to 5 ms), torn frames 20 of 2,091 on against 31 of
+  2,059 off. Tried and not kept: `VILOCITY_JOIN_PARTS` (3 to 5 ms faster, but torn frames
+  went from 0.19 to 3.23 per 100).
 - **Ctrl crouches on foot, as in GTA V** (the game's controls page: X is crouch; it was B).
   The keys file Vilocity comes with has it; an older keys file keeps its own keys until it
   is deleted (the game then writes the new one). F still gets in and out of cars, G

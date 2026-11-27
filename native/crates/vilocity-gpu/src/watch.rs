@@ -861,7 +861,7 @@ pub(crate) fn light() -> bool {
 /// (Vilocity: taken whole from DoubleGhosty/cool_fox, commit c781843,
 /// GPL-3.0, as this; the design is avatarmanz/VIctory-7900XTX's.)
 ///
-/// Renderer port #6 (`VILOCITY_PORT_GUARD=1`, off by default; read here, and
+/// Renderer port #6 (on by default since 2026-11-27, `VILOCITY_PORT_GUARD=0` off; read here, and
 /// A/B-able in one run with `VILOCITY_AB=<s>,VILOCITY_PORT_GUARD`): the guards'
 /// one lock no longer makes the title's write faults, and the refreshes'
 /// looks at view memory, wait for one another.
@@ -898,13 +898,17 @@ pub(crate) fn port_guard() -> bool {
     if let Some(on) = crate::ab::pick("VILOCITY_PORT_GUARD") {
         return on;
     }
+    // (Tests pick the one or the other themselves.)
     #[cfg(test)]
-    if PORT_GUARD_IN_TEST.get() {
-        return true;
+    return PORT_GUARD_IN_TEST.get();
+    // Read here: the switch of renderer port #6. (Vilocity) On unless `=0`: two night walks of
+    // 2026-11-27 with it switched every 4 s, every frame captured: 1.7 and 2.6 ms a frame
+    // faster (p90 4.6 and 3.2), torn frames 20 of 2,091 on against 31 of 2,059 off.
+    #[cfg(not(test))]
+    {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        return *ON.get_or_init(|| std::env::var("VILOCITY_PORT_GUARD").map_or(true, |v| v.trim() != "0"));
     }
-    // Read here: the switch of renderer port #6.
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("VILOCITY_PORT_GUARD").is_ok_and(|v| v.trim() == "1"))
 }
 
 #[cfg(test)]
