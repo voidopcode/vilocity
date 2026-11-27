@@ -50,18 +50,30 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 00:56
+**Latest test run:** 2026-11-27 01:44
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 374.2 fps |
-| Median frame time | 43 ms |
-| Last frame | 24.9 fps, 40 ms, 9348 draws, 105 dropped without a pipeline |
-| Shaders that failed to translate | compute 5 |
+| Best frame rate (menus included) | 998.6 fps |
+| Median frame time | 56 ms |
+| Last frame | 57.0 fps, 18 ms, 1426 draws, 72 dropped without a pipeline |
+| Shaders that failed to translate | compute 2 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: the native engine is now cool_fox's (codec_d's VIctory fork, build
+Latest: checked on the new engine with a scripted run: sound plays (the engine's
+own recording of what the title plays has sound from the moment the world loads),
+a click takes the mouse (kept in the window, no cursor) and Esc gives it back, F8
+hides and shows the HUD. On foot, Space jumps and Shift runs now. On NVIDIA cards
+the launcher no longer runs the loop that keeps the card busy: a median of 35.9 ms
+a frame against 37.6-39.9 ms at 3,500-6,500 draws (RTX 5080). New switch,
+off by default: `VILOCITY_WAVE_WIDE=1` with `VILOCITY_WAVE_WIDE_ONLY=<shader
+hashes>` (after Vice-Tay) runs the listed wave64 programs in the wide form; the
+three fog-transmission programs and the two light-tiling ones translate and run
+with it (6f225b641c5b0708, 5dc3b25986622949, 926c46bab3b86bd6, 369cbe906ea72764,
+2cc4c197ee29e291), their cost a frame is not measured yet.
+
+Earlier: the native engine is now cool_fox's (codec_d's VIctory fork, build
 30e54b4, GPL-3.0-or-later), in place of our own tree. Ours was some 60,000 lines
 behind the forks that draw shade right, and porting it over piece by piece did
 not converge. Kept from Vilocity: the one executable, the sandbox (and its hold
@@ -320,13 +332,13 @@ in the window); Esc or left Alt gives it back.
 | W A S D | left stick: move (driving: W accelerate, S brake, A / D steer) |
 | Mouse (or I J K L) | right stick: camera |
 | Left / right mouse button | RT / LT: fire / aim |
-| Shift or Enter | A |
+| Space or Enter | A: jump, climb |
 | R or Backspace | B |
-| Space or X | X |
+| X | X |
 | F or Y | Y |
 | Tab or mouse 4 | LB |
 | Q or mouse 5 | RB |
-| Ctrl or Z | left stick click |
+| Shift, Ctrl or Z | left stick click: run |
 | C, H or middle click | right stick click |
 | Arrows | D-pad |
 | Esc or P | Menu |

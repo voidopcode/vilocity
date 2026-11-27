@@ -1735,9 +1735,9 @@ mod tests {
         let all: [(u32, &[u8]); 14] = [
             (MENU, &[0x1B, b'P']),
             (VIEW, b"V"),
-            (A, &[0x0D, 0xA0]),
+            (A, &[0x0D, b' ']),
             (B, &[0x08, b'R']),
-            (X, b" X"),
+            (X, b"X"),
             (Y, b"FY"),
             (UP, &[0x26, b'1']),
             (DOWN, &[0x28, b'2']),
@@ -1745,7 +1745,7 @@ mod tests {
             (RIGHT, &[0x27, b'4', b'E']),
             (LEFT_SHOULDER, &[TAB]),
             (RIGHT_SHOULDER, b"Q"),
-            (LEFT_STICK, &[0xA2, b'Z']),
+            (LEFT_STICK, &[0xA0, 0xA2, b'Z']),
             (RIGHT_STICK, b"CH"),
         ];
         for (button, keys) in all {

@@ -61,6 +61,8 @@ pub struct Container<'a> {
     pub digest: [u8; 16],
     pub version: (u16, u16),
     pub parts: Vec<Part<'a>>,
+    /// The bytes it was parsed from, as the shader hashes of the log are made of them.
+    pub(crate) input: &'a [u8],
 }
 
 const HEADER_SIZE: usize = 0x20;
@@ -102,6 +104,7 @@ impl<'a> Container<'a> {
             });
         }
         Ok(Container {
+            input: data,
             digest,
             version,
             parts,

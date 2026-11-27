@@ -128,13 +128,13 @@ MOVE_LEFT = A
 MOVE_RIGHT = D
 LT = RightClick, U
 RT = LeftClick, O
-A = Shift, Enter
+A = Space, Enter
 B = R, Backspace
-X = Space, X
+X = X
 Y = F, Y
 LB = Tab, Mouse4
 RB = Q, Mouse5
-L3 = Ctrl, Z
+L3 = Shift, Ctrl, Z
 R3 = C, MiddleClick, H
 UP = ArrowUp, 1
 DOWN = ArrowDown, 2
@@ -373,7 +373,9 @@ mod tests {
         // Aiming and firing on foot; W is the accelerator at the wheel.
         assert_eq!(keys_of(&binds.walk, Part::LeftTrigger)[0], 0x02);
         assert_eq!(keys_of(&binds.walk, Part::RightTrigger)[0], 0x01);
-        assert_eq!(keys_of(&binds.walk, Part::Button(LEFT_STICK))[0], 0xA2);
+        // Running on foot is Shift (and jumping Space).
+        assert_eq!(keys_of(&binds.walk, Part::Button(LEFT_STICK))[0], 0xA0);
+        assert_eq!(keys_of(&binds.walk, Part::Button(A))[0], b' ');
         assert_eq!(keys_of(&binds.drive, Part::RightTrigger), [b'W']);
         assert_eq!(keys_of(&binds.drive, Part::LeftTrigger), [b'S']);
     }

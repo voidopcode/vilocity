@@ -51,6 +51,13 @@ if (-not $Defaults) {
     if ([Environment]::ProcessorCount -ge 32) {
         $settings.VILOCITY_THIN_THREADS = "12"; $settings.VILOCITY_UNDER_THREADS = "8"; $settings.VILOCITY_LAND_THREADS = "6"
     }
+    # An NVIDIA card keeps its clocks by the driver's power mode: no loop of ours to
+    # keep it busy (cool_fox's loop is for AMD cards; Vice-Tay and scarlett-fox leave
+    # it off here too). On an RTX 5080 at 3,500-6,500 draws a frame: a median of
+    # 35.9 ms against 37.6-39.9 ms with the loop.
+    if (@(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | ForEach-Object PNPDeviceID) -match 'VEN_10DE') {
+        $settings.VILOCITY_CARD_AWAKE = "0"
+    }
     foreach ($name in $settings.Keys) {
         if (-not (Test-Path "Env:$name")) { Set-Item "Env:$name" $settings[$name] }
     }
