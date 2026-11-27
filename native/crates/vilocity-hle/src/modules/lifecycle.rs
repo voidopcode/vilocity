@@ -245,6 +245,17 @@ fn hook(hwnd: HWND) {
         wm::SetWindowLongPtrW(hwnd, wm::GWLP_WNDPROC, window_proc as *const () as isize);
     }
     icon(hwnd);
+    // (Vilocity) The title's process, known for one by its window: its threads on one die.
+    vilocity_gpu::title_on_its_die();
+    // (Vilocity) `VILOCITY_FULLSCREEN=1`: the title's first window starts over the whole
+    // screen (F11 puts it back). A window is fitted to the desktop's work area, smaller
+    // than the picture on a screen of the picture's size: 1683x1039 of 1920x1080.
+    static FIRST: std::sync::Once = std::sync::Once::new();
+    FIRST.call_once(|| {
+        if std::env::var_os("VILOCITY_FULLSCREEN").is_some_and(|v| v == "1") {
+            toggle_whole_screen(hwnd);
+        }
+    });
 }
 
 /// (Vilocity) The window as a PC shows it: the title's own name in the title bar
@@ -284,6 +295,42 @@ fn icon(hwnd: HWND) {
     }
 }
 
+/// (Vilocity) The window over the whole of its screen with no frame, or as
+/// it was before that. The picture follows the window's size as it does when
+/// the window is fitted (the swap chain stretches).
+fn toggle_whole_screen(hwnd: HWND) {
+    use windows_sys::Win32::Graphics::Gdi;
+    /// The window's style and place before it took the whole screen.
+    static BEFORE: Mutex<Option<(isize, RECT)>> = Mutex::new(None);
+    const PLACED: u32 = wm::SWP_NOZORDER | wm::SWP_NOACTIVATE | wm::SWP_FRAMECHANGED;
+    // The bits of a window's style that are its frame: only these change. (Shown or
+    // not is the window's own: the style as it was at creation, put back whole, hid
+    // a window that had started over the whole screen.)
+    const FRAME: isize = (wm::WS_OVERLAPPEDWINDOW | wm::WS_POPUP) as isize;
+    let mut before = BEFORE.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: plain calls on the title's window, from its own thread.
+    unsafe {
+        let style = wm::GetWindowLongPtrW(hwnd, wm::GWL_STYLE);
+        if let Some((framed, at)) = before.take() {
+            wm::SetWindowLongPtrW(hwnd, wm::GWL_STYLE, style & !FRAME | framed & FRAME);
+            wm::SetWindowPos(hwnd, std::ptr::null_mut(), at.left, at.top, at.right - at.left, at.bottom - at.top, PLACED);
+            return;
+        }
+        let mut screen: Gdi::MONITORINFO = std::mem::zeroed();
+        screen.cbSize = size_of::<Gdi::MONITORINFO>() as u32;
+        let mut at = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        if Gdi::GetMonitorInfoW(Gdi::MonitorFromWindow(hwnd, Gdi::MONITOR_DEFAULTTONEAREST), &mut screen) == 0
+            || wm::GetWindowRect(hwnd, &mut at) == 0
+        {
+            return;
+        }
+        *before = Some((style, at));
+        wm::SetWindowLongPtrW(hwnd, wm::GWL_STYLE, style & !FRAME | wm::WS_POPUP as isize);
+        let all = screen.rcMonitor;
+        wm::SetWindowPos(hwnd, std::ptr::null_mut(), all.left, all.top, all.right - all.left, all.bottom - all.top, PLACED);
+    }
+}
+
 extern "system" fn window_proc(
     hwnd: HWND,
     message: u32,
@@ -294,6 +341,11 @@ extern "system" fn window_proc(
     // console title never sees one, nor a WM_CLOSE from it.
     if message == wm::WM_SYSCOMMAND && wparam & 0xFFF0 == wm::SC_CLOSE as usize {
         end_title("window closed", Box::new(|| {}));
+        return 0;
+    }
+    // (Vilocity) F11, pressed (not held): the whole screen, and back.
+    if message == wm::WM_KEYDOWN && wparam == 0x7A && lparam >> 30 & 1 == 0 {
+        toggle_whole_screen(hwnd);
         return 0;
     }
     // Alt or F10 puts a window into menu mode: the system runs a modal menu

@@ -34,7 +34,10 @@ pub fn run(jobs: Option<usize>, limit: Option<usize>, again: bool, used: bool, t
     let began = Instant::now();
     vilocity_hle::known_pipelines::use_translations(dir.with_file_name("shaders"));
     let fingerprint = known::fingerprint();
-    let done_file = dir.join("warm-done.txt");
+    // (Vilocity) The driver keeps a sandboxed process's pipelines apart from the
+    // others': a list of what is made for each.
+    let sandboxed = std::env::var_os("VILOCITY_SANDBOXED").is_some();
+    let done_file = dir.join(if sandboxed { "warm-done-sandbox.txt" } else { "warm-done.txt" });
     let bad_file = dir.join("warm-bad.txt");
     let keys = known::keys(&dir);
     let listed = std::fs::read_to_string(&done_file).unwrap_or_default();

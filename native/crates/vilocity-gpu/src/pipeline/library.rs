@@ -447,7 +447,10 @@ fn library() -> Option<&'static Library> {
     LIBRARY
         .get_or_init(|| {
             let device = crate::host::host()?.device.cast::<ID3D12Device1>().ok()?;
-            let blob = DIR.get().map_or(Blob::None, |d| Blob::of(d));
+            let blob = DIR.get().map_or(Blob::None, |d| {
+                begun_for(d, &super::known::fingerprint());
+                Blob::of(d)
+            });
             let library = open(&device, blob);
             if library.is_none() {
                 tracing::warn!("no host pipeline library: pipelines are not kept");
@@ -455,6 +458,26 @@ fn library() -> Option<&'static Library> {
             library
         })
         .as_ref()
+}
+
+/// (Vilocity) Names what the library in `dir` was begun for
+/// ([`super::known::fingerprint`]: the translator with its settings, and the
+/// driver). A library begun for another is removed first: a pipeline's name
+/// is the hash of its translated code, so no draw asks for those again, and
+/// every save writes the whole file (4.1 GB after a day of trial builds,
+/// written again for one new pipeline). The driver's own cache still has
+/// the ones in use: a few milliseconds each (`vilocity warm`).
+fn begun_for(dir: &std::path::Path, fingerprint: &str) {
+    let named = dir.join("host-pipelines.for");
+    if std::fs::read_to_string(&named).is_ok_and(|was| was == fingerprint) {
+        return;
+    }
+    for old in [LIBRARY_FILE, NEXT_FILE, "host-pipelines.tmp"] {
+        let _ = std::fs::remove_file(dir.join(old));
+    }
+    if std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&named, fingerprint)).is_ok() {
+        tracing::info!(fingerprint, "host pipeline library begun anew: the translator or the driver changed");
+    }
 }
 
 /// The library in `blob`, or an empty one if the host rejects the blob (an
@@ -573,11 +596,13 @@ pub(crate) fn pipeline(
 /// last save and `SAVE_EVERY` has passed (or `now`).
 pub(crate) fn save(now: bool) {
     static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
-    const SAVE_EVERY: std::time::Duration = std::time::Duration::from_secs(20);
+    // (Vilocity) Milliseconds between saves: 20 s, and no more often than a
+    // library's bytes written at 16 MB a second (each save writes it whole).
+    static SAVE_EVERY: AtomicU64 = AtomicU64::new(20_000);
     let (Some(dir), Some(library)) = (DIR.get(), library()) else { return };
     {
         let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
-        if !now && last.is_some_and(|t| t.elapsed() < SAVE_EVERY) {
+        if !now && last.is_some_and(|t| (t.elapsed().as_millis() as u64) < SAVE_EVERY.load(Ordering::Relaxed)) {
             return;
         }
         *last = Some(std::time::Instant::now());
@@ -612,6 +637,7 @@ pub(crate) fn save(now: bool) {
             }
             library.added.store(0, Ordering::Relaxed);
             SAVED.store(size as u64, Ordering::Relaxed);
+            SAVE_EVERY.store((size as u64 / 16_000).max(20_000), Ordering::Relaxed);
             size
         }
     };
@@ -907,6 +933,21 @@ mod tests {
             pattern(page * 4096, &mut expected);
             assert!(bytes == &expected[..], "page {page} of the replaced library no longer reads as the old file");
         }
+    }
+
+    #[test]
+    fn a_library_of_another_translator_is_begun_anew() {
+        let dir = tempfile::tempdir().unwrap();
+        let library = dir.path().join(LIBRARY_FILE);
+        std::fs::write(&library, b"old").unwrap();
+        // Unnamed (a library from before this): removed, and named.
+        begun_for(dir.path(), "a");
+        assert!(!library.exists());
+        std::fs::write(&library, b"new").unwrap();
+        begun_for(dir.path(), "a");
+        assert!(library.exists(), "the same translator and driver keep it");
+        begun_for(dir.path(), "b");
+        assert!(!library.exists());
     }
 
     #[test]

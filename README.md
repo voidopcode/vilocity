@@ -50,18 +50,49 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 02:48
+**Latest test run:** 2026-11-27 04:41
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 22.4 fps, 45 ms a frame |
-| Best while playing | 28.7 fps |
-| Last frame | 12.8 fps, 78 ms, 6949 draws, 143 dropped without a pipeline |
+| Frame rate while playing (typical) | 25.6 fps, 39 ms a frame |
+| Best while playing | 36.7 fps |
+| Last frame | 28.8 fps, 35 ms, 6500 draws, 92 dropped without a pipeline |
 | Shaders that failed to translate | compute 5 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: every key of the keyboard does something now (the number pad, the function
+Latest: moving through the world no longer drops to half the frame rate. Measured by
+walking, then running through the day scene with scripted keys (Ryzen 9 9950X3D, RTX
+5080, Series S picture, 6,300-8,700 draws a frame): 24-29 fps with no freezes, where
+it was 11-18 fps with freezes of up to half a second. The cause was the game's own
+page mapping: 848 ms of every second went into map and unmap calls (182 and 114
+microseconds each), because the game's 6.1 GiB of pages came from one section, whose
+lock Windows holds while it rebuilds large pages. They come from sections of 2 MiB
+now (`VILOCITY_SECTION_MB`; RyanCase94's and CuteBooty's finding, fxceless/victory-fork
+#1089 and #1274): 11 and 3 microseconds a call, 117 ms a second. Standing still was
+fast before and hid it: tests move the character from now on. Also new:
+- On a processor of two dies (a Ryzen 9) the game's threads and the frame's run on the
+  die with the bigger cache, the engine's workers on the other (`VILOCITY_DIES=0`: not):
+  34.8 ms a frame against 37.1 standing, switched every 10 s in one run.
+- F11 is the whole screen and back; the launcher starts the game that way ("Full
+  screen": a window shrinks the 1080p picture to fit the desktop, which softens it).
+- The driver's pipeline file is begun anew when the translator or the driver changes
+  (it had grown to 4.1 GB, written whole at every save; about 150 MB now), and
+  `vilocity warm --used` builds the pipelines of the places you have played in ahead
+  of each start, in the game's sandbox (about 3 ms each afterwards; the first making
+  of one takes from tens of milliseconds to 15 s). The
+  launcher's "Build all pipelines ahead" does every one the game has ever made.
+- The launcher's NVIDIA Smooth Motion switch is tested (written and read back), and a
+  program that holds video memory can be closed from the launcher's list.
+- From other forks, each read line by line first: the shared lock of the write guards
+  (`VILOCITY_PORT_GUARD=1`, off by default; DoubleGhosty/cool_fox c781843; about 1 ms
+  a frame here while walking), 40 shader variants and a blending repair (DexNom, by
+  way of ZigZagBoi1/ScarlettPort a1eea72a), and textures' levels given memory on
+  demand taking effect (`VILOCITY_LEVELS_ON_DEMAND=1`; ScarlettPort 1deb0be4).
+Not fixed yet: shade is too dark in daylight (the stand-in for the traced light),
+water, and 30 fps is not held everywhere (20-30 while driving).
+
+Earlier: every key of the keyboard does something now (the number pad, the function
 keys and the punctuation keys too; Ctrl crouches, E interacts, M is the map, T the
 phone), and every key can be named in the keys file. The two pictures measured in
 the same night street, with runs that take no keys (`VILOCITY_KEYS_ONLY=1`), on a
@@ -372,11 +403,12 @@ in the window); Esc or left Alt gives it back.
 | Esc or P | Menu |
 | V or M | View: the map |
 | G | switches between the on-foot and the driving keys |
+| F11 | the whole screen, and back to a window |
 
 Every other key does something too (the function keys, the number pad, the
 punctuation keys, Home, End, Insert, Delete and the rest each press a pad control),
-except G, F8 (the frame rate panel), Left Alt (gives the mouse back) and the keys
-Windows keeps for itself.
+except G, F8 (the frame rate panel), F11 (the whole screen), Left Alt (gives the
+mouse back) and the keys Windows keeps for itself.
 
 The keys are in `%LOCALAPPDATA%\vilocity\data\keys.txt` (made on the first
 start): change them there and save, and the running game takes them within a
@@ -441,6 +473,10 @@ Vilocity stands on other people's emulators and forks. Thank you to all of them.
 | [Belobug/VIctory-Belobug-AMD](https://github.com/Belobug/VIctory-Belobug-AMD) | the ambient light estimate, pipeline fixes |
 | [uiliannn/VItoriaBr](https://github.com/uiliannn/VItoriaBr) | the launcher's 1080p preset, the loop limit, capped constant buffer views |
 | triippywhale | command list fixes |
+| RyanCase94, CuteBooty and KainanP (fxceless/victory-fork #1089, #1274; VIctory #3177) | the game's pages in sections of 2 MiB: no more waits behind Windows' large-page worker |
+| [DoubleGhosty/cool_fox](https://github.com/DoubleGhosty/cool_fox) | the shared lock of the write guards (renderer port 6, c781843) |
+| [ZigZagBoi1/ScarlettPort](https://github.com/ZigZagBoi1/ScarlettPort) | 40 shader variants and a blending repair (from DexNom), levels on demand taking effect |
+| [LooperSalty/AnyXboxX](https://github.com/LooperSalty/AnyXboxX) | the launcher's NVIDIA Smooth Motion switch (the driver settings it writes) |
 
 **Runtime parts, not shipped with Vilocity:** AMD FidelityFX (FSR) if you download it, and DXC
 from the Windows SDK.

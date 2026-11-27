@@ -21,6 +21,11 @@ Usage:
       compat for everything else. --engine picks one yourself. The native engine
       runs the game in a sandbox (no network, none of your files);
       --no-sandbox runs it as you.
+  vilocity warm [--used]
+      Builds the graphics driver's shader pipelines ahead of play, in the game's
+      sandbox (the driver keeps a sandbox's pipelines apart, where the game
+      looks for them). --used: those earlier runs drew with (minutes); without
+      it every pipeline the game has ever made (long, and gigabytes of disk).
   vilocity native <command> ...   the native engine's commands (vilocity native --help)
   vilocity compat <command> ...   the compat engine's commands (vilocity compat --help)
   vilocity --version
@@ -63,6 +68,7 @@ fn main() {
         Some("native") => native(args[2..].to_vec()),
         Some("compat") => vilocity_compat::cli::main(strings(&args[2..])),
         Some("play") if args.len() >= 3 => play(&args[2..]),
+        Some("warm") => warm(&args[2..]),
         Some("--version" | "-V") => {
             println!("vilocity {}", env!("CARGO_PKG_VERSION"));
             0
@@ -91,6 +97,25 @@ fn native(rest: Vec<OsString>) -> i32 {
 
 fn strings(args: &[OsString]) -> Vec<String> {
     args.iter().map(|a| a.to_string_lossy().into_owned()).collect()
+}
+
+/// `warm [options]`: the native engine's `warm` in the sandbox `play` runs the
+/// game in. What a sandboxed process has the driver compile is kept in that
+/// sandbox's own cache, the one the sandboxed game reads; `vilocity native
+/// warm` fills the other one (for `play --no-sandbox`).
+fn warm(options: &[OsString]) -> i32 {
+    let mut run: Vec<OsString> = ["native", "warm"].map(OsString::from).to_vec();
+    run.extend(options.iter().cloned());
+    #[cfg(windows)]
+    {
+        let ran = std::env::current_exe().map_err(|e| e.to_string()).and_then(|me| in_sandbox(&me, &run, None));
+        ran.unwrap_or_else(|e| {
+            eprintln!("vilocity: {e}");
+            1
+        })
+    }
+    #[cfg(not(windows))]
+    native(run[1..].to_vec())
 }
 
 /// `play <target> [--engine E] [-- game args]`.
@@ -140,7 +165,7 @@ fn play(args: &[OsString]) -> i32 {
             run.extend(title_args.iter().cloned());
             #[cfg(windows)]
             if sandboxed {
-                return match in_sandbox(&me, &run, &exe) {
+                return match in_sandbox(&me, &run, exe.parent()) {
                     Ok(code) => code,
                     Err(e) => {
                         eprintln!("vilocity: {e}\n(--no-sandbox runs the game without the sandbox)");
@@ -164,25 +189,27 @@ fn play(args: &[OsString]) -> i32 {
 
 /// The native engine's `run` in the sandbox: it reads the game's folder (and
 /// the folder of `VILOCITY_FSR_DLL`, if set) and keeps its cache and data in the
-/// configured folders, the only ones it may write.
+/// configured folders, the only ones it may write. `game`: `None` for a command
+/// that reads no game (`warm`).
 #[cfg(windows)]
-fn in_sandbox(me: &Path, run: &[OsString], exe: &Path) -> Result<i32, String> {
+fn in_sandbox(me: &Path, run: &[OsString], game: Option<&Path>) -> Result<i32, String> {
     let cfg = vilocity_core::Config::load().map_err(|e| format!("{e:#}"))?;
     let tmp = cfg.cache_dir.join("tmp");
     for dir in [&cfg.cache_dir, &cfg.data_dir, &tmp] {
         std::fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
     }
-    let game = exe.parent().ok_or("the game's executable has no folder")?;
     let mut grants = vec![
-        sandbox::Grant { path: game.to_path_buf(), write: false },
         sandbox::Grant { path: cfg.cache_dir.clone(), write: true },
         sandbox::Grant { path: cfg.data_dir.clone(), write: true },
     ];
+    grants.extend(game.map(|game| sandbox::Grant { path: game.to_path_buf(), write: false }));
     let env = vec![
         ("VILOCITY_CACHE_DIR", cfg.cache_dir.clone().into_os_string()),
         ("VILOCITY_DATA_DIR", cfg.data_dir.clone().into_os_string()),
         ("TEMP", tmp.clone().into_os_string()),
         ("TMP", tmp.into_os_string()),
+        // For `warm`: which of the driver's two caches it fills.
+        ("VILOCITY_SANDBOXED", "1".into()),
     ];
     // AMD's PC upscaler, if the launcher names one: its folder is read.
     if let Some(dll) = std::env::var_os("VILOCITY_FSR_DLL").map(PathBuf::from)
@@ -192,7 +219,7 @@ fn in_sandbox(me: &Path, run: &[OsString], exe: &Path) -> Result<i32, String> {
     }
     println!(
         "sandbox: no network; reads {}; writes only {} and {}",
-        game.display(),
+        game.map_or("no game".into(), |game| game.display().to_string()),
         cfg.cache_dir.display(),
         cfg.data_dir.display()
     );

@@ -99,6 +99,8 @@ mod texback;
 
 #[cfg(windows)]
 pub use host::on_failure;
+#[cfg(windows)]
+pub use cores::{keep_beside, title_on_its_die};
 
 /// Whether `switch` is on now, if it is one of those `VILOCITY_AB` turns on and
 /// off while the title runs (`ab`).

@@ -42,12 +42,14 @@ public static class NvSmooth {
     }
     static IntPtr Dword(uint id, uint value) { IntPtr s = Zeroed(SettingSize); Marshal.WriteInt32(s, 0, SettingSize | 1 << 16); Marshal.WriteInt32(s, 4 + Name, unchecked((int)id)); Marshal.WriteInt32(s, 4 + Name + 20 + 4100, unchecked((int)value)); return s; }
     // 1: on for `exe`, 0: off, -1: not set (no profile holds it, or the profile says nothing).
-    public static int Get(string exe) {
+    public static int Get(string exe) { int v = Value(exe, Enable); return v < 0 ? -1 : v != 0 ? 1 : 0; }
+    // The setting `id` as the profile that holds `exe` has it; -1: not set.
+    public static int Value(string exe, uint id) {
         IntPtr session = Open();
         try { IntPtr profile = ProfileOf(session, exe); if (profile == IntPtr.Zero) return -1;
-            IntPtr s = Dword(Enable, 0); uint extra = 0;
-            try { int st = F<GetSetting>(0xEA99498D, 0x73BF8338)(session, profile, Enable, s, ref extra); if (st == -160) return -1; Check(st, "reading the setting");
-                return Marshal.ReadInt32(s, 4 + Name + 20 + 4100) != 0 ? 1 : 0; }
+            IntPtr s = Dword(id, 0); uint extra = 0;
+            try { int st = F<GetSetting>(0xEA99498D, 0x73BF8338)(session, profile, id, s, ref extra); if (st == -160) return -1; Check(st, "reading the setting");
+                return Marshal.ReadInt32(s, 4 + Name + 20 + 4100); }
             finally { Marshal.FreeHGlobal(s); } }
         finally { Close(session); }
     }
@@ -66,7 +68,9 @@ public static class NvSmooth {
             }
             SetSetting write = F<SetSetting>(0x8A2CF5F5, 0x577DD202);
             IntPtr s = Dword(Enable, on ? 1u : 0u); try { Check(write(session, profile, s, 0, 0), "writing the setting"); } finally { Marshal.FreeHGlobal(s); }
-            if (on) { s = Dword(Apis, 1); try { Check(write(session, profile, s, 0, 0), "writing the setting's APIs"); } finally { Marshal.FreeHGlobal(s); } }
+            // The APIs: the driver refuses this one without administrator rights (-137, driver 621.40);
+            // the profile then goes by the driver's own value for it (read back: not set), so that refusal is passed over.
+            if (on) { s = Dword(Apis, 1); try { int st = write(session, profile, s, 0, 0); if (st != -137) Check(st, "writing the setting's APIs"); } finally { Marshal.FreeHGlobal(s); } }
             Check(F<On1>(0xFCBC7E14, 0)(session), "saving the driver's settings");
             return made + "Smooth Motion " + (on ? "on" : "off");
         } finally { Close(session); }
@@ -82,7 +86,7 @@ $exe = Join-Path $root "target\release\vilocity.exe"
 # What the window remembers, with what it starts from. (The game folder: the user's
 # variable as it is now, not as this window's parent had it.)
 $known = [Environment]::GetEnvironmentVariable('VILOCITY_GTA6_DIR', 'User'); if (-not $known) { $known = $env:VILOCITY_GTA6_DIR }
-$set = @{ game = $known; mode = 0; cap = 0; sharp = 0.0; fsr = $true; hud = $true; sandbox = $true; lights = $false; night = $true; leave = $false; extra = "" }
+$set = @{ game = $known; mode = 0; cap = 0; sharp = 0.0; fsr = $true; hud = $true; sandbox = $true; lights = $false; night = $true; full = $true; leave = $false; extra = "" }
 if (Test-Path $file) {
     try { $old = Get-Content $file -Raw | ConvertFrom-Json; foreach ($k in @($set.Keys)) { if ($null -ne $old.$k) { $set[$k] = $old.$k } } } catch {}
 }
@@ -153,6 +157,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
           <Slider x:Name="Sharp" Minimum="0" Maximum="1" TickFrequency="0.1" IsSnapToTickEnabled="True" Margin="0,6,0,14"/>
           <CheckBox x:Name="Fsr"><TextBlock TextWrapping="Wrap" Text="AMD's PC upscaler, if its DLL is installed (a little faster)"/></CheckBox>
           <CheckBox x:Name="Hud"><TextBlock TextWrapping="Wrap" Text="Frame rate panel in the game (F8 hides it)"/></CheckBox>
+          <CheckBox x:Name="Full" ToolTip="VILOCITY_FULLSCREEN=1. In a window the picture is shrunk to fit the desktop, which softens it"><TextBlock TextWrapping="Wrap" Text="Full screen: the sharpest picture (F11 switches to a window and back while playing)"/></CheckBox>
           <CheckBox x:Name="Sandbox"><TextBlock TextWrapping="Wrap" Text="Sandbox: no network, none of your files (recommended)"/></CheckBox>
           <CheckBox x:Name="Lights" ToolTip="Runs five of the game's programs that are left out on 32-lane cards (NVIDIA): light tiles, visibility and light through fog"><TextBlock TextWrapping="Wrap" Text="Five lighting shaders left out on NVIDIA cards (on trial: no change seen yet)"/></CheckBox>
           <CheckBox x:Name="Night" ToolTip="VILOCITY_AMBIENT_FLOOR=0.05: the least light the stand-in for the traced light gives a surface"><TextBlock TextWrapping="Wrap" Text="Brighter nights: a little light where no lamp reaches (without it, unlit ground is black at night)"/></CheckBox>
@@ -167,7 +172,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
       <StackPanel VerticalAlignment="Center">
         <TextBlock x:Name="Status" FontSize="14" TextWrapping="Wrap"/>
         <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-          <Button x:Name="Keys" Content="Keys" Margin="0,0,8,0"/><Button x:Name="Saves" Content="Saves" Margin="0,0,8,0"/><Button x:Name="Logs" Content="Logs" Margin="0,0,8,0"/><Button x:Name="Build" Content="Build the engine" ToolTip="cargo build --release -p vilocity, in a window of its own"/></StackPanel>
+          <Button x:Name="Keys" Content="Keys" Margin="0,0,8,0"/><Button x:Name="Saves" Content="Saves" Margin="0,0,8,0"/><Button x:Name="Logs" Content="Logs" Margin="0,0,8,0"/><Button x:Name="Build" Content="Build the engine" Margin="0,0,8,0" ToolTip="cargo build --release -p vilocity, in a window of its own"/><Button x:Name="Warm" Content="Build all pipelines ahead" ToolTip="Optional. Compiles every shader pipeline the game has ever made, so that none is compiled while you play in a new place. The ones you have played with are made ahead at every start anyway."/></StackPanel>
       </StackPanel>
       <Button x:Name="Play" Grid.Column="1" Content="PLAY" FontSize="18" FontWeight="Bold" Padding="46,14" Background="#7C5CFF" VerticalAlignment="Center" IsDefault="True"/>
     </Grid>
@@ -175,7 +180,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
 </Window>
 '@
 $w = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
-$ui = @{}; foreach ($n in 'Logo', 'CoverBox', 'Cover', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Sandbox', 'Lights', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Play') { $ui[$n] = $w.FindName($n) }
+$ui = @{}; foreach ($n in 'Logo', 'CoverBox', 'Cover', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'Sandbox', 'Lights', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play') { $ui[$n] = $w.FindName($n) }
 # The logo, in the window, its title bar and its taskbar button.
 $logo = Join-Path $root "assets\logo-256.png"
 if (Test-Path $logo) { $picture = New-Object Windows.Media.Imaging.BitmapImage ([Uri]$logo); $ui.Logo.Source = $picture; $w.Icon = $picture }
@@ -183,7 +188,7 @@ if (Test-Path $logo) { $picture = New-Object Windows.Media.Imaging.BitmapImage (
 $ui.Game.Text = [string]$set.game
 $ui["Mode$([math]::Min([int]$set.mode, 1))"].IsChecked = $true; $ui["Cap$([math]::Min([int]$set.cap, 2))"].IsChecked = $true
 $ui.Sharp.Value = [double]$set.sharp; $ui.Fsr.IsChecked = [bool]$set.fsr; $ui.Hud.IsChecked = [bool]$set.hud
-$ui.Sandbox.IsChecked = [bool]$set.sandbox; $ui.Lights.IsChecked = [bool]$set.lights; $ui.Night.IsChecked = [bool]$set.night; $ui.Leave.IsChecked = [bool]$set.leave; $ui.Extra.Text = [string]$set.extra
+$ui.Full.IsChecked = [bool]$set.full; $ui.Sandbox.IsChecked = [bool]$set.sandbox; $ui.Lights.IsChecked = [bool]$set.lights; $ui.Night.IsChecked = [bool]$set.night; $ui.Leave.IsChecked = [bool]$set.leave; $ui.Extra.Text = [string]$set.extra
 # Smooth Motion as the driver holds it now for vilocity.exe; no NVIDIA driver: no such option.
 $smooth = @{ driver = $null }
 try { $smooth.driver = [NvSmooth]::Get('vilocity.exe') -eq 1; $ui.Smooth.IsChecked = $smooth.driver } catch { $ui.Smooth.Visibility = 'Collapsed' }
@@ -198,17 +203,23 @@ function Save-Choices {
     New-Item -ItemType Directory -Force $home_ | Out-Null
     @{ game = $ui.Game.Text.Trim(); mode = (Mode); cap = (Cap); sharp = [math]::Round($ui.Sharp.Value, 1)
        fsr = [bool]$ui.Fsr.IsChecked; hud = [bool]$ui.Hud.IsChecked; sandbox = [bool]$ui.Sandbox.IsChecked; lights = [bool]$ui.Lights.IsChecked; night = [bool]$ui.Night.IsChecked
-       leave = [bool]$ui.Leave.IsChecked; extra = $ui.Extra.Text.Trim() } | ConvertTo-Json | Set-Content $file
+       full = [bool]$ui.Full.IsChecked; leave = [bool]$ui.Leave.IsChecked; extra = $ui.Extra.Text.Trim() } | ConvertTo-Json | Set-Content $file
 }
 
 # One line of the check list: a dot (green: fine, yellow: it works but, red: it will not start) and what was found.
-function Add-Check([string]$level, [string]$text) {
+# $do and $action: a small button on the right of the line, and what it does.
+function Add-Check([string]$level, [string]$text, [string]$do = "", [scriptblock]$action = $null) {
     $colour = @{ ok = "#3DDC84"; warn = "#FACC15"; bad = "#F87171" }[$level]
     $row = New-Object Windows.Controls.DockPanel; $row.Margin = "0,0,0,9"
     $dot = New-Object Windows.Shapes.Ellipse; $dot.Width = 9; $dot.Height = 9; $dot.Margin = "0,5,10,0"; $dot.VerticalAlignment = "Top"
     $dot.Fill = (New-Object Windows.Media.BrushConverter).ConvertFromString($colour)
     $t = New-Object Windows.Controls.TextBlock; $t.Text = $text; $t.TextWrapping = "Wrap"
-    [void]$row.Children.Add($dot); [void]$row.Children.Add($t); [void]$ui.Checks.Children.Add($row)
+    [void]$row.Children.Add($dot)
+    if ($action) {
+        $b = New-Object Windows.Controls.Button; $b.Content = $do; $b.Margin = "10,0,0,0"; $b.Padding = "10,2"; $b.VerticalAlignment = "Top"
+        [Windows.Controls.DockPanel]::SetDock($b, 'Right'); $b.Add_Click($action); [void]$row.Children.Add($b)
+    }
+    [void]$row.Children.Add($t); [void]$ui.Checks.Children.Add($row)
 }
 
 # Looks at the PC and the folders; whether the game can start.
@@ -239,7 +250,15 @@ function Test-Machine {
         $mem = Get-CimInstance Win32_PerfRawData_GPUPerformanceCounters_GPUProcessMemory -ErrorAction SilentlyContinue | Where-Object { $_.DedicatedUsage -gt 1GB }
         foreach ($m in $mem) {
             $id = [int]($m.Name -replace '^pid_(\d+)_.*', '$1'); $p = Get-Process -Id $id -ErrorAction SilentlyContinue
-            if ($p -and $p.ProcessName -notin 'vilocity', 'dwm') { Add-Check warn ("{0} is holding {1:N1} GB of video memory. Closing it gives the game sharper textures and steadier frames." -f $p.ProcessName, ($m.DedicatedUsage / 1GB)) }
+            if ($p -and $p.ProcessName -notin 'vilocity', 'dwm') {
+                # Closed only by this button, after a question: what is not saved in that program is lost.
+                $name = $p.ProcessName; $its = $p.Id; $again = $refresh
+                $close = {
+                    $sure = [Windows.MessageBox]::Show("Close $name now?`n`nAnything not saved in it is lost.", "Vilocity", 'YesNo', 'Warning')
+                    if ($sure -eq 'Yes') { Stop-Process -Id $its -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 900; & $again }
+                }.GetNewClosure()
+                Add-Check warn ("{0} is holding {1:N1} GB of video memory. Closing it gives the game sharper textures and steadier frames." -f $name, ($m.DedicatedUsage / 1GB)) "Close it" $close
+            }
         }
     } catch {
         $card = Get-CimInstance Win32_VideoController | Sort-Object AdapterRAM -Descending | Select-Object -First 1
@@ -279,6 +298,17 @@ $ui.Saves.Add_Click({ $d = Join-Path $home_ "data"; New-Item -ItemType Directory
 $ui.Logs.Add_Click({ $d = Join-Path $home_ "logs"; New-Item -ItemType Directory -Force $d | Out-Null; Start-Process explorer $d })
 $ui.Build.Add_Click({ Start-Process cmd -ArgumentList '/k', "cd /d `"$root`" && cargo build --release -p vilocity && echo. && echo Built. Close this window and press Check again." })
 
+# Every pipeline the game has made in earlier runs (the engine keeps the list), compiled in a
+# window of its own: in the game's sandbox or outside it, as the game will run.
+$ui.Warm.Add_Click({
+    $book = Join-Path $home_ "cache\pipelines\known-pipelines.bin"
+    if (-not (Test-Path $book)) { $ui.Status.Text = "Nothing to build yet: play once first, the game's pipelines are noted while it runs."; return }
+    $sure = [Windows.MessageBox]::Show("Build every shader pipeline ahead?`n`nAbout an hour and a half with the processor busy, and about 10 GB on drive C: for the graphics driver's cache. The window can be closed at any time: the next time goes on where it stopped.`n`nNot needed for places you have already played in: those are made ahead at every start.", "Vilocity", 'YesNo', 'Question')
+    if ($sure -ne 'Yes') { return }
+    $how = if ($ui.Sandbox.IsChecked) { "warm" } else { "native warm" }
+    Start-Process cmd -ArgumentList '/k', "`"$exe`" $how && echo. && echo Done. Close this window."
+})
+
 $ui.Play.Add_Click({
     if ($state.started) { Get-Process vilocity -ErrorAction SilentlyContinue | Stop-Process -Force; return }
     Save-Choices
@@ -296,6 +326,7 @@ $ui.Play.Add_Click({
     }
     if (-not $ui.Fsr.IsChecked) { $vars.VILOCITY_FSR_DLL = "off" }
     if ($ui.Night.IsChecked) { $vars.VILOCITY_AMBIENT_FLOOR = "0.05" }
+    if ($ui.Full.IsChecked) { $vars.VILOCITY_FULLSCREEN = "1" }
     if ($ui.Lights.IsChecked) {
         # The light tiles, visibility and light through fog (wave64 programs in the wide form).
         $vars.VILOCITY_WAVE_WIDE = "1"

@@ -502,6 +502,7 @@ fn workers() -> bool {
             let spawned = std::thread::Builder::new()
                 .name(format!("vilocity-pipelines-{i}"))
                 .spawn(move || {
+                    crate::cores::keep_beside("vilocity-pipelines");
                     // Below the title's own threads (loading, recording),
                     // and the streaming one, which is below normal itself
                     // (`VILOCITY_PIPELINE_LOWEST=0`: level with it, as before).

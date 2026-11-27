@@ -242,6 +242,7 @@ impl Pool {
                     crate::cores::keep_helper_on_fast_cores(name);
                 } else {
                     crate::cores::keep_many_on_fast_cores(name);
+                    crate::cores::keep_beside(name);
                 }
                 pool.help()
             });

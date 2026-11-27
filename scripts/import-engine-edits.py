@@ -51,6 +51,13 @@ edit(os.path.join(app, 'src', 'warm.rs'), [
     ('    Command::new(&exe)\n        .args(["warm", "--these", &list.join(",")])',
      '    Command::new(&exe)\n        ' + prefix + '        .args(std::env::args_os().skip(1).take_while(|a| a != "warm"))\n        .args(["warm", "--these", &list.join(",")])'),
 ])
+# 2b. Sandboxed and not, the driver keeps the pipelines apart: a list of what is made for each.
+edit(os.path.join(app, 'src', 'warm.rs'), [(
+    '    let done_file = dir.join("warm-done.txt");\n',
+    "    // (Vilocity) The driver keeps a sandboxed process's pipelines apart from the\n"
+    "    // others': a list of what is made for each.\n"
+    '    let sandboxed = std::env::var_os("VILOCITY_SANDBOXED").is_some();\n'
+    '    let done_file = dir.join(if sandboxed { "warm-done-sandbox.txt" } else { "warm-done.txt" });\n')])
 # 3. The lock file and toolchain are two folders up here.
 edit(j('native', 'crates', 'vilocity-gpu', 'build.rs'), [('let root = crates.join("..");', 'let root = crates.join("../..");')])
 # 4. The device id: the name is eight bytes now.

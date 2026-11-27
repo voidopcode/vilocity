@@ -59,7 +59,7 @@ const PARTS: [(&str, Part); 24] = [
 ];
 
 /// The names of keys that are not a letter or a digit.
-const KEYS: [(&str, u8); 67] = [
+const KEYS: [(&str, u8); 66] = [
     ("LeftClick", 0x01),
     ("RightClick", 0x02),
     ("MiddleClick", 0x04),
@@ -108,7 +108,6 @@ const KEYS: [(&str, u8); 67] = [
     ("F8", 0x77),
     ("F9", 0x78),
     ("F10", 0x79),
-    ("F11", 0x7A),
     ("F12", 0x7B),
     ("ScrollLock", 0x91),
     ("Shift", 0xA0),
@@ -133,7 +132,7 @@ const KEYS: [(&str, u8); 67] = [
 pub(super) const DEFAULT: &str = "\
 # Vilocity keys. Change the keys on the right of '='; save; the running title
 # takes them within a second. Several keys: separate them with commas.
-# Keys: letters, digits, F1 to F12, Shift, RightShift, Ctrl, RightCtrl,
+# Keys: letters, digits, F1 to F10, F12, Shift, RightShift, Ctrl, RightCtrl,
 # RightAlt, Space, Enter, Esc, Tab, CapsLock, Backspace, Insert, Delete, Home,
 # End, PageUp, PageDown, Pause, ScrollLock, Apps, ArrowUp, ArrowDown, ArrowLeft,
 # ArrowRight, Comma, Period, Slash, Semicolon, Quote, Minus, Equals, Backquote,
@@ -141,8 +140,9 @@ pub(super) const DEFAULT: &str = "\
 # NumMultiply, NumDivide, NumDecimal, LeftClick, RightClick, MiddleClick,
 # Mouse4, Mouse5. The mouse's motion is always the right stick.
 # Every key does something. Left out on purpose: Left Alt and Esc give the
-# mouse back (Esc is the menu too), F8 hides the frame rate panel, and the
-# keys Windows keeps for itself (Windows, PrintScreen, NumLock).
+# mouse back (Esc is the menu too), F8 hides the frame rate panel, F11 is
+# the whole screen and back, and the keys Windows keeps for itself (Windows,
+# PrintScreen, NumLock).
 # Delete this file to get the one Vilocity comes with again.
 
 [general]
@@ -162,7 +162,7 @@ X = X, CapsLock, Slash, 7, F9
 Y = F, E, Y, Insert, Backslash, 8, F10
 LB = Tab, Mouse4, Semicolon, 5, Num7, F6
 RB = Q, Mouse5, Quote, 6, Num9, F7
-L3 = Shift, RightShift, Z, F11
+L3 = Shift, RightShift, Z
 R3 = C, MiddleClick, H, Num5, F12
 UP = ArrowUp, 1, T, PageUp, NumAdd, F2
 DOWN = ArrowDown, 2, N, PageDown, NumSubtract, F3
@@ -189,7 +189,7 @@ A = Shift, Enter, RightShift, Num0, 9
 B = R, Backspace, Ctrl, B, RightCtrl, Delete, NumDecimal, 0
 X = X, CapsLock, Slash, 7, F9
 Y = F, E, Y, Insert, Backslash, 8, F10
-L3 = H, Z, F11
+L3 = H, Z
 R3 = C, MiddleClick, Num5, F12
 UP = 1, T, PageUp, NumAdd, F2
 DOWN = 2, N, PageDown, NumSubtract, F3

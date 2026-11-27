@@ -43,6 +43,7 @@ if (-not $Defaults) {
         VILOCITY_INDIRECT_WINDOW = "1"; VILOCITY_INDIRECT_BATCH = "2"
         VILOCITY_MAP_THREADS = "1"; VILOCITY_THIN = "1"; VILOCITY_UPLOAD_AHEAD = "1"
         VILOCITY_SHOW_AFTER = "1"
+        VILOCITY_PIPELINE_BOOK = "1"   # the pipelines the game makes are kept, to be made ahead (below)
         # No wait between frames: menus, intro and cutscenes are not held to the
         # title's 30 frames a second (16.667: at most 60; 33.333: the title's own).
         VILOCITY_FRAME_INTERVAL_MS = "0"
@@ -85,6 +86,15 @@ if ((Test-Path $rpf) -and ((Get-Content $mark -ErrorAction SilentlyContinue) -ne
     & $exe native shaders $rpf
     if ($LASTEXITCODE -eq 0) { New-Item -ItemType Directory -Force $cache | Out-Null; Set-Content $mark $build }
     else { Write-Host "Translating ahead failed: the shaders are translated while playing instead." }
+}
+
+# The pipelines earlier runs drew with, made ahead where the game looks for them (the
+# driver keeps a sandbox's pipelines apart). Seconds when they are there; minutes after
+# an update of Vilocity or of the driver, in place of objects missing while they are
+# compiled in play. (VILOCITY_WARM=0: not made ahead.)
+if ($env:VILOCITY_WARM -ne "0" -and (Test-Path (Join-Path $cache "pipelines\known-pipelines.bin"))) {
+    Write-Host "Checking the shader pipelines made ahead (minutes after an update, seconds otherwise)..."
+    if ($NoSandbox) { & $exe native warm --used } else { & $exe warm --used }
 }
 
 $watch = if (-not $NoMonitor) { Start-Process powershell -PassThru -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$monitor`" -Log `"$log`"" }

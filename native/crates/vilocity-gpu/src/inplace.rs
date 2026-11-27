@@ -273,11 +273,13 @@ struct Views {
     pages: BTreeMap<(usize, u64), Vec<usize>>,
     /// Of those, how many are shown more than once.
     pages_twice: usize,
-    /// Sections by handle: bytes, and whether made committed.
-    sections: Vec<(usize, u64, bool)>,
+    /// Sections by handle: bytes, and whether made committed. (Vilocity: a
+    /// map, as [`Views::whole`]: a request is thousands of sections now,
+    /// `xmem`'s `section_pages`.)
+    sections: BTreeMap<usize, (u64, bool)>,
     /// Our own view of a whole section, by its handle (0: the host gave
     /// none), made when first asked for ([`beside`]) and kept.
-    whole: Vec<(usize, usize)>,
+    whole: BTreeMap<usize, usize>,
 }
 
 /// Read by many threads at once (write faults, landings), changed when the
@@ -286,8 +288,8 @@ static VIEWS: std::sync::RwLock<Views> = std::sync::RwLock::new(Views {
     views: BTreeMap::new(),
     pages: BTreeMap::new(),
     pages_twice: 0,
-    sections: Vec::new(),
-    whole: Vec::new(),
+    sections: BTreeMap::new(),
+    whole: BTreeMap::new(),
 });
 
 fn views() -> std::sync::RwLockReadGuard<'static, Views> {
@@ -302,11 +304,10 @@ fn views_mut() -> std::sync::RwLockWriteGuard<'static, Views> {
 /// if with `SEC_COMMIT` (only such a section can be opened as a heap).
 pub fn title_memory_section(section: usize, bytes: u64, committed: bool) {
     let mut v = views_mut();
-    v.sections.retain(|s| s.0 != section);
     // A handle's number given out again: the view was of the section that
     // had it before (it stays mapped: someone may be writing through it).
-    v.whole.retain(|w| w.0 != section);
-    v.sections.push((section, bytes, committed));
+    v.whole.remove(&section);
+    v.sections.insert(section, (bytes, committed));
 }
 
 /// The runtime lets go of a section, and of its handle: no view the title
@@ -314,8 +315,7 @@ pub fn title_memory_section(section: usize, bytes: u64, committed: bool) {
 pub fn title_memory_section_gone(section: usize) {
     let whole = {
         let mut v = views_mut();
-        let at = v.whole.iter().position(|w| w.0 == section);
-        at.map(|i| v.whole.swap_remove(i).1)
+        v.whole.remove(&section)
     };
     if let Some(base) = whole.filter(|&base| base != 0) {
         // SAFETY: a view of ours. Who writes through it found the section
@@ -539,7 +539,7 @@ pub(crate) fn beside(at: usize, len: usize) -> Option<usize> {
         let Cover::Run(section, offset) = cover_in(&v.views, at, len) else {
             return None;
         };
-        v.whole.iter().find(|w| w.0 == section).map(|w| (w.1, offset))
+        v.whole.get(&section).map(|&base| (base, offset))
     };
     if let Some((base, offset)) = known {
         return (base != 0).then(|| base + offset as usize);
@@ -548,17 +548,17 @@ pub(crate) fn beside(at: usize, len: usize) -> Option<usize> {
     let Cover::Run(section, offset) = cover_in(&v.views, at, len) else {
         return None;
     };
-    let base = match v.whole.iter().find(|w| w.0 == section) {
-        Some(w) => w.1,
+    let base = match v.whole.get(&section) {
+        Some(&base) => base,
         None => {
-            let &(_, bytes, _) = v.sections.iter().find(|s| s.0 == section)?;
+            let &(bytes, _) = v.sections.get(&section)?;
             // SAFETY: the whole of a section the runtime made; a view the
             // title sees is of it, so its handle is open.
             let base = unsafe { mem::MapViewOfFile(section as _, mem::FILE_MAP_WRITE, 0, 0, bytes as usize) }.Value as usize;
             if base == 0 {
                 tracing::warn!(error = %std::io::Error::last_os_error(), "no view of the title's pages beside its own");
             }
-            v.whole.push((section, base));
+            v.whole.insert(section, base);
             base
         }
     };
@@ -579,11 +579,11 @@ pub(crate) fn beside_page(page: usize) -> Option<(usize, [usize; 8])> {
                 return None;
             }
             let offset = offset + within as u64;
-            if let Some(whole) = v.whole.iter().find(|w| w.0 == section) {
+            if let Some(&whole) = v.whole.get(&section) {
                 let mut shown = [0; 8];
                 let all = v.pages.get(&(section, offset))?;
                 shown.get_mut(..all.len())?.copy_from_slice(all);
-                return (whole.1 != 0).then(|| (whole.1 + offset as usize, shown));
+                return (whole != 0).then(|| (whole + offset as usize, shown));
             }
         }
         if asked || beside(page, K64).is_none() {
@@ -1145,9 +1145,13 @@ fn census_of(spans: &[(u64, u64, bool)]) -> Vec<String> {
         bytes >> 20,
         big >> 20
     ));
-    for &(_, bytes, committed) in &v.sections {
+    let mut alike: BTreeMap<(u64, bool), usize> = BTreeMap::new();
+    for &section in v.sections.values() {
+        *alike.entry(section).or_default() += 1;
+    }
+    for ((bytes, committed), count) in alike {
         lines.push(format!(
-            "census, a section of {} MB, {}",
+            "census, {count} sections of {} MB, {}",
             bytes >> 20,
             if committed { "committed: it can be opened as one heap" } else { "reserved: refused as a heap until it is made with SEC_COMMIT" }
         ));
