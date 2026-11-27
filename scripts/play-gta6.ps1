@@ -314,6 +314,13 @@ try {
     if (-not $NoSandbox -and $code -ne 0 -and (Select-String -Path $log -Pattern '(os error 5)' -SimpleMatch -Quiet)) {
         Write-Host "Windows refused the sandbox a folder (access denied). To play without the sandbox: launcher, Options, untick Sandbox. Please attach this log to an issue."
     }
+    # (Issue 3: AMD's compiler crashed reading the pipeline library an earlier run saved, two seconds in;
+    # deleting the cache cured it. Only the library goes: the next start makes it again.)
+    # (The log's lines may be wrapped at the console's width: looked for in it joined.)
+    if ($code -ne 0 -and ((Get-Content $log -Raw -ErrorAction SilentlyContinue) -replace "`r?`n", '') -match 'exception 0x[0-9a-f]+ at (amdxc64|nvwgf2umx|igd12umd64)\.dll') {
+        Remove-Item (Join-Path $cache "pipelines\host-pipelines.bin"), (Join-Path $cache "pipelines\host-pipelines.for") -ErrorAction SilentlyContinue
+        Write-Host "The graphics driver crashed reading the pipelines saved by an earlier run: they are removed, and the next start makes them again (slower, once)."
+    }
 } finally {
     # The monitor goes with the game (also when this window is closed with Ctrl+C).
     if ($watch -and -not $watch.HasExited) { Stop-Process -Id $watch.Id -Force -ErrorAction SilentlyContinue }

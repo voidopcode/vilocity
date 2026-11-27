@@ -765,7 +765,7 @@ $ui.Play.Add_Click({
     $play = Join-Path $PSScriptRoot "play-gta6.ps1"
     $cmd = "$sets & '$($play -replace "'", "''")' -Game '$($ui.Game.Text.Trim().Trim('"') -replace "'", "''")' $switches"
     $state.proc = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "`"$($cmd -replace '"', '\"')`""
-    $state.started = Get-Date; $state.seen = $false; $ui.Play.Content = "STOP"; $ui.Status.Text = "Starting...$note"
+    $state.started = Get-Date; $state.seen = $false; $state.seenAt = $null; $ui.Play.Content = "STOP"; $ui.Status.Text = "Starting...$note"
 })
 
 # The game's state, once a second: translating shaders, running (with the frame rate of its window's title), closed.
@@ -778,6 +778,7 @@ $timer.Add_Tick({
         if ($ui.Leave.IsChecked -and -not $state.seen -and $null -eq $state.bench) { $w.Close(); return }
         # The launcher costs the game nothing while it runs: minimized (WPF draws nothing then) and at low priority.
         if (-not $state.seen) {
+            $state.seenAt = Get-Date
             $w.WindowState = 'Minimized'
             try { [Diagnostics.Process]::GetCurrentProcess().PriorityClass = 'BelowNormal' } catch {}
         }
@@ -814,7 +815,11 @@ $timer.Add_Tick({
             else { "Starting..." }
     } elseif ($state.seen -or ((Get-Date) - $state.started).TotalSeconds -gt 45) {
         $newest = Get-ChildItem (Join-Path $home_ "logs\gta6-*.log") -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
-        $ui.Status.Text = if ($state.seen) { "The game closed." }
+        # A game that ended within a minute of its window, with the driver's exception in its log (the play script removed the saved pipelines).
+        $quick = -not $state.seen -or ($state.seenAt -and ((Get-Date) - $state.seenAt).TotalSeconds -lt 60)
+        $driver = $quick -and $newest -and (((Get-Content $newest.FullName -Raw -ErrorAction SilentlyContinue) -replace "`r?`n", '') -match 'exception 0x[0-9a-f]+ at (amdxc64|nvwgf2umx|igd12umd64)\.dll')
+        $ui.Status.Text = if ($driver) { "The graphics driver crashed reading the pipelines saved by an earlier run. They are removed now: press PLAY again (it starts slower once)." }
+            elseif ($state.seen) { "The game closed." }
             elseif ($ui.Sandbox.IsChecked -and $newest -and (Select-String -Path $newest.FullName -Pattern '(os error 5)' -SimpleMatch -Quiet)) { "Windows refused the sandbox a folder (access denied): untick Sandbox in Options to play, and please report it with the log." }
             else { "The game did not start: see Logs." }
         if ($null -ne $state.bench) { $state.bench = $null; $ui.Status.Text += " (The benchmark ended with the game, before 60 seconds of the world.)" }
