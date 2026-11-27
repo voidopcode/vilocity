@@ -1,11 +1,13 @@
 # Rewrites the "Latest test run" block of README.md from the newest GTA VI log
 # in %LOCALAPPDATA%\vilocity\logs. Run by .githooks/pre-commit; safe to run by hand.
 # Only numbers go into the README, never paths or log lines.
-param([string]$Readme = (Join-Path $PSScriptRoot "..\README.md"))
+# -From <file>: that log, not the newest (after a run of another build).
+param([string]$Readme = (Join-Path $PSScriptRoot "..\README.md"), [string]$From)
 $ErrorActionPreference = "Stop"
 
-$log = Get-ChildItem (Join-Path $env:LOCALAPPDATA "vilocity\logs") -Filter "gta6-*.log" -ErrorAction SilentlyContinue |
-    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$log = if ($From) { Get-Item $From } else {
+    Get-ChildItem (Join-Path $env:LOCALAPPDATA "vilocity\logs") -Filter "gta6-*.log" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1 }
 if (-not $log) { Write-Host "update-status: no GTA VI log, README left as is"; exit 0 }
 
 $fps = @(); $ms = @(); $draws = @(); $dropped = @()
