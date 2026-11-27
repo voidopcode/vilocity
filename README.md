@@ -32,6 +32,60 @@ Direct3D 12 shaders. Two engines, one executable:
 No game files are in this repository. Everything is built from files you
 supply at runtime.
 
+## Quick start: from nothing to GTA VI
+
+**1. Check your PC**
+- Windows 10 or 11 (64-bit), a CPU with AVX2.
+- A graphics card with Direct3D 12, shader model 6.6 and mesh shaders: NVIDIA
+  RTX 20 series or newer, AMD RX 6000 series or newer. Ours is an RTX 5080.
+- 32 GB of RAM or more (the game uses about 25 GB).
+- Your own copy of GTA VI for Xbox Series X|S: the folder with
+  `game_scarlett_master.exe` in it.
+
+**2. Install the tools** (once)
+- [Git](https://git-scm.com/download/win).
+- [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+  with the **Desktop development with C++** workload (it brings the Windows SDK too).
+- [Rust](https://rustup.rs): run `rustup-init.exe` and keep the defaults.
+  The right Rust version is picked by the repository itself.
+
+**3. Get Vilocity and build it**
+```powershell
+git clone https://github.com/voidopcode/vilocity
+cd vilocity
+cargo build --release -p vilocity
+```
+The first build takes a few minutes. Yellow `warning:` lines are normal (in
+PowerShell they can show in red as `NativeCommandError`): it worked when the
+last line says `Finished`.
+
+**4. Play**
+1. Double-click **`Vilocity Launcher.cmd`** in the `vilocity` folder.
+2. Pick your game folder. **This PC** shows what the launcher found (card,
+   video memory, RAM); fix anything it marks in red. If another program holds
+   video memory, **Close it** frees it.
+3. Choose **1080p**, **1440p** or **4K** (1080p is the fastest) and press **PLAY**.
+
+The launcher picks the engine's settings for your PC. The first start
+translates the game's shaders ahead (about a minute on 16 cores), and the first
+session stutters while the graphics driver builds its pipelines;
+**Tools → Build all pipelines ahead** does that before you play instead.
+
+**5. In the game**
+- An Xbox controller works. With keyboard and mouse, click in the window to
+  take the mouse; **Esc** or **Left Alt** gives it back. All keys are in
+  [Controls](#controls).
+- **F11**: full screen or window. **F8**: hides or shows the frame rate panel.
+
+**Updating**: in the `vilocity` folder run `git pull`, then
+`cargo build --release -p vilocity` again.
+
+**Something wrong?**
+- "Engine: not built yet": run the build in step 3, then press **Check again** in the launcher.
+- Logs are in `%LOCALAPPDATA%\vilocity\logs`. Bring the newest one, with your
+  card, driver and Windows version, to the
+  [Discord server](https://discord.gg/mWzP7ejTek).
+
 ## GTA VI progress
 
 **Not playable yet.** The game boots, runs its menus at a steady 30 fps,
@@ -50,13 +104,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 05:04
+**Latest test run:** 2026-11-27 07:39
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 25.1 fps, 40 ms a frame |
-| Best while playing | 29.0 fps |
-| Last frame | 29.0 fps, 35 ms, 4504 draws, 173 dropped without a pipeline |
+| Frame rate while playing (typical) | 27.7 fps, 36 ms a frame |
+| Best while playing | 33.9 fps |
+| Last frame | 31.9 fps, 31 ms, 2567 draws, 261 dropped without a pipeline |
 | Shaders that failed to translate | compute 5 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
