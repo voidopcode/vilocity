@@ -57,6 +57,8 @@ $cardAll = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36
     ForEach-Object { [double]$_.'HardwareInformation.qwMemorySize' } | Measure-Object -Maximum).Maximum / 1GB
 
 $PW = 250; $PH = 152
+# The panel never takes the processor from the game.
+try { [Diagnostics.Process]::GetCurrentProcess().PriorityClass = 'BelowNormal' } catch {}
 $form = New-Object HudForm
 $form.FormBorderStyle = 'None'; $form.TopMost = $true; $form.ShowInTaskbar = $false
 $form.BackColor = [Drawing.Color]::FromArgb(14, 16, 22); $form.Opacity = 0.86

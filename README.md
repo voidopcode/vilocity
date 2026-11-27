@@ -104,13 +104,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 23:03
+**Latest test run:** 2026-11-27 23:36
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 27.5 fps, 36 ms a frame |
-| Best while playing | 30.1 fps |
-| Last frame | 28.7 fps, 35 ms, 3771 draws, 209 dropped without a pipeline |
+| Frame rate while playing (typical) | 28.6 fps, 35 ms a frame |
+| Best while playing | 43.7 fps |
+| Last frame | 28.5 fps, 35 ms, 4363 draws, 179 dropped without a pipeline |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -118,6 +118,19 @@ loads saves and gets into the world. The world is where the work is now.
 Latest: "will it work on this PC" in the launcher, clothes and faces drawn with another
 texture's colours, the 4-7 fps drops explained and shown on the overlay, and what the
 picture tests of 2026-11-27 evening ruled out.
+- **PCs with 16 GB of RAM, and a launcher that blocks nobody.** PLAY is never turned off by
+  the "will it work" verdict any more (it only warns); only a missing game folder or engine
+  turns it off. Under 24 GB of RAM the play script uses the 1080p picture (1440p and 4K take
+  about 27 GB, 1080p about 22). The game ending "out of memory" on such PCs is RAM plus page
+  file running out: the memory check now has a Page file button that opens Windows' settings
+  for it, to let Windows manage its size. Tried for less memory and not kept: the texture pool
+  off (24.3 GB committed instead of 21.4, 23 fps instead of 29) and a 256 KiB window grid (21.7
+  GB, no saving).
+- **The launcher, redone where it showed Windows' white controls, and free while you play.**
+  Dark switches, lists, slider, scroll bars and tooltips; the Play page says in one line
+  whether this PC can run the game. While the game runs the launcher sits minimized (WPF draws
+  nothing then) at low priority, and finds the game with Get-Process (16 ms) instead of a WMI
+  query (119 ms) once a second; the frame rate panel runs at low priority too.
 - **Under water is no longer black.** The underwater fog's light (`CS_TransmissionVolumetricsSubmerged`)
   is one of the wave64 programs no 32-lane card runs, so the four images it writes (a light
   volume of 80x46x68 and a 640x360 picture, each in R11G11B10 and R10G10B10A2) stayed zero, and

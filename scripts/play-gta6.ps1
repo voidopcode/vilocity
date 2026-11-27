@@ -172,6 +172,8 @@ if (-not $Defaults) {
     # The Series X pictures (1440p, 4K) take about 13 GB of the card (an RTX 5080, 2026-11-27):
     # on a 12 GB card they would not fit, and a full card gave 4-7 fps.
     if ($pc.vram -gt 0 -and $pc.vram -lt 14 -and $Picture -ne '1080p') { $Picture = '1080p'; $why += "the 1080p picture (1440p and 4K take about 13 GB of the card)" }
+    # And under 24 GB of RAM: the Series X pictures take about 27 GB, the 1080p one about 22 (2026-11-27).
+    if ($pc.ram -gt 0 -and $pc.ram -lt 24 -and $Picture -ne '1080p') { $Picture = '1080p'; $why += "the 1080p picture (1440p and 4K take about 27 GB of memory)" }
     if ($RayTracing) {
         $settings.VILOCITY_BVH_BUILDER = "1"
         $why += $(if ($pc.maker -eq 'amd') { "the game's ray tracing" } else { "the game's ray tracing (made for AMD cards: 3-5 fps on an NVIDIA one)" })

@@ -153,7 +153,75 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
     </Style>
     <Style x:Key="Glyph" TargetType="TextBlock"><Setter Property="FontFamily" Value="Segoe MDL2 Assets"/><Setter Property="FontSize" Value="15"/><Setter Property="Margin" Value="0,2,12,0"/><Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/></Style>
     <Style x:Key="NavText" TargetType="TextBlock"><Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/></Style>
-    <Style TargetType="CheckBox"><Setter Property="Foreground" Value="#EDEFF5"/><Setter Property="Margin" Value="0,0,0,10"/></Style>
+    <!-- A switch: on, off. -->
+    <Style TargetType="CheckBox">
+      <Setter Property="Foreground" Value="#EDEFF5"/><Setter Property="Margin" Value="0,0,0,10"/><Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="CheckBox">
+        <Grid Background="Transparent"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <Border x:Name="track" Width="34" Height="18" CornerRadius="9" Background="#262B3D" BorderBrush="#323A52" BorderThickness="1" VerticalAlignment="Top" Margin="0,0,10,0">
+            <Ellipse x:Name="dot" Width="12" Height="12" Fill="#8A91A6" HorizontalAlignment="Left" Margin="2,0,0,0"/></Border>
+          <ContentPresenter Grid.Column="1" VerticalAlignment="Center"/></Grid>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsChecked" Value="True"><Setter TargetName="track" Property="Background" Value="{StaticResource Accent}"/><Setter TargetName="track" Property="BorderBrush" Value="Transparent"/><Setter TargetName="dot" Property="Fill" Value="White"/><Setter TargetName="dot" Property="HorizontalAlignment" Value="Right"/><Setter TargetName="dot" Property="Margin" Value="0,0,2,0"/></Trigger>
+          <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="track" Property="BorderBrush" Value="#EDEFF5"/></Trigger>
+          <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+        </ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <!-- Lists to choose from, dark like the rest (the system's own are white). -->
+    <Style TargetType="ComboBoxItem">
+      <Setter Property="Foreground" Value="#EDEFF5"/><Setter Property="Padding" Value="10,6"/><Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBoxItem">
+        <Border x:Name="b" Background="Transparent" Padding="{TemplateBinding Padding}" CornerRadius="6"><ContentPresenter/></Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsSelected" Value="True"><Setter TargetName="b" Property="Background" Value="#2B2752"/></Trigger>
+          <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="b" Property="Background" Value="#262B3D"/></Trigger>
+        </ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style TargetType="ComboBox">
+      <Setter Property="Foreground" Value="#EDEFF5"/><Setter Property="Height" Value="30"/><Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBox">
+        <Grid>
+          <ToggleButton Focusable="False" ClickMode="Press" IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+            <ToggleButton.Template><ControlTemplate TargetType="ToggleButton">
+              <Border x:Name="b" Background="#1D2130" BorderBrush="#2A3042" BorderThickness="1" CornerRadius="8">
+                <TextBlock Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" FontSize="9" Foreground="#8A91A6" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0"/></Border>
+              <ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="#3B4462"/></Trigger></ControlTemplate.Triggers>
+            </ControlTemplate></ToggleButton.Template>
+          </ToggleButton>
+          <ContentPresenter Margin="10,0,28,0" VerticalAlignment="Center" IsHitTestVisible="False" Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"/>
+          <Popup IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True" Focusable="False" PopupAnimation="None">
+            <Border Background="#171A26" BorderBrush="#2A3042" BorderThickness="1" CornerRadius="8" Padding="4" Margin="0,4,0,0" MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}">
+              <ScrollViewer MaxHeight="300"><ItemsPresenter/></ScrollViewer></Border>
+          </Popup>
+        </Grid>
+        <ControlTemplate.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger></ControlTemplate.Triggers>
+      </ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <!-- Thin dark scroll bars. -->
+    <Style TargetType="ScrollBar">
+      <Setter Property="Width" Value="8"/><Setter Property="MinWidth" Value="8"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ScrollBar">
+        <Track x:Name="PART_Track" Orientation="{TemplateBinding Orientation}">
+          <Track.Thumb><Thumb><Thumb.Template><ControlTemplate TargetType="Thumb"><Border Background="#2C3246" CornerRadius="4" Margin="1"/></ControlTemplate></Thumb.Template></Thumb></Track.Thumb>
+        </Track>
+        <ControlTemplate.Triggers><Trigger Property="Orientation" Value="Vertical"><Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="True"/></Trigger></ControlTemplate.Triggers>
+      </ControlTemplate></Setter.Value></Setter>
+      <Style.Triggers><Trigger Property="Orientation" Value="Horizontal"><Setter Property="Width" Value="Auto"/><Setter Property="MinWidth" Value="0"/><Setter Property="Height" Value="8"/><Setter Property="MinHeight" Value="8"/></Trigger></Style.Triggers>
+    </Style>
+    <Style TargetType="Slider">
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Slider">
+        <Grid Height="22">
+          <Border Height="4" CornerRadius="2" Background="#262B3D" VerticalAlignment="Center"/>
+          <Track x:Name="PART_Track">
+            <Track.DecreaseRepeatButton><RepeatButton Command="Slider.DecreaseLarge"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Height="4" CornerRadius="2" Background="{StaticResource Accent}"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.DecreaseRepeatButton>
+            <Track.IncreaseRepeatButton><RepeatButton Command="Slider.IncreaseLarge"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.IncreaseRepeatButton>
+            <Track.Thumb><Thumb><Thumb.Template><ControlTemplate TargetType="Thumb"><Ellipse Width="16" Height="16" Fill="#EDEFF5" Stroke="#7C5CFF" StrokeThickness="2"/></ControlTemplate></Thumb.Template></Thumb></Track.Thumb>
+          </Track>
+        </Grid>
+      </ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style TargetType="ToolTip"><Setter Property="Background" Value="#171A26"/><Setter Property="Foreground" Value="#EDEFF5"/><Setter Property="BorderBrush" Value="#2A3042"/><Setter Property="Padding" Value="10,6"/></Style>
     <Style TargetType="TextBox"><Setter Property="Background" Value="#0A0B10"/><Setter Property="Foreground" Value="#EDEFF5"/><Setter Property="BorderBrush" Value="#2A3042"/>
       <Setter Property="Padding" Value="8,6"/><Setter Property="CaretBrush" Value="#EDEFF5"/></Style>
   </Window.Resources>
@@ -188,6 +256,10 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
             <StackPanel Margin="30,0,30,0" VerticalAlignment="Center" HorizontalAlignment="Left" MaxWidth="520">
               <TextBlock x:Name="GameName" FontSize="32" FontWeight="Bold" Foreground="White" TextWrapping="Wrap"/>
               <TextBlock x:Name="Status" FontSize="14" Foreground="#D5D8E6" TextWrapping="Wrap" Margin="0,8,0,0"/>
+              <!-- The This PC page's answer, in short. -->
+              <Border x:Name="FitChip" Visibility="Collapsed" HorizontalAlignment="Left" Margin="0,12,0,0" Background="#801A1E2C" BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="11" Padding="10,4">
+                <StackPanel Orientation="Horizontal"><Ellipse x:Name="FitDot" Width="8" Height="8" Margin="0,0,8,0" VerticalAlignment="Center"/><TextBlock x:Name="FitText" FontSize="12" Foreground="#D5D8E6"/></StackPanel>
+              </Border>
               <ProgressBar x:Name="Progress" Height="6" Margin="0,8,0,0" Maximum="1" Visibility="Collapsed" Foreground="#7C5CFF" Background="#33FFFFFF" BorderThickness="0"/>
               <StackPanel Orientation="Horizontal" Margin="0,22,0,0">
                 <Button x:Name="Play" Content="PLAY" FontSize="17" FontWeight="Bold" Padding="46,13" Background="{StaticResource Accent}" Foreground="White" IsDefault="True"/>
@@ -285,7 +357,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
 </Window>
 '@
 $w = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
-$ui = @{}; foreach ($n in 'Settings', 'SettingsNote', 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Measure', 'Sandbox', 'Dlss', 'DlssText', 'FrameGen', 'Steady', 'Rays', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4', 'Progress', 'Backups', 'Restore', 'Bench', 'Update', 'UpdateRail', 'UpdateText') { $ui[$n] = $w.FindName($n) }
+$ui = @{}; foreach ($n in 'FitChip', 'FitDot', 'FitText', 'Settings', 'SettingsNote', 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Measure', 'Sandbox', 'Dlss', 'DlssText', 'FrameGen', 'Steady', 'Rays', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4', 'Progress', 'Backups', 'Restore', 'Bench', 'Update', 'UpdateRail', 'UpdateText') { $ui[$n] = $w.FindName($n) }
 # The rail: one page shown at a time. The log's page shows the end of the newest log, read again while it is open.
 $showLog = {
     $newest = Get-ChildItem (Join-Path $home_ "logs") -Filter "gta6-*.log" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
@@ -387,7 +459,7 @@ function Test-Machine {
     else { Add-Check bad "Game folder: no game_scarlett_master.exe in it. Pick the folder of your own copy of the game."; $ready = $false }
     # The game's shaders need shader model 6.6 of Direct3D 12: Windows 11 has it, Windows 10's
     # own may not (issue 3: the game stopped seconds in; the engine now says so and ends).
-    if ([Environment]::OSVersion.Version.Build -lt 22000) { Add-Check warn "Windows 10: its Direct3D 12 may lack shader model 6.6, which the game's shaders need. If the game ends at its start saying so, Windows 11 has it." }
+    if ([Environment]::OSVersion.Version.Build -lt 22000) { Add-Check warn "Windows 10: its own Direct3D 12 lacks shader model 6.6, so the play script fetches Microsoft's D3D12 Agility SDK once (from nuget.org, checked) and the game uses it. Windows 10 22H2 (build 19045.3393 or later) is needed." }
     if (Test-Path $exe) { Add-Check ok ("Engine: built {0:yyyy-MM-dd HH:mm}" -f (Get-Item $exe).LastWriteTime) }
     else { Add-Check bad "Engine: not built yet. In the repository's folder run: cargo build --release -p vilocity"; $ready = $false }
     try {
@@ -419,7 +491,8 @@ function Test-Machine {
     }
     $os = Get-CimInstance Win32_OperatingSystem
     $ram = $os.TotalVisibleMemorySize / 1MB; $commit = $os.FreeVirtualMemory / 1MB
-    if ($commit -lt 28) { Add-Check warn ("Memory: {0:N0} GB of RAM, {1:N0} GB free with the page file. The game takes about 26 GB: close other programs, or let Windows manage the page file." -f $ram, $commit) }
+    # What RAM and the page file hold together running out ends the game (out of memory); a page file Windows may grow is the cure.
+    if ($commit -lt 28) { Add-Check warn ("Memory: {0:N0} GB of RAM, {1:N0} GB free with the page file. The game takes about 22 GB at 1080p, and with less free it can end out of memory: close other programs, and let Windows manage the page file (Page file, then Advanced, Virtual memory, Change, 'Automatically manage')." -f $ram, $commit) "Page file" { Start-Process SystemPropertiesPerformance.exe } }
     else { Add-Check ok ("Memory: {0:N0} GB of RAM, {1:N0} GB free with the page file" -f $ram, $commit) }
     $drive = (Get-Item $env:LOCALAPPDATA).PSDrive
     if ($drive.Free -lt 30GB) { Add-Check warn ("Disk {0}: {1:N0} GB free. The shader cache and the page file want 30 GB." -f $drive.Name, ($drive.Free / 1GB)) }
@@ -432,7 +505,11 @@ function Test-Machine {
     Add-Check $verdict.level $verdict.text
     # The answer first.
     $last = $ui.Checks.Children[$ui.Checks.Children.Count - 1]; $ui.Checks.Children.Remove($last); $ui.Checks.Children.Insert(0, $last)
-    if ($verdict.level -eq 'bad') { $ready = $false }
+    # (Advice only: PLAY stays on. Only a missing game folder or engine, which nothing could start, turns it off.)
+    $state.verdict = $verdict.level
+    $ui.FitText.Text = "This PC: " + (($verdict.text -replace '^Will it work on this PC: ', '') -split '\. ')[0]
+    $ui.FitDot.Fill = (New-Object Windows.Media.BrushConverter).ConvertFromString(@{ ok = "#3DDC84"; warn = "#FACC15"; bad = "#F87171" }[$verdict.level])
+    $ui.FitChip.Visibility = 'Visible'
     $ready
 }
 
@@ -470,13 +547,14 @@ function Test-Fit([double]$ram, [double]$commit = 99) {
     @{ level = 'ok'; text = ("Will it work on this PC: {0}. {1}, {2:N0} GB on the card, {3:N0} GB of RAM. Picture: {4}. (Measured on an RTX 5080: 24-28 fps at 1080p.)" -f $at, ($card -replace 'NVIDIA GeForce ', ''), $cardGB, $ram, $picture) }
 }
 
+# The game: the vilocity.exe with a window (the play and sandbox processes have none). Get-Process, not
+# WMI: this is asked once a second while the game runs, and a WMI query costs tens of milliseconds.
 function Game-Process {
-    $p = Get-CimInstance Win32_Process -Filter "Name='vilocity.exe'" | Where-Object CommandLine -like '*native run*' | Select-Object -First 1
-    if ($p) { Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue }
+    Get-Process vilocity -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
 }
 
 $state = @{ ready = $false; started = $null; seen = $false; bench = $null; benchDraws = 0 }
-$refresh = { $state.ready = Test-Machine; if (-not $state.started) { $ui.Play.IsEnabled = $state.ready; $ui.Status.Text = if ($state.ready) { "Ready." } else { "Not ready yet: see This PC." } } }
+$refresh = { $state.ready = Test-Machine; if (-not $state.started) { $ui.Play.IsEnabled = $state.ready; $ui.Status.Text = if (-not $state.ready) { "Not ready yet: see This PC." } elseif ($state.verdict -eq 'bad') { "Ready, but this PC may not run the game: see This PC." } else { "Ready." } } }
 
 $ui.Browse.Add_Click({
     $d = New-Object Windows.Forms.FolderBrowserDialog; $d.Description = "The folder that holds game_scarlett_master.exe"
@@ -676,6 +754,11 @@ $timer.Add_Tick({
     $bar = $null
     if ($g) {
         if ($ui.Leave.IsChecked -and -not $state.seen -and $null -eq $state.bench) { $w.Close(); return }
+        # The launcher costs the game nothing while it runs: minimized (WPF draws nothing then) and at low priority.
+        if (-not $state.seen) {
+            $w.WindowState = 'Minimized'
+            try { [Diagnostics.Process]::GetCurrentProcess().PriorityClass = 'BelowNormal' } catch {}
+        }
         $state.seen = $true
         $ui.Status.Text = if ($g.MainWindowTitle -match '([\d.]+) fps ([\d.]+) ms/frame') { "Running: {0} fps ({1} ms a frame). F8 hides the panel, Esc frees the mouse." -f $Matches[1], $Matches[2] } else { "Running." }
         # The benchmark: the window's frame rate once a second while the world is drawn (over 2,000 draws).
@@ -713,6 +796,10 @@ $timer.Add_Tick({
             elseif ($ui.Sandbox.IsChecked -and $newest -and (Select-String -Path $newest.FullName -Pattern '(os error 5)' -SimpleMatch -Quiet)) { "Windows refused the sandbox a folder (access denied): untick Sandbox in Options to play, and please report it with the log." }
             else { "The game did not start: see Logs." }
         if ($null -ne $state.bench) { $state.bench = $null; $ui.Status.Text += " (The benchmark ended with the game, before 60 seconds of the world.)" }
+        if ($state.seen) {
+            try { [Diagnostics.Process]::GetCurrentProcess().PriorityClass = 'Normal' } catch {}
+            $w.WindowState = 'Normal'; [void]$w.Activate()
+        }
         $state.started = $null; $ui.Play.Content = "PLAY"; & $refresh
     }
     $ui.Progress.Visibility = if ($null -ne $bar) { 'Visible' } else { 'Collapsed' }
