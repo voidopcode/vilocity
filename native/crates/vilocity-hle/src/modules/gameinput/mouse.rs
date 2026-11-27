@@ -243,6 +243,10 @@ mod host {
             keep_inside(&area);
             listen();
             let moved = (DX.swap(0, Ordering::Relaxed), DY.swap(0, Ordering::Relaxed));
+            // (Taken all the same, so that the in-game menu's close gives it back as it was.)
+            if vilocity_gpu::menu_holds_input() {
+                return Mouse::default();
+            }
             Mouse {
                 buttons,
                 stick: self.look.stick(now, window, moved),

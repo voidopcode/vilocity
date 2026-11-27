@@ -619,6 +619,10 @@ const JOINED: usize = 10;
 /// How many submissions may be in the line when a submit call returns
 /// (`VILOCITY_SUBMIT_DEPTH`; 64: about two frames of the title's).
 fn runs_most() -> usize {
+    // The in-game menu's "steadier picture": one ahead, else the default.
+    if let Some(steady) = crate::live::get(crate::live::Knob::Steady) {
+        return if steady > 0.0 { 1 } else { 64 };
+    }
     static MOST: OnceLock<usize> = OnceLock::new();
     *MOST.get_or_init(|| number("VILOCITY_SUBMIT_DEPTH").unwrap_or(64).max(1))
 }

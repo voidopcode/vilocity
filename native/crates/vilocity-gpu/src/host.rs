@@ -3785,6 +3785,8 @@ pub(crate) mod aside;
 pub(crate) mod awake;
 mod card_steps;
 pub(crate) mod indirects;
+pub(crate) mod menu;
+mod overlay;
 #[cfg(feature = "diagnostics")]
 mod panel;
 mod place;
@@ -8806,6 +8808,7 @@ struct Presenter {
     composer: Option<crate::compose::Composer>,
     #[cfg(feature = "diagnostics")]
     panel: panel::Panel,
+    menu: menu::Menu,
 }
 
 /// The frame rate, shown in the window's caption every second and logged
@@ -9367,6 +9370,7 @@ impl Host {
             };
             #[cfg(feature = "diagnostics")]
             p.panel.draw(self, copy, &back, (width, height), format);
+            p.menu.draw(self, copy, &back, (width, height), format);
             #[cfg(not(feature = "diagnostics"))]
             let _ = frame;
             if composed {
@@ -9424,12 +9428,14 @@ impl Host {
                 },
             );
             let called = crate::streamline::present_called(&presenting);
+            menu::pace();
             let _ = p.swap_chain.Present(0, DXGI_PRESENT(0));
             crate::streamline::present_returned(called);
             crate::streamline::present_ends(presenting);
             showing.next("the frame meter");
             #[cfg(feature = "diagnostics")]
             p.panel.frame(p.meter.line_due());
+            p.menu.frame();
             p.meter.frame(p.hwnd);
             showing.end();
             #[cfg(feature = "diagnostics")]
@@ -9522,6 +9528,7 @@ impl Host {
                 composer: None,
                 #[cfg(feature = "diagnostics")]
                 panel: panel::Panel::new(),
+                menu: menu::Menu::new(),
             })
         }
     }

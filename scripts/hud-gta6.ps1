@@ -105,7 +105,7 @@ $form.Add_Paint({
     $others = if ($null -ne $s.vramUsed -and $null -ne $s.gameVram) { $s.vramUsed - $s.gameVram } else { 0 }
     & $row 86 "GAME" $(if ($others -ge 2) { "video {0} GB   others hold {1} GB" -f (N $s.gameVram), (N $others) } else { "video {0} GB   shared {1} GB" -f (N $s.gameVram), (N $s.gameShared) }) $null $null $null
     & $row 104 "RAM" ("game {0}   PC {1} of {2} GB" -f (N $s.gameRam), (N $s.ram), (N $s.ramAll "N0")) $s.ram $s.ramAll $s.gameRam
-    & $row 126 "KEYS" $(if ($state.keys -eq "driving") { "driving: W S A D   (G: on foot)" } else { "on foot   (G: driving keys)" }) $null $null $null
+    & $row 126 "KEYS" $(if ($state.keys -eq "driving") { "driving   G: on foot   F1: settings" } else { "on foot   G: driving   F1: settings" }) $null $null $null
 })
 
 # The game's process and window: looked for until found, then kept.

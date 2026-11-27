@@ -140,7 +140,8 @@ pub(super) const DEFAULT: &str = "\
 # NumMultiply, NumDivide, NumDecimal, LeftClick, RightClick, MiddleClick,
 # Mouse4, Mouse5. The mouse's motion is always the right stick.
 # Every key does something. Left out on purpose: Left Alt and Esc give the
-# mouse back (Esc is the menu too), F8 hides the frame rate panel, F11 is
+# mouse back (Esc is the menu too), F1 opens Vilocity's settings, F8 hides
+# the frame rate panel, F11 is
 # the whole screen and back, and the keys Windows keeps for itself (Windows,
 # PrintScreen, NumLock).
 # Delete this file to get the one Vilocity comes with again.
@@ -169,7 +170,7 @@ DOWN = ArrowDown, 2, N, PageDown, NumSubtract, F3
 LEFT = ArrowLeft, 3, LeftBracket, Minus, Comma, NumDivide, F4
 RIGHT = ArrowRight, 4, RightBracket, Equals, Period, NumMultiply, F5
 MENU = Esc, P, Home, Pause, Apps
-VIEW = V, M, Backquote, End, ScrollLock, F1
+VIEW = V, M, Backquote, End, ScrollLock
 LOOK_UP = I, Num8
 LOOK_DOWN = K, Num2
 LOOK_LEFT = J, Num4
@@ -196,7 +197,7 @@ DOWN = 2, N, PageDown, NumSubtract, F3
 LEFT = 3, ArrowLeft, LeftBracket, Minus, Comma, NumDivide, F4
 RIGHT = 4, ArrowRight, RightBracket, Equals, Period, NumMultiply, F5
 MENU = Esc, P, Home, Pause, Apps
-VIEW = V, M, Backquote, End, ScrollLock, F1
+VIEW = V, M, Backquote, End, ScrollLock
 LOOK_UP = I, Num8
 LOOK_DOWN = K, Num2
 LOOK_LEFT = J, Num4
@@ -399,11 +400,11 @@ mod tests {
             assert!(!keys.contains(&binds.switch[0]));
         }
         // (Vilocity) Every key that has a name does something in both layouts, but the
-        // switch (G) and F8, which hides the frame rate panel.
+        // switch (G), F1 (Vilocity's settings) and F8, which hides the frame rate panel.
         for layout in [&binds.walk, &binds.drive] {
             let named = KEYS.iter().map(|k| k.1).chain(b'A'..=b'Z').chain(b'0'..=b'9');
             let free: Vec<u8> = named.filter(|vk| !layout.iter().any(|b| b.0 == *vk)).collect();
-            assert_eq!(free, [0x77, b'G'], "keys that do nothing");
+            assert_eq!(free, [0x70, 0x77, b'G'], "keys that do nothing");
         }
         // Aiming and firing on foot; W is the accelerator at the wheel.
         assert_eq!(keys_of(&binds.walk, Part::LeftTrigger)[0], 0x02);

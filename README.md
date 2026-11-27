@@ -115,8 +115,17 @@ loads saves and gets into the world. The world is where the work is now.
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: a first start no longer ends at the world's first frame, and what the hunt for
-the torn frames ruled out.
+Latest: settings inside the game, a first start no longer ends at the world's first
+frame, and what the hunt for the torn frames ruled out.
+- **Settings inside the game: F1.** F1 shows a menu over the picture; F1 or Esc hides
+  it. Up and down pick, left and right change, and the change shows in the next frame
+  and is kept for the next start at once (`menu.txt` in the data folder): light in the
+  shade, brighter nights, the fog light's cap, the reflections stand-in, "steadier
+  picture" and a frame rate cap (30 to 60). The last line puts everything back to what
+  the launcher gave. While it is shown the game gets no keys and no mouse. F1 was the
+  game's VIEW in the keys file; it is the menu's now, also with an older keys file.
+  (The idea and its look are trustno1-coder/VIctory-NVIDIA's; DLSS and the picture
+  size still need a restart and stay in the launcher.)
 - **First start on a PC that never ran the game** (issue 1, an RTX 5070 Ti): the first
   frame of the world waited while the shaders it uses were translated and compiled, one
   after the other, stood 30 s, and the game's own watchdog ended the run with a write to

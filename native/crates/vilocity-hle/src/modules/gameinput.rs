@@ -1336,11 +1336,12 @@ mod host {
 
         fn keys(&mut self) -> Vec<KeyState> {
             let mut down = scripted();
-            if focused() {
+            // (F1 is Vilocity's menu: never the title's, whatever an older keys file says.)
+            if focused() && !vilocity_gpu::menu_holds_input() {
                 // Left/right modifier keys only, as devices report them; no
                 // mouse buttons (below 0x08; `mouse` has them).
                 let held: Vec<u8> = (0x08..=0xFE_u8)
-                    .filter(|vk| !(0x10..=0x12).contains(vk) && !down.contains(vk))
+                    .filter(|vk| !(0x10..=0x12).contains(vk) && *vk != 0x70 && !down.contains(vk))
                     // SAFETY: plain queries.
                     .filter(|&vk| unsafe { GetAsyncKeyState(i32::from(vk)) } < 0)
                     .collect();

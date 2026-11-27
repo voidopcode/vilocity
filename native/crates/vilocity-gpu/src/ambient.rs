@@ -127,6 +127,9 @@ fn parse(set: &str) -> Set {
 }
 
 fn set() -> Set {
+    if let Some(level) = crate::live::get(crate::live::Knob::Light) {
+        return if level > 0.0 { Set::Estimate(level) } else { Set::Off };
+    }
     static SET: OnceLock<Set> = OnceLock::new();
     *SET.get_or_init(|| parse(&std::env::var("VILOCITY_AMBIENT").unwrap_or_default()))
 }
@@ -158,6 +161,12 @@ fn parse_specular(set: &str) -> Option<Specular> {
 fn specular() -> Option<Specular> {
     static SET: OnceLock<Option<Specular>> = OnceLock::new();
     let set = *SET.get_or_init(|| parse_specular(&std::env::var("VILOCITY_AMBIENT_SPECULAR").unwrap_or_default()));
+    // (The in-game menu: on as set, else the title's sky capped by the light around.)
+    let set = match crate::live::get(crate::live::Knob::Reflections) {
+        Some(on) if on > 0.0 => set.or(Some(Specular { share: 1.0, sky: 1.0 })),
+        Some(_) => None,
+        None => set,
+    };
     // In one run by turns (`VILOCITY_AB=<s>,VILOCITY_AMBIENT_SPECULAR`): as set (1,0.5 if not), and off.
     #[cfg(feature = "diagnostics")]
     match crate::ab::pick("VILOCITY_AMBIENT_SPECULAR") {
@@ -178,6 +187,9 @@ pub(crate) fn reflections() -> bool {
 /// (`VILOCITY_AMBIENT_FLOOR=<level>`; unset or 0: none). At night the picture the
 /// estimate is made of is nearly black, and so was everything no lamp reaches.
 fn least() -> f32 {
+    if let Some(level) = crate::live::get(crate::live::Knob::Night) {
+        return level;
+    }
     static SET: OnceLock<f32> = OnceLock::new();
     *SET.get_or_init(|| {
         let set = std::env::var("VILOCITY_AMBIENT_FLOOR").unwrap_or_default();
@@ -188,6 +200,9 @@ fn least() -> f32 {
 /// The most the air scatters, as a multiple of the light around
 /// (`VILOCITY_AMBIENT_AIR=<multiple>`; unset or 0: what the title has).
 fn air() -> f32 {
+    if let Some(most) = crate::live::get(crate::live::Knob::Fog) {
+        return most;
+    }
     static SET: OnceLock<f32> = OnceLock::new();
     *SET.get_or_init(|| {
         let set = std::env::var("VILOCITY_AMBIENT_AIR").unwrap_or_default();

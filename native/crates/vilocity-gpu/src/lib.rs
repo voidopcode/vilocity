@@ -48,6 +48,7 @@ mod indirect;
 mod inplace;
 #[cfg(windows)]
 mod land;
+mod live;
 pub mod list;
 pub mod object;
 pub mod pipeline;
@@ -116,6 +117,13 @@ pub fn switched(switch: &str) -> Option<bool> {
 #[cfg(all(windows, feature = "diagnostics"))]
 pub fn frame_phase() -> u32 {
     copystat::phase()
+}
+
+/// Whether the in-game menu (F1) is shown, or was just closed with a key
+/// still held: the title is to get no keys and no mouse.
+#[cfg(windows)]
+pub fn menu_holds_input() -> bool {
+    host::menu::holds_input()
 }
 
 /// Frames the title has begun (its frame waits that ended), for logs.
