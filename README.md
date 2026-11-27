@@ -104,13 +104,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 22:31
+**Latest test run:** 2026-11-27 22:45
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 24.7 fps, 41 ms a frame |
-| Best while playing | 30.8 fps |
-| Last frame | 25.5 fps, 39 ms, 3375 draws, 323 dropped without a pipeline |
+| Frame rate while playing (typical) | 1.1 fps, 910 ms a frame |
+| Best while playing | 3.5 fps |
+| Last frame | 3.3 fps, 304 ms, 3822 draws, 159 dropped without a pipeline |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -118,6 +118,11 @@ loads saves and gets into the world. The world is where the work is now.
 Latest: "will it work on this PC" in the launcher, clothes and faces drawn with another
 texture's colours, the 4-7 fps drops explained and shown on the overlay, and what the
 picture tests of 2026-11-27 evening ruled out.
+- **"Translating the game's shaders" shows how far it is.** Two players took the step for
+  stuck: it said "about a minute" (timed on a 16-core processor) and nothing moved. Its lines
+  (one each 1,000 shaders) now go to `logs\shaders-progress.txt`, and the launcher shows the
+  count, and from the second build on a bar against the last run's total. If it does stop,
+  that file says where.
 - **Launcher: save backups, a benchmark, Update, and a progress bar.** Tools now has: save
   backups (your saves are copied at each PLAY into `%LOCALAPPDATA%\vilocity\backups`, the
   newest 10 kept; Restore puts one back after copying the saves of now); a benchmark (starts

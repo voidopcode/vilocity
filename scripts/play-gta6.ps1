@@ -247,8 +247,17 @@ $build = "{0} {1:o} {2} {3}" -f $exe, (Get-Item $exe).LastWriteTimeUtc, $env:VIL
 $rpf = Join-Path $Game "shaders.rpf"
 if ((Test-Path $rpf) -and ((Get-Content $mark -ErrorAction SilentlyContinue) -ne $build)) {
     Write-Host "Translating the game's shaders ahead (once per build, a few minutes)..."
-    & $exe native shaders $rpf
-    if ($LASTEXITCODE -eq 0) { New-Item -ItemType Directory -Force $cache | Out-Null; Set-Content $mark $build }
+    # (Its lines also go to logs\shaders-progress.txt as they come, one each 1,000 shaders: the
+    # launcher shows how far it is; two players thought the step stuck, 2026-11-27.)
+    $shading = Join-Path $env:LOCALAPPDATA "vilocity\logs\shaders-progress.txt"
+    New-Item -ItemType Directory -Force (Split-Path $shading) | Out-Null
+    & $exe native shaders $rpf | Tee-Object -FilePath $shading | Out-Host
+    if ($LASTEXITCODE -eq 0) {
+        New-Item -ItemType Directory -Force $cache | Out-Null; Set-Content $mark $build
+        # How many there were, for the launcher's bar the next time.
+        $all = Select-String -Path $shading -Pattern '^(\d+) shaders in the cache, \d+ do not translate' | Select-Object -Last 1
+        if ($all) { Set-Content (Join-Path $cache "shaders-count.txt") $all.Matches[0].Groups[1].Value }
+    }
     else { Write-Host "Translating ahead failed: the shaders are translated while playing instead." }
 }
 

@@ -672,7 +672,15 @@ $timer.Add_Tick({
         # The play script is still at its steps before the game; it is not "did not start" while it runs
         # (said after 45 seconds, PLAY came back and a second press started a second game).
         $step = (Get-CimInstance Win32_Process -Filter "Name='vilocity.exe'" | Select-Object -ExpandProperty CommandLine) -join ' '
-        $ui.Status.Text = if ($step -like '*native shaders*') { "Translating the game's shaders (once per build, about a minute)..." }
+        $ui.Status.Text = if ($step -like '*native shaders*') {
+                # How far it is: a line each 1,000 shaders (the play script keeps them), of as many as the last time.
+                $last = Get-Content (Join-Path $home_ "logs\shaders-progress.txt") -Tail 1 -ErrorAction SilentlyContinue
+                $all = [int](Get-Content (Join-Path $home_ "cache\shaders-count.txt") -ErrorAction SilentlyContinue | Select-Object -First 1)
+                if ($last -match '^(\d+) shaders in the cache, (\d+) s') {
+                    if ($all -gt 0) { $bar = [int]$Matches[1] / [double]$all }
+                    "Translating the game's shaders: {0:N0}{1} in {2} s (once per build; a few minutes on most PCs)..." -f [int]$Matches[1], $(if ($all -gt 0) { " of about {0:N0}" -f $all } else { "" }), $Matches[2]
+                } else { "Translating the game's shaders (once per build; a few minutes on most PCs)..." }
+            }
             elseif ($step -like '*warm*') {
                 # How far it is, from the lines the play script keeps (a few minutes after an update of Vilocity or the driver).
                 $lines = Get-Content (Join-Path $home_ "logs\warm-progress.txt") -Tail 3 -ErrorAction SilentlyContinue
