@@ -128,6 +128,9 @@ picture tests of 2026-11-27 evening ruled out.
   (it ends swimming) on this 16 GB card held to about 8 GB, with the play script's 8 GB
   settings: with them 13 fps median and black objects, without them 32 fps median (lowest 16)
   and none seen. The switch is still there (`VILOCITY_LEVELS_ON_DEMAND=1`).
+- **Cards under 14 GB (12 GB too) play the 1080p picture**, as those under 10 GB already did:
+  1440p and 4K take about 13 GB of the card, and a full card ran at 4-7 fps. The launcher
+  already said "yes, at 1080p" for them; now the play script holds to it.
 - **The sandbox on a PC where Windows refused the engine its own cache folder** (issue 3, an
   RX 9070 XT on Windows 11): the engine stopped at its first step, "cannot resolve
   ...\cache\images: access denied", where the same check passes in the sandbox on the other
