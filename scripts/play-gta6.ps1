@@ -122,7 +122,9 @@ if (-not $Defaults) {
     # (Not set: VILOCITY_WAVE_WIDE_ONLY with TaynanGT/Vice-Tay's list of the game's programs
     # written for waves of 64 lanes. On an RTX 5080 the light-through-fog ones then run and
     # leave grey rectangles on open water, as that project notes too. To try single ones:
-    # 6f225b641c5b0708,5dc3b25986622949,369cbe906ea72764,2cc4c197ee29e291,a10179ab7eda0dc3.)
+    # 6f225b641c5b0708,5dc3b25986622949,369cbe906ea72764,2cc4c197ee29e291,a10179ab7eda0dc3.
+    # Never 6871d6e4b3ac9a10 or 926c46bab3b86bd6: in the wide form they hung an RTX 5080 at
+    # the world's start and the whole PC froze and restarted.)
     # Video memory. The game wants about 11 GB of it as a Series S. Under 14 GB a
     # texture's levels get memory when they are used (ZigZagBoi1/ScarlettPort: 18.9 to
     # 22.0 fps on a 16 GB RX 9060 XT); under 10 GB also less of title buffers is kept

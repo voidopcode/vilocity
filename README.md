@@ -104,13 +104,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 15:45
+**Latest test run:** 2026-11-27 15:02
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 23.5 fps, 43 ms a frame |
-| Best while playing | 31.6 fps |
-| Last frame | 22.7 fps, 44 ms, 6687 draws, 190 dropped without a pipeline |
+| Frame rate while playing (typical) | 24.3 fps, 41 ms a frame |
+| Best while playing | 34.9 fps |
+| Last frame | 24.4 fps, 41 ms, 6600 draws, 111 dropped without a pipeline |
 | Shaders that failed to translate | compute 6 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -326,7 +326,11 @@ off by default: `VILOCITY_WAVE_WIDE=1` with `VILOCITY_WAVE_WIDE_ONLY=<shader
 hashes>` (after Vice-Tay) runs the listed wave64 programs in the wide form; the
 three fog-transmission programs and the two light-tiling ones translate and run
 with it (6f225b641c5b0708, 5dc3b25986622949, 926c46bab3b86bd6, 369cbe906ea72764,
-2cc4c197ee29e291), their cost a frame is not measured yet.
+2cc4c197ee29e291), their cost a frame is not measured yet. **Warning, 2026-11-27:**
+6871d6e4b3ac9a10 and 926c46bab3b86bd6 (the fog light, `CS_TransmissionVolumetrics`
+and its underwater twin) in the wide form hung an RTX 5080 when the world was entered,
+and the whole PC froze and restarted (the wide form's host waves wait for each other
+by spinning). Do not list them; on NVIDIA leave this switch off.
 
 Earlier: the native engine is now cool_fox's (codec_d's VIctory fork, build
 30e54b4, GPL-3.0-or-later), in place of our own tree. Ours was some 60,000 lines
