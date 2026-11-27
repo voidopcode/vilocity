@@ -50,13 +50,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 00:45
+**Latest test run:** 2026-11-27 00:56
 
 | Measure | Value |
 |---------|-------|
-| Best frame rate (menus included) | 403.9 fps |
-| Median frame time | 48 ms |
-| Last frame | 22.8 fps, 44 ms, 4260 draws, 207 dropped without a pipeline |
+| Best frame rate (menus included) | 374.2 fps |
+| Median frame time | 43 ms |
+| Last frame | 24.9 fps, 40 ms, 9348 draws, 105 dropped without a pipeline |
 | Shaders that failed to translate | compute 5 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -73,6 +73,14 @@ Memory: the game's commit levels off near 24.7 GB over seven minutes (21.1 GB on
 entering the world). All keys of a pad are on the keyboard now, and can be changed
 in `%LOCALAPPDATA%\vilocity\data\keys.txt`. The launcher translates the game's
 shaders ahead once per build, and uses more worker threads on 16 cores or more.
+First speed work of our own, from a profile of the deck scene (2026-11-27): the
+twelve threads that translate lists took one lock for each of some 20,000
+descriptor slots a frame that changed their resource, and stood at it for 21% of
+their samples; they hand those over in batches now, and a list call costs 5.4
+microseconds where it cost 7.9. The frame is no shorter for it: no thread is
+the limit by itself. What a frame waits for, by the engine's timeline: the
+title's page-mapping calls (16-26 ms in the slow frames), the lock of the write
+guards (34 ms a frame over all threads) and the card (15-29 ms a frame).
 Tests: the engine's own suite passes, but for two of the indirect-argument tests
 that expect `VILOCITY_INDIRECT_REST=1` (they pass with it). Not done: 30 fps in
 busy places, and the 26 wave64 programs.

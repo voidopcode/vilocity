@@ -307,6 +307,7 @@ fn start() {
         let worker = move || {
             crate::cores::keep_many_on_fast_cores("vilocity-list");
             crate::queue::no_drain_here();
+            crate::host::retire_in_batches();
             loop {
                 let recording = {
                     let mut ready = held(&READY);
@@ -320,6 +321,8 @@ fn start() {
                 if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| recording.run())).is_err() {
                     crate::host::fail(format_args!("a thread that translates lists panicked"));
                 }
+                // Nothing retired waits on a thread that may now sleep.
+                crate::host::flush_retired();
             }
         };
         if let Err(e) = std::thread::Builder::new().name(format!("vilocity-list-{i}")).spawn(worker) {

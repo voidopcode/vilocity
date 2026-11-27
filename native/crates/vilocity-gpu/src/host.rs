@@ -485,7 +485,67 @@ pub(crate) fn retire_resource(object: ID3D12Resource) {
         return;
     }
     RETIREMENTS[1].fetch_add(1, Ordering::Relaxed);
-    RETIRED.lock().unwrap_or_else(|e| e.into_inner()).push_back((started, Retired::Resource(object)));
+    let entry = (started, Retired::Resource(object));
+    match BATCH.with(|b| into_batch(b.borrow_mut().as_mut(), entry, BATCH_MOST)) {
+        Err(entry) => RETIRED.lock().unwrap_or_else(|e| e.into_inner()).push_back(entry),
+        Ok(true) => flush_retired(),
+        Ok(false) => {}
+    }
+}
+
+/// `entry` into the thread's batch, if it keeps one: whether the batch then
+/// holds `most` and is to be handed over. With no batch the entry comes back.
+fn into_batch<T>(batch: Option<&mut Vec<T>>, entry: T, most: usize) -> Result<bool, T> {
+    match batch {
+        Some(batch) => {
+            batch.push(entry);
+            Ok(batch.len() >= most)
+        }
+        None => Err(entry),
+    }
+}
+
+#[cfg(test)]
+mod batch_tests {
+    #[test]
+    fn a_thread_without_a_batch_keeps_nothing_and_a_full_batch_says_so() {
+        assert_eq!(super::into_batch(None, 7, 2), Err(7));
+        let mut batch = Vec::new();
+        assert_eq!(super::into_batch(Some(&mut batch), 7, 2), Ok(false));
+        assert_eq!(super::into_batch(Some(&mut batch), 8, 2), Ok(true));
+        assert_eq!(batch, [7, 8]);
+    }
+}
+
+/// So many resources a thread retires before it hands them over by itself.
+const BATCH_MOST: usize = 256;
+
+thread_local! {
+    /// What this thread retired and has not handed to [`RETIRED`] yet
+    /// ([`retire_in_batches`]).
+    static BATCH: std::cell::RefCell<Option<Vec<(u64, Retired)>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// From here on this thread's [`retire_resource`] keeps what it is given and
+/// hands it to the common line in batches ([`flush_retired`], or
+/// [`BATCH_MOST`] of them). Twelve threads translating lists took the line's
+/// lock for each of some 20,000 descriptor slots a frame that changed their
+/// resource: 21% of their samples stood at that lock (Vilocity, profile of
+/// 2026-11-27). Handed over later an object is dropped later, never sooner:
+/// its number is the one of the moment it was let go.
+pub(crate) fn retire_in_batches() {
+    BATCH.with(|b| *b.borrow_mut() = Some(Vec::with_capacity(BATCH_MOST)));
+}
+
+/// Hands over what this thread retired since the last time ([`retire_in_batches`]).
+pub(crate) fn flush_retired() {
+    BATCH.with(|b| {
+        if let Some(batch) = b.borrow_mut().as_mut()
+            && !batch.is_empty()
+        {
+            RETIRED.lock().unwrap_or_else(|e| e.into_inner()).extend(batch.drain(..));
+        }
+    });
 }
 
 /// How many submissions later than it could (the last one that may use it
