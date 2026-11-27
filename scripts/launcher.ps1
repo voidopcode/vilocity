@@ -363,8 +363,11 @@ function Test-Machine {
         $v = (nvidia-smi --query-gpu=name,memory.used,memory.total,driver_version --format=csv,noheader,nounits 2>$null) -split ',\s*'
         if ($v.Count -lt 4) { throw "no nvidia-smi" }
         $free = ([double]$v[2] - [double]$v[1]) / 1024
-        $level = if ($free -lt 9) { "warn" } else { "ok" }
-        Add-Check $level ("Graphics card: {0} (driver {4}), {1:N1} of {2:N0} GB of video memory free{3}" -f ($v[0] -replace 'NVIDIA GeForce ', ''), $free, ([double]$v[2] / 1024), $(if ($level -eq "warn") { ". The game wants about 11 GB: with less, textures load late and look soft." } else { "" }), $v[3])
+        # (As a Series S the game takes about 11 GB of the card, in the 1440p and 4K pictures
+        # about 14: with 9.8 GB free in the 1440p picture its textures waited, 14,000 at a time.)
+        $wants = if ((Mode) -ne 0) { 14 } else { 11 }
+        $level = if ($free -lt $wants) { "warn" } else { "ok" }
+        Add-Check $level ("Graphics card: {0} (driver {4}), {1:N1} of {2:N0} GB of video memory free{3}" -f ($v[0] -replace 'NVIDIA GeForce ', ''), $free, ([double]$v[2] / 1024), $(if ($level -eq "warn") { ". The game wants about $wants GB in this picture: with less, textures go missing or load late (blank eyes, wrong skin)." } else { "" }), $v[3])
         # Who else holds video memory: worth closing before playing.
         $mem = Get-CimInstance Win32_PerfRawData_GPUPerformanceCounters_GPUProcessMemory -ErrorAction SilentlyContinue | Where-Object { $_.DedicatedUsage -gt 1GB }
         foreach ($m in $mem) {

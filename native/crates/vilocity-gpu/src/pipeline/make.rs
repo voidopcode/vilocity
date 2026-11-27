@@ -231,7 +231,7 @@ pub(crate) fn ready(p: &Arc<Pending>) -> Option<&HostPipeline> {
     }
     if p.made.get().is_none() {
         start(p, REQUESTED);
-        if p.graphics.is_none() && compute_waits() {
+        if p.graphics.is_none() && compute_waits() && compute_time(crate::frame::current()) {
             // (OnceLock waits for a worker already making it, or it is made here.)
             p.make();
         } else {
@@ -258,6 +258,57 @@ pub(crate) fn ready(p: &Arc<Pending>) -> Option<&HostPipeline> {
 fn compute_waits() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("VILOCITY_PIPELINE_COMPUTE_WAIT").is_none_or(|v| v != "0"))
+}
+
+/// For how long, from a frame's first dispatch that waits so on
+/// ([`compute_waits`]), the frame's dispatches wait for their pipelines
+/// whatever the budget (`VILOCITY_PIPELINE_COMPUTE_WAIT_MS`, 12 s). After
+/// that they wait within the budget like draws, and are dropped while their
+/// pipeline is not there.
+///
+/// Without an end the first frame of the world, on a PC that never ran the
+/// game, made every compute pipeline it uses one after the other (the
+/// driver's cache has none yet: 4 to 15 a second): that frame stood 30 s and
+/// the title's watchdog ended the run with a write to address 0 (issue 1, an
+/// RTX 5070 Ti; the same end here in five runs of 2026-11-25 and 26). 12 s,
+/// with the 10 s of the passes over the screen and the longest compile, stay
+/// below it. What a dropped dispatch leaves wrong (see [`compute_waits`]) is
+/// right on the next start, when the pipelines are there.
+fn compute_wait_most() -> Duration {
+    static MOST: OnceLock<Duration> = OnceLock::new();
+    *MOST.get_or_init(|| {
+        let millis = std::env::var("VILOCITY_PIPELINE_COMPUTE_WAIT_MS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(12_000);
+        Duration::from_millis(millis)
+    })
+}
+
+/// Whether `frame` still has time for dispatches to wait for their
+/// pipelines whatever the budget ([`compute_wait_most`]).
+fn compute_time(frame: u64) -> bool {
+    static BEGAN: Mutex<(u64, Option<Instant>)> = Mutex::new((u64::MAX, None));
+    let now = Instant::now();
+    let left = within(&mut BEGAN.lock().unwrap_or_else(|e| e.into_inner()), frame, now, compute_wait_most());
+    if !left {
+        static SAID: AtomicU64 = AtomicU64::new(u64::MAX);
+        if SAID.swap(frame, Ordering::Relaxed) != frame {
+            tracing::warn!(
+                frame,
+                "compute pipelines were still being made after {} s of one frame: its other dispatches wait within the budget, and what \
+                 they would have made may be missing until the game is started again (VILOCITY_PIPELINE_COMPUTE_WAIT_MS)",
+                compute_wait_most().as_secs()
+            );
+        }
+    }
+    left
+}
+
+/// Of [`compute_time`]: `began` holds the frame last asked about and when
+/// its first asking was; whether `now` is less than `most` after that.
+fn within(began: &mut (u64, Option<Instant>), frame: u64, now: Instant, most: Duration) -> bool {
+    if began.0 != frame {
+        *began = (frame, Some(now));
+    }
+    began.1.is_none_or(|first| now.duration_since(first) < most)
 }
 
 /// Makes `p` on this thread if it is not made yet (waiting for a worker
@@ -583,6 +634,23 @@ fn drained() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A frame's dispatches wait for their pipelines for a time from its
+    /// first such wait on, and a new frame begins anew.
+    #[test]
+    fn a_frame_has_a_time_for_dispatches_to_wait() {
+        let most = Duration::from_secs(12);
+        let t0 = Instant::now();
+        let mut began = (u64::MAX, None);
+        assert!(within(&mut began, 7, t0, most));
+        assert!(within(&mut began, 7, t0 + Duration::from_secs(11), most));
+        assert!(!within(&mut began, 7, t0 + Duration::from_secs(12), most));
+        assert!(!within(&mut began, 7, t0 + Duration::from_secs(40), most));
+        assert!(within(&mut began, 8, t0 + Duration::from_secs(41), most));
+        assert!(!within(&mut began, 8, t0 + Duration::from_secs(53), most));
+        // No time at all: never.
+        assert!(!within(&mut (u64::MAX, None), 1, t0, Duration::ZERO));
+    }
 
     #[test]
     fn worker_count_follows_the_processors_and_the_switch() {

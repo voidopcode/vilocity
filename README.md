@@ -104,18 +104,47 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 13:22
+**Latest test run:** 2026-11-27 15:02
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 25.4 fps, 39 ms a frame |
-| Best while playing | 32.7 fps |
-| Last frame | 28.4 fps, 35 ms, 5276 draws, 271 dropped without a pipeline |
+| Frame rate while playing (typical) | 24.3 fps, 41 ms a frame |
+| Best while playing | 34.9 fps |
+| Last frame | 24.4 fps, 41 ms, 6600 draws, 111 dropped without a pipeline |
 | Shaders that failed to translate | compute 6 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: DLSS on NVIDIA cards, every frame checked for faults, and what that found.
+Latest: a first start no longer ends at the world's first frame, and what the hunt for
+the torn frames ruled out.
+- **First start on a PC that never ran the game** (issue 1, an RTX 5070 Ti): the first
+  frame of the world made every compute pipeline it uses on the spot, one after the
+  other (4 to 15 a second, the driver's cache being empty), stood 30 s, and the game's
+  own watchdog ended the run with a write to address 0. A frame's dispatches now wait so
+  for 12 s at most (`VILOCITY_PIPELINE_COMPUTE_WAIT_MS`) and then within the usual half
+  second; what a dropped one leaves wrong (a shirt in blocks of black and white) is
+  right on the next start. Checked here: the rule's test, and a start with every cache
+  warm, which is as before. Not checked here: the cold start itself (it would need this
+  PC's driver cache emptied).
+- **Torn frames, what they are not.** Each of these was built and counted on the same
+  116 s walk: a wait for the flights that write, through another host copy, memory a
+  submission refreshes (as many torn frames, 12 ms a frame slower); a present that
+  returns only when the frame before has landed (as many); the check of pieces fetched
+  while a later flight writes them (`VILOCITY_FETCH_CHECK`) and the tracking of writes
+  through views picked by index (`VILOCITY_PICKED_WRITES=2`): no clear change. What
+  does remove them is fewer lists on their way to the card (`VILOCITY_LATE_WAIT_LISTS`,
+  256): none in a walk at 64, for 6 ms a frame; 33 at 128. The launcher's "Steadier
+  picture" stays the better trade (2 to 5 for 1.5 ms). The engine's own check
+  (`VILOCITY_UPCOPY_CHECK=1`) shows the fault itself: older bytes of a copy's CPU side
+  sent up over skinned vertices that shaders wrote, only with the steps done on the
+  card. Why the CPU side lacks them is still open.
+- **The card's memory, said where you play.** With other programs holding 6.5 GB of a
+  16 GB card and the 1440p picture chosen, 14,000 textures waited at a time (blank
+  eyes, wrong skin). The launcher's check now warns under 11 GB free (14 GB for the
+  1440p and 4K pictures), and the frame-rate panel names what other programs hold from
+  2 GB on.
+
+Before that: DLSS on NVIDIA cards, every frame checked for faults, and what that found.
 Measured on one PC (Ryzen 9 9950X3D, RTX 5080, 62 GB), with runs that take the
 keyboard and whose every frame was captured and counted.
 - **DLSS Super Resolution** takes the place of the game's own FSR upscale
