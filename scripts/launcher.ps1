@@ -311,7 +311,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
         </StackPanel></Border>
         <Border Style="{StaticResource Card}" Margin="0,0,0,14"><StackPanel>
           <TextBlock Style="{StaticResource Label}" Text="Game settings (also in the game: F1)"/>
-          <TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,0,0,10" Text="The same settings as the game's F1 menu, kept together: what you change here shows there, and the other way round. Those marked * apply when the game starts; the others also change while it runs."/>
+          <TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,0,0,10" Text="The same settings as the game's F1 menu. Every change is saved by itself and shows in both places, also while the game runs. Those marked * need a restart of the game; the others change at once."/>
           <StackPanel x:Name="Settings"/>
           <TextBlock x:Name="SettingsNote" Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,4,0,0"/>
         </StackPanel></Border>
@@ -686,18 +686,27 @@ $menuItems = @(
 )
 $readMenu = ${function:Read-Menu}; $writeMenu = ${function:Write-Menu}
 $menuNow = Read-Menu
+function Nearest-Choice($choices, [double]$v) {
+    $at = 0; $best = [double]::MaxValue
+    for ($i = 0; $i -lt $choices.Count; $i++) { $d = [math]::Abs([double]$choices[$i][1] - $v); if ($d -lt $best) { $best = $d; $at = $i } }
+    $at
+}
+$menuBoxes = @{}
 foreach ($item in $menuItems) {
     if ($item.nvidia -and -not $nvidiaCard) { continue }
     $row = New-Object Windows.Controls.DockPanel; $row.Margin = "0,0,0,8"
     $box = New-Object Windows.Controls.ComboBox; $box.Width = 200; [Windows.Controls.DockPanel]::SetDock($box, 'Right')
     foreach ($c in $item.choices) { [void]$box.Items.Add($c[0]) }
     $v = if ($menuNow.ContainsKey($item.key)) { [double]$menuNow[$item.key] } else { [double](& $item.default) }
-    $at = 0; $best = [double]::MaxValue
-    for ($i = 0; $i -lt $item.choices.Count; $i++) { $d = [math]::Abs([double]$item.choices[$i][1] - $v); if ($d -lt $best) { $best = $d; $at = $i } }
-    $box.SelectedIndex = $at
+    $box.SelectedIndex = Nearest-Choice $item.choices $v
     if (($item.dlss -and -not $ui.Dlss.IsEnabled) -or ($item.fg -and -not $ui.FrameGen.IsEnabled)) { $box.IsEnabled = $false }
-    $key = $item.key; $choices = $item.choices
-    $box.Add_SelectionChanged({ $m = & $readMenu; $m[$key] = [double]$choices[$this.SelectedIndex][1]; & $writeMenu $m; & $showMenu }.GetNewClosure())
+    $key = $item.key; $choices = $item.choices; $menuBoxes[$key] = @{ box = $box; choices = $choices }
+    $restart = $item.label -match '\*'; $name = ($item.label -replace '\s*\*.*$', '')
+    $box.Add_SelectionChanged({
+        if ($state.syncing) { return }
+        $m = & $readMenu; $m[$key] = [double]$choices[$this.SelectedIndex][1]; & $writeMenu $m; & $showMenu
+        $ui.Status.Text = if ($restart -and $state.started) { "Saved. $name changes when the game is started again." } else { "Saved." }
+    }.GetNewClosure())
     $t = New-Object Windows.Controls.TextBlock; $t.Text = $item.label; $t.VerticalAlignment = 'Center'
     [void]$row.Children.Add($box); [void]$row.Children.Add($t); [void]$ui.Settings.Children.Add($row)
 }
@@ -705,8 +714,21 @@ $ui.SettingsNote.Text = $(if (-not $nvidiaCard) { "DLSS and frame generation are
 # The picture (the first page's buttons) is kept in menu.txt too, so the game's menu shows it.
 if ($menuNow.ContainsKey('picture')) { $ui[@('Mode0', 'Mode2', 'Mode1')[[math]::Min(2, [int]$menuNow.picture)]].IsChecked = $true }
 foreach ($n in 'Mode0', 'Mode1', 'Mode2') {
-    $ui[$n].Add_Checked({ $m = & $readMenu; $m.picture = @{ Mode0 = 0; Mode1 = 2; Mode2 = 1 }[$this.Name]; & $writeMenu $m }.GetNewClosure())
+    $ui[$n].Add_Checked({ if ($state.syncing) { return }; $m = & $readMenu; $m.picture = @{ Mode0 = 0; Mode1 = 2; Mode2 = 1 }[$this.Name]; & $writeMenu $m }.GetNewClosure())
 }
+# The game's F1 menu writes menu.txt as soon as something changes there: shown here within a second.
+$state.menuSeen = (Get-Item $menuFile -ErrorAction SilentlyContinue).LastWriteTimeUtc
+$menuWatch = New-Object Windows.Threading.DispatcherTimer; $menuWatch.Interval = [TimeSpan]::FromSeconds(1)
+$menuWatch.Add_Tick({
+    $t = (Get-Item $menuFile -ErrorAction SilentlyContinue).LastWriteTimeUtc
+    if ($t -eq $state.menuSeen) { return }
+    $state.menuSeen = $t; $m = Read-Menu; $state.syncing = $true
+    try {
+        foreach ($k in @($menuBoxes.Keys)) { if ($m.ContainsKey($k)) { $b = $menuBoxes[$k]; $b.box.SelectedIndex = Nearest-Choice $b.choices ([double]$m[$k]) } }
+        if ($m.ContainsKey('picture')) { $ui[@('Mode0', 'Mode2', 'Mode1')[[math]::Min(2, [int]$m.picture)]].IsChecked = $true }
+    } finally { $state.syncing = $false }
+})
+if (-not $Shot) { $menuWatch.Start() }
 
 $ui.Play.Add_Click({
     if ($state.started) {

@@ -2,8 +2,9 @@
 //! setting, left and right change it; the change shows in the next frame
 //! (`crate::live`) and is kept for the next start at once. Enter on the last
 //! line puts every setting back to what the launcher gave. A setting marked
-//! `*` (the upscaler, frame generation when it was off at the start) is
-//! kept now and used from the next start. While the menu is shown the game
+//! `*` (the upscaler, the picture, ...; frame generation when it was off at
+//! the start) is kept now and used from the next start: a change of one shows
+//! in yellow, with a line saying to restart the game. While the menu is shown the game
 //! gets no keys and no mouse, and the key that closed it not until it is let
 //! go (Esc would open the game's own pause menu).
 //!
@@ -67,7 +68,7 @@ struct Item {
 }
 
 const UPSCALER_NVIDIA: Item = Item {
-    name: "Upscaler",
+    name: "Upscaler *",
     knob: Knob::Upscaler,
     choices: &[("DLSS Off", 0.0), ("DLSS Quality", 1.0), ("DLSS Balanced", 2.0), ("DLSS Performance", 3.0)],
     help: "NVIDIA DLSS (Off: the game's own upscaling). Applies at the next start",
@@ -85,25 +86,25 @@ const FRAME_GEN: Item = Item {
     help: "Made-up frames between real ones: DLSS, RTX 40/50, Windows GPU scheduling",
 };
 const PICTURE: Item = Item {
-    name: "Picture",
+    name: "Picture *",
     knob: Knob::Picture,
     choices: &[("1080p (Series S)", 0.0), ("1440p (Series X)", 1.0), ("4K (Series X)", 2.0)],
     help: "Series X: sharper, slower, needs about 14 GB of video memory. Next start",
 };
 const DLSS_MODEL: Item = Item {
-    name: "DLSS model",
+    name: "DLSS model *",
     knob: Knob::DlssModel,
     choices: &[("Default", 0.0), ("J", 1.0), ("K", 2.0), ("L", 3.0), ("M", 4.0)],
     help: "Which of NVIDIA's DLSS models upscales. Applies at the next start",
 };
 const HAZE: Item = Item {
-    name: "Heat haze",
+    name: "Heat haze *",
     knob: Knob::Haze,
     choices: &[("On", 0.0), ("Off", 1.0)],
     help: "The game's shimmer above hot ground and fire. Applies at the next start",
 };
 const TORN_FIX: Item = Item {
-    name: "Torn-frame fix",
+    name: "Torn-frame fix *",
     knob: Knob::TornFix,
     choices: &[("Off", 0.0), ("On (slower)", 1.0)],
     help: "No frames with a character drawn torn; much slower. Next start",
@@ -273,7 +274,7 @@ const TRACK: COLORREF = rgb(40, 44, 56);
 const WIDTH: f32 = 460.0;
 const TOP: f32 = 74.0;
 const ROW: f32 = 30.0;
-const FOOT: f32 = 66.0;
+const FOOT: f32 = 90.0;
 const RADIUS: f32 = 14.0;
 
 /// GDI's things for painting the menu at one scale.
@@ -409,7 +410,8 @@ impl Painter {
             self.text(2, if picked { WHITE } else { GREY }, name, [22.0, y, 230.0, y + ROW - 2.0], DT_LEFT);
             let star = if *pending { "  *" } else { "" };
             let shown = if i < items().len() { format!("\u{2039}  {value}  \u{203A}{star}") } else { value.clone() };
-            self.text(2, if picked { FAIR } else { WHITE }, &shown, [230.0, y, w - 20.0, y + ROW - 2.0], DT_RIGHT);
+            // A change that waits for a restart in yellow, picked or not.
+            self.text(2, if picked || *pending { FAIR } else { WHITE }, &shown, [230.0, y, w - 20.0, y + ROW - 2.0], DT_RIGHT);
         }
         let y = TOP + ROW * m.rows.len() as f32 - 2.0;
         self.fill(TRACK, [14.0, y, w - 14.0, y + 1.0]);
@@ -417,10 +419,16 @@ impl Painter {
         self.text(
             3,
             GREY,
-            "\u{2191}\u{2193} pick     \u{2190}\u{2192} change     saved at once     * next start",
+            "\u{2191}\u{2193} pick    \u{2190}\u{2192} change    Auto-saved, shown in the launcher",
             [22.0, y + 32.0, w - 18.0, y + 56.0],
             DT_LEFT,
         );
+        let (colour, line) = if m.rows.iter().any(|r| r.2) {
+            (FAIR, "Restart the game to use the changes in yellow")
+        } else {
+            (GREY, "* needs a restart of the game to take effect")
+        };
+        self.text(3, colour, line, [22.0, y + 56.0, w - 18.0, y + 80.0], DT_LEFT);
         // SAFETY: GDI is done with the bitmap; it holds `size` BGRA pixels.
         unsafe {
             let _ = GdiFlush();
@@ -632,6 +640,11 @@ mod tests {
             assert!(item.help.len() <= 76, "{}", item.help);
         }
         assert_eq!(NVIDIA_ITEMS.len(), OTHER_ITEMS.len() + 2);
+        // `*` on exactly the settings that wait for a restart (frame generation
+        // depends on the start; AMD's one-choice upscaler cannot be changed).
+        for item in NVIDIA_ITEMS.iter().chain(&OTHER_ITEMS).filter(|i| i.knob != Knob::FrameGen && i.choices.len() > 1) {
+            assert_eq!(item.name.ends_with(" *"), next_start(item.knob), "{}", item.name);
+        }
         assert!(OTHER_ITEMS.iter().all(|i| i.knob != Knob::DlssModel));
     }
 
