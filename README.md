@@ -104,20 +104,31 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 15:02
+**Latest test run:** 2026-11-27 17:59
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 24.3 fps, 41 ms a frame |
-| Best while playing | 34.9 fps |
-| Last frame | 24.4 fps, 41 ms, 6600 draws, 111 dropped without a pipeline |
+| Frame rate while playing (typical) | 19.2 fps, 52 ms a frame |
+| Best while playing | 24.6 fps |
+| Last frame | 15.9 fps, 63 ms, 9588 draws, 316 dropped without a pipeline |
 | Shaders that failed to translate | compute 6 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
-Latest: every setting in the launcher and in the game, two reported problems, settings
-inside the game, a first start no longer ends at the world's first frame, and what the
-hunt for the torn frames ruled out.
+Latest: the 4-7 fps drops explained and shown on the overlay, and what the picture
+tests of 2026-11-27 evening ruled out.
+- **4-7 fps at the 1440p picture is the card's memory running out.** At 1440p the game
+  holds 12.7-13.4 GB of the card. With about 6 GB held by other programs (browsers,
+  Discord, a Python program), Windows cut the game's budget to about 12 GB and moved the
+  rest to the PC's memory: the card's part of a frame went from about 6 ms to 64-122 ms.
+  At 1080p the same kind of scene holds 7.6 GB. The overlay now says "CARD FULL: others
+  X GB, try 1080p" in red when the card is over 93 % full. Walking and running the
+  daylight town (RTX 5080): 24-28 fps at 1080p, 15-20 at 1440p.
+- **Ruled out:** the fog's temporal pass for the floating blocks (left out, they stayed;
+  they also show in the opening, and poles pass in front of them, so they are in the
+  scene, not over it). "Shade in creases" on and off changed nothing visible on the
+  opening's faces. The reflections stand-in on and off changed nothing visible in the
+  opening or the daylight town; the glitter on skin (pool party) is in no test save yet.
 - **Every setting, in the launcher and on F1, kept together.** The launcher's options
   have a list for each of the game's settings (upscaler, DLSS model, frame generation,
   light in the shade, shade in creases, brighter nights, fog light cap, reflections

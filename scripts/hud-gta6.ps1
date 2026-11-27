@@ -88,9 +88,9 @@ $form.Add_Paint({
     $g.DrawString((N $s.ms) + " ms", $value, (& $brush $white), ($PW - 12), 10, $right)
     if ($null -ne $s.draws) { $g.DrawString(("{0:N0} draws" -f $s.draws), $name, (& $brush $grey), ($PW - 12), 26, $right) }
     # A line: its name, what it says, and a bar of how full it is ($null: no bar).
-    $row = { param($y, $what, $says, $part, $whole, $inner)
+    $row = { param($y, $what, $says, $part, $whole, $inner, $tint = $white)
         $g.DrawString($what, $name, (& $brush $grey), 13, $y + 1)
-        $g.DrawString($says, $value, (& $brush $white), 50, $y)
+        $g.DrawString($says, $value, (& $brush $tint), 50, $y)
         if ($null -ne $part -and $whole) {
             $g.FillRectangle((& $brush $track), 50, $y + 16, ($PW - 62), 3)
             $share = [math]::Min(1.0, [double]$part / [double]$whole)
@@ -103,7 +103,11 @@ $form.Add_Paint({
     # What other programs hold of the card: from 2 GB on it is said, in place of the shared
     # memory (with 6 GB held by others the game's textures waited: blank eyes, wrong skin).
     $others = if ($null -ne $s.vramUsed -and $null -ne $s.gameVram) { $s.vramUsed - $s.gameVram } else { 0 }
-    & $row 86 "GAME" $(if ($others -ge 2) { "video {0} GB   others hold {1} GB" -f (N $s.gameVram), (N $others) } else { "video {0} GB   shared {1} GB" -f (N $s.gameVram), (N $s.gameShared) }) $null $null $null
+    # A full card: Windows moves the game's memory to the PC's and the card's frame takes 60-120 ms
+    # (4-7 fps at 1440p with 5.6 GB held by others, 2026-11-27; 1080p needs some 5 GB less).
+    $full = $null -ne $s.vramUsed -and $s.vramAll -gt 0 -and ($s.vramUsed / $s.vramAll) -gt 0.93
+    if ($full) { & $row 86 "GAME" ("CARD FULL: others {0} GB, try 1080p" -f (N $others)) $null $null $null $bad }
+    else { & $row 86 "GAME" $(if ($others -ge 2) { "video {0} GB   others hold {1} GB" -f (N $s.gameVram), (N $others) } else { "video {0} GB   shared {1} GB" -f (N $s.gameVram), (N $s.gameShared) }) $null $null $null }
     & $row 104 "RAM" ("game {0}   PC {1} of {2} GB" -f (N $s.gameRam), (N $s.ram), (N $s.ramAll "N0")) $s.ram $s.ramAll $s.gameRam
     & $row 126 "KEYS" $(if ($state.keys -eq "driving") { "driving   G: on foot   F1: settings" } else { "on foot   G: driving   F1: settings" }) $null $null $null
 })
