@@ -167,6 +167,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
           <TextBlock Text="Vilocity" FontSize="19" FontWeight="SemiBold" VerticalAlignment="Center"/>
         </StackPanel>
         <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource Dim}" Margin="8,0,0,0" Text="Your own copy of the game. No network, none of your files: the game runs in a sandbox."/>
+        <Button x:Name="UpdateRail" DockPanel.Dock="Bottom" Margin="0,0,0,14"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE895;" Margin="0,2,10,0"/><TextBlock x:Name="UpdateText" Text="Update"/></StackPanel></Button>
         <StackPanel>
           <RadioButton x:Name="Nav0" GroupName="nav" Style="{StaticResource Nav}" IsChecked="True"><StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Glyph}" Text="&#xE768;"/><TextBlock Style="{StaticResource NavText}" Text="Play"/></StackPanel></RadioButton>
           <RadioButton x:Name="Nav1" GroupName="nav" Style="{StaticResource Nav}"><StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Glyph}" Text="&#xE7F8;"/><TextBlock Style="{StaticResource NavText}" Text="This PC"/></StackPanel></RadioButton>
@@ -284,7 +285,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
 </Window>
 '@
 $w = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
-$ui = @{}; foreach ($n in 'Settings', 'SettingsNote', 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Measure', 'Sandbox', 'Dlss', 'DlssText', 'FrameGen', 'Steady', 'Rays', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4', 'Progress', 'Backups', 'Restore', 'Bench', 'Update') { $ui[$n] = $w.FindName($n) }
+$ui = @{}; foreach ($n in 'Settings', 'SettingsNote', 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Measure', 'Sandbox', 'Dlss', 'DlssText', 'FrameGen', 'Steady', 'Rays', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4', 'Progress', 'Backups', 'Restore', 'Bench', 'Update', 'UpdateRail', 'UpdateText') { $ui[$n] = $w.FindName($n) }
 # The rail: one page shown at a time. The log's page shows the end of the newest log, read again while it is open.
 $showLog = {
     $newest = Get-ChildItem (Join-Path $home_ "logs") -Filter "gta6-*.log" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
@@ -551,6 +552,22 @@ $ui.Update.Add_Click({
     if ($state.started -or (Game-Process)) { $ui.Status.Text = "Close the game first: its engine is built again."; return }
     Start-Process cmd -ArgumentList '/k', "cd /d `"$root`" && git pull --ff-only && cargo build --release -p vilocity && echo. && echo Updated. Close this window, then close the launcher and open it again."
 })
+# The rail's Update button, always there: lit up when GitHub has a newer Vilocity (one git fetch, in the background, at start).
+$ui.UpdateRail.Add_Click({ $ui.Update.RaiseEvent((New-Object Windows.RoutedEventArgs ([Windows.Controls.Primitives.ButtonBase]::ClickEvent))) })
+if (-not $Shot -and (Test-Path (Join-Path $root ".git"))) {
+    try { $state.fetch = Start-Process git -ArgumentList '-C', "`"$root`"", 'fetch', '--quiet' -WindowStyle Hidden -PassThru } catch {}
+}
+$updCheck = New-Object Windows.Threading.DispatcherTimer; $updCheck.Interval = [TimeSpan]::FromSeconds(1)
+$updCheck.Add_Tick({
+    if (-not $state.fetch.HasExited) { return }
+    $updCheck.Stop()
+    $n = git -C $root rev-list --count 'HEAD..@{u}' 2>$null
+    if ($LASTEXITCODE -eq 0 -and [int]$n -gt 0) {
+        $ui.UpdateText.Text = "Update ready ($n new)"
+        $ui.UpdateRail.Background = (New-Object Windows.Media.BrushConverter).ConvertFromString("#7C5CFF")
+    } elseif ($LASTEXITCODE -eq 0) { $ui.UpdateText.Text = "Up to date" }
+})
+if ($state.fetch) { $updCheck.Start() }
 $ui.Build.Add_Click({ Start-Process cmd -ArgumentList '/k', "cd /d `"$root`" && cargo build --release -p vilocity && echo. && echo Built. Close this window and press Check again." })
 
 # Every pipeline the game has made in earlier runs (the engine keeps the list), compiled in a
