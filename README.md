@@ -99,18 +99,18 @@ loads saves and gets into the world. The world is where the work is now.
 | 4 | Loading into the world | ✅ works | ██████████ |
 | 5 | The world renders | 🟢 the saved game loads into the open world and plays; 26 console programs that need 64-lane waves have no form for 32-lane cards yet and their draws are dropped | █████████░ |
 | 6 | The picture | 🟢 shade, faces, skin, water and sky look as they should (the black shade, black arms, white loading screen and blocks on the water are gone); textures of what just came into view can appear late | █████████░ |
-| 7 | The world keeps running | 🟡 the loss 2-3 minutes in is fixed; a driver timeout some 7 minutes in remains (a longer GPU timeout is being tested) | █████░░░░░ |
-| 8 | Playable frame rate (30 fps) | 🟡 26-27 fps at 5,000 draws a frame and 17-19 fps at 10,000-11,000 (Ryzen 9 9950X3D, RTX 5080, as a Series S); it was 3-6 fps in the same place | ███████░░░ |
+| 7 | The world keeps running | 🟢 twelve minutes of the opening and twelve in the open world, unattended, without a loss, an error in the log or a driver timeout (2026-11-27); longer play is not measured | ████████░░ |
+| 8 | Playable frame rate (30 fps) | 🟡 33 fps at the median through the opening, 28-29 fps at 5,000 draws a frame and 25 fps at 9,000 in the open world (Ryzen 9 9950X3D, RTX 5080, as a Series S, medians over twelve minutes each); not 30 where the world is dense | ████████░░ |
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 13:09
+**Latest test run:** 2026-11-27 13:22
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 33.2 fps, 30 ms a frame |
-| Best while playing | 47.7 fps |
-| Last frame | 33.1 fps, 30 ms, 4596 draws, 246 dropped without a pipeline |
+| Frame rate while playing (typical) | 25.4 fps, 39 ms a frame |
+| Best while playing | 32.7 fps |
+| Last frame | 28.4 fps, 35 ms, 5276 draws, 271 dropped without a pipeline |
 | Shaders that failed to translate | compute 6 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -181,7 +181,10 @@ keyboard and whose every frame was captured and counted.
   frames in ten under 36.9 ms), memory 22 GB at first, 33 GB at its most, 27 GB at the
   end. Faces in its close-ups are right (eyes, skin, soft shade). With another program
   holding 2.5 GB of the card the card still had no room now and then (17 of 79 looks):
-  the launcher's check names such a program.
+  the launcher's check names such a program. Twelve more in the open world of the
+  story save (mostly standing, three short walks): no error, the card never full,
+  25 fps at the median (39.6 ms at 8,900 draws; nine frames in ten under 41.6 ms),
+  memory 20 GB growing to 23.
 - Known and open: with the pause menu up the blurred picture behind it drifts to green
   and magenta; the town of the current story save runs at 23 to 24 fps (9,000 to
   10,000 draws); the list of light programs in the wide form leaves grey rectangles on
