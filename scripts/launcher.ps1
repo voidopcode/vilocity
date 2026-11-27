@@ -289,6 +289,14 @@ if (-not ((Test-Path (Join-Path $sl "sl.interposer.dll")) -or (Test-Path (Join-P
     $ui.Dlss.IsEnabled = $false; $ui.FrameGen.IsEnabled = $false
     $ui.DlssText.Text = "DLSS (NVIDIA RTX cards): needs NVIDIA's Streamline SDK, which is not part of Vilocity. Download it from github.com/NVIDIA-RTX/Streamline/releases and unpack it into $sl"
 }
+# Frame generation: Streamline refuses it while Windows' GPU scheduling is off ("requires GPU
+# hardware scheduling to be enabled in the OS"), and the game then runs with DLSS alone.
+if ((Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' -ErrorAction SilentlyContinue).HwSchMode -ne 2) {
+    $ui.FrameGen.IsEnabled = $false
+    $note = New-Object Windows.Controls.TextBlock; $note.TextWrapping = 'Wrap'
+    $note.Text = "Frame generation (DLSS, RTX 40 and 50): needs Windows' hardware-accelerated GPU scheduling, which is off on this PC. Turn it on in Windows Settings, System, Display, Graphics, and restart the PC."
+    $ui.FrameGen.Content = $note
+}
 # Smooth Motion as the driver holds it now for vilocity.exe; no NVIDIA driver: no such option.
 $smooth = @{ driver = $null }
 try { $smooth.driver = [NvSmooth]::Get('vilocity.exe') -eq 1; $ui.Smooth.IsChecked = $smooth.driver } catch { $ui.Smooth.Visibility = 'Collapsed' }

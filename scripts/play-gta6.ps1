@@ -144,7 +144,11 @@ if ($Dlss -ne 'off' -and -not $Defaults) {
     if (-not (Test-Path (Join-Path $sl "sl.interposer.dll")) -and (Test-Path (Join-Path $sl "bin\x64\sl.interposer.dll"))) { $sl = Join-Path $sl "bin\x64" }
     if ($pc.maker -eq 'nvidia' -and (Test-Path (Join-Path $sl "sl.interposer.dll"))) {
         $env:VILOCITY_STREAMLINE_DIR = $sl; $env:VILOCITY_DLSS = "1"; $env:VILOCITY_DLSS_MODE = $Dlss
-        if ($FrameGen -and (Test-Path (Join-Path $sl "sl.dlss_g.dll"))) { $env:VILOCITY_FRAMEGEN = "1"; Write-Host "DLSS Frame Generation on." }
+        if ($FrameGen -and (Test-Path (Join-Path $sl "sl.dlss_g.dll"))) {
+            # Streamline refuses frame generation while Windows' GPU scheduling is off.
+            if ((Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' -ErrorAction SilentlyContinue).HwSchMode -eq 2) { $env:VILOCITY_FRAMEGEN = "1"; Write-Host "DLSS Frame Generation on." }
+            else { Write-Host "Frame generation needs Windows' hardware-accelerated GPU scheduling (Settings, System, Display, Graphics; then a restart): it is off, so DLSS runs alone." }
+        }
         Write-Host "DLSS ($Dlss) through the Streamline SDK in $sl."
     } else {
         Write-Host "DLSS is not on: it needs an NVIDIA RTX card and NVIDIA's Streamline SDK (sl.interposer.dll) in $sl."

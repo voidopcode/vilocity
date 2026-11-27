@@ -104,13 +104,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 10:35
+**Latest test run:** 2026-11-27 10:54
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 24.0 fps, 42 ms a frame |
-| Best while playing | 28.9 fps |
-| Last frame | 24.4 fps, 41 ms, 9061 draws, 1603 dropped without a pipeline |
+| Frame rate while playing (typical) | 25.4 fps, 39 ms a frame |
+| Best while playing | 29.0 fps |
+| Last frame | 24.8 fps, 40 ms, 8887 draws, 260 dropped without a pipeline |
 | Shaders that failed to translate | compute 5 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -125,8 +125,10 @@ keyboard and whose every frame was captured and counted.
   (NVIDIA's download: nothing of it is in this repository; its library is loaded only
   if its signature checks, and never fetches anything). In six minutes of the opening
   at 1440p upscaled to 4K: 8,878 frames, all of them upscaled by DLSS, none failed,
-  24 to 40 fps, inside the sandbox. Frame generation has its switch (`-FrameGen`) and
-  has not been run yet.
+  24 to 40 fps, inside the sandbox; at 1080p in the story save 24 to 28 fps, as without
+  it. Frame generation has its switch (`-FrameGen`): Streamline refuses it while
+  Windows' hardware-accelerated GPU scheduling is off (it is on the test PC), DLSS
+  then runs alone and the launcher says what to switch on. Not seen running yet.
 - **The character drawn torn.** Counting frames that differ from both their neighbours
   found the flicker: while he walks on the night street his body is pulled into long
   bands in single frames, 183 to 193 of 2,800 frames, in the version before this one
