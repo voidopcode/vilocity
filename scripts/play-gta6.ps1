@@ -237,7 +237,10 @@ if (Test-Path $starter) {
 # compiled in play. (VILOCITY_WARM=0: not made ahead.)
 if ($env:VILOCITY_WARM -ne "0" -and (Test-Path (Join-Path $cache "pipelines\known-pipelines.bin"))) {
     Write-Host "Checking the shader pipelines made ahead (minutes after an update, seconds otherwise)..."
-    if ($NoSandbox) { & $exe native warm --used } else { & $exe warm --used }
+    # (Its lines also go to logs\warm-progress.txt as they come: the launcher shows how far it is.)
+    $progress = Join-Path $env:LOCALAPPDATA "vilocity\logs\warm-progress.txt"
+    New-Item -ItemType Directory -Force (Split-Path $progress) | Out-Null
+    if ($NoSandbox) { & $exe native warm --used | Tee-Object -FilePath $progress | Out-Host } else { & $exe warm --used | Tee-Object -FilePath $progress | Out-Host }
 }
 if ($PrepareOnly) { Write-Host "Prepared."; return }
 

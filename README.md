@@ -123,6 +123,9 @@ picture tests of 2026-11-27 evening ruled out.
   or a card without mesh shaders (GTX, older Radeon, Intel UHD). It may: 24-31 GB of
   RAM, a small page file (an RTX 5070 PC's log: 3.7 GB of commit free, textures held
   back), a card other than an NVIDIA RTX, Windows 10.
+- **The launcher shows how far "Preparing the game's pipelines" is** ("1,200 of 3,517"):
+  it looked stuck for minutes after an update. The play script keeps the step's lines in
+  `logs\warm-progress.txt`; the step says how far it is every 100 pipelines.
 - **Measure** (launcher, Play page): runs the diagnostics build, whose log says where
   each frame's time and the memory go, for measuring from one's own play.
 - **Striped clothes (a texture showing an old picture).** A texture picked by index is

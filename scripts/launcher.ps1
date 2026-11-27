@@ -594,7 +594,14 @@ $timer.Add_Tick({
         # (said after 45 seconds, PLAY came back and a second press started a second game).
         $step = (Get-CimInstance Win32_Process -Filter "Name='vilocity.exe'" | Select-Object -ExpandProperty CommandLine) -join ' '
         $ui.Status.Text = if ($step -like '*native shaders*') { "Translating the game's shaders (once per build, about a minute)..." }
-            elseif ($step -like '*warm*') { "Preparing this build's pipelines (once per build, a few minutes)..." }
+            elseif ($step -like '*warm*') {
+                # How far it is, from the lines the play script keeps (a few minutes after an update of Vilocity or the driver).
+                $lines = Get-Content (Join-Path $home_ "logs\warm-progress.txt") -Tail 3 -ErrorAction SilentlyContinue
+                $done = $lines | Where-Object { $_ -match '^(\d+) of (\d+)' } | Select-Object -Last 1
+                if ($done -match '^(\d+) of (\d+)') { "Preparing the game's pipelines: {0:N0} of {1:N0} (after an update, a few minutes)..." -f [int]$Matches[1], [int]$Matches[2] }
+                elseif (($lines | Where-Object { $_ -match '\d+ to make' } | Select-Object -Last 1) -match '(\d+) to make') { "Preparing {0:N0} of the game's pipelines (after an update, a few minutes)..." -f [int]$Matches[1] }
+                else { "Preparing the game's pipelines (after an update, a few minutes)..." }
+            }
             else { "Starting..." }
     } elseif ($state.seen -or ((Get-Date) - $state.started).TotalSeconds -gt 45) {
         $ui.Status.Text = if ($state.seen) { "The game closed." } else { "The game did not start: see Logs." }
