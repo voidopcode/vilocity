@@ -104,13 +104,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 21:21
+**Latest test run:** 2026-11-27 22:10
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 30.6 fps, 33 ms a frame |
-| Best while playing | 36.0 fps |
-| Last frame | 29.1 fps, 34 ms, 3678 draws, 119 dropped without a pipeline |
+| Frame rate while playing (typical) | 26.0 fps, 39 ms a frame |
+| Best while playing | 43.2 fps |
+| Last frame | 28.9 fps, 35 ms, 5063 draws, 112 dropped without a pipeline |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -118,6 +118,10 @@ loads saves and gets into the world. The world is where the work is now.
 Latest: "will it work on this PC" in the launcher, clothes and faces drawn with another
 texture's colours, the 4-7 fps drops explained and shown on the overlay, and what the
 picture tests of 2026-11-27 evening ruled out.
+- **The overlay reads AMD and Intel cards too.** It asked only nvidia-smi, so an RX 9070 XT
+  showed "-%" and "- of - GB" (issue 3). Without nvidia-smi it now reads Windows' own GPU
+  counters for the card the game draws on; on the RTX 5080 they agree with nvidia-smi
+  (5.8 of 15.9 GB both).
 - **The "VRAM leak" was other programs, and the overlay now names the biggest.** Over a
   10-minute 1440p session the game's card memory rose to 14.5 GB in the first minute, then
   stayed between 14.4 and 15.4 GB until it closed (what it takes it gives back): no leak.

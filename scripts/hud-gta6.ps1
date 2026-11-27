@@ -52,6 +52,9 @@ $s = @{ fps = $null; ms = $null; draws = $null; gameCpu = $null; pcCpu = $null; 
         gameVram = $null; gameShared = $null; gameRam = $null; gameCommit = $null; ram = $null; ramAll = $null }
 $state = @{ keys = "on foot"; logAt = 0L; id = 0; owner = [IntPtr]::Zero; lastCpu = $null; lastAt = $null; seen = $false; hidden = $false; f8 = $false; tick = 0 }
 $pc = try { New-Object Diagnostics.PerformanceCounter('Processor', '% Processor Time', '_Total') } catch { $null }
+# The card's memory in GB, for cards without nvidia-smi (the largest the driver reports).
+$cardAll = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0*' -ErrorAction SilentlyContinue |
+    ForEach-Object { [double]$_.'HardwareInformation.qwMemorySize' } | Measure-Object -Maximum).Maximum / 1GB
 
 $PW = 250; $PH = 152
 $form = New-Object HudForm
@@ -156,9 +159,10 @@ $timer.Add_Tick({
     # The card every other second: these questions take a tenth of a second each.
     $state.tick += 1
     if ($state.tick % 2 -eq 1) {
+        $smi = $false
         try {
             $v = (nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits) -split ',\s*'
-            $s.vramUsed = [double]$v[0] / 1024; $s.vramAll = [double]$v[1] / 1024; $s.gpu = [double]$v[2]
+            $s.vramUsed = [double]$v[0] / 1024; $s.vramAll = [double]$v[1] / 1024; $s.gpu = [double]$v[2]; $smi = $true
         } catch {}
         try {
             $all = Get-CimInstance Win32_PerfRawData_GPUPerformanceCounters_GPUProcessMemory
@@ -170,6 +174,16 @@ $timer.Add_Tick({
                 Sort-Object { ($_.Group | Measure-Object DedicatedUsage -Sum).Sum } -Descending | Select-Object -First 1
             $s.topVram = if ($top) { ($top.Group | Measure-Object DedicatedUsage -Sum).Sum / 1GB } else { 0 }
             $s.topName = if ($top) { (Get-Process -Id ([int]$top.Name) -ErrorAction SilentlyContinue).ProcessName }
+            # No nvidia-smi (an AMD or Intel card): Windows' own counters, of the card the game draws on
+            # (issue 3: "-%" and "- of - GB" on an RX 9070 XT). They agree with nvidia-smi on an RTX 5080.
+            if (-not $smi -and $vm) {
+                $luid = (($vm | Sort-Object DedicatedUsage -Descending | Select-Object -First 1).Name -split '_')[2..4] -join '_'
+                $mem = Get-CimInstance Win32_PerfRawData_GPUPerformanceCounters_GPUAdapterMemory | Where-Object Name -like "$luid*"
+                $s.vramUsed = ($mem | Measure-Object DedicatedUsage -Sum).Sum / 1GB
+                $engines = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine | Where-Object { $_.Name -like "*$($luid)_*engtype_3D" }
+                $s.gpu = [math]::Min(100, ($engines | Measure-Object UtilizationPercentage -Sum).Sum)
+                $s.vramAll = $cardAll
+            }
         } catch {}
     }
     # Which keys hold: the engine writes "keys layout=drive" or "walk" at each press of G.
