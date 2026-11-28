@@ -319,6 +319,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
         <Border Style="{StaticResource Card}" Margin="0,0,0,14"><StackPanel>
           <TextBlock Style="{StaticResource Label}" Text="Game settings (also in the game: F1)"/>
           <TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,0,0,10" Text="The same settings as the game's F1 menu. Every change is saved by itself and shows in both places, also while the game runs. Those marked * need a restart of the game; the others change at once."/>
+          <Button x:Name="GetDlss" Visibility="Collapsed" HorizontalAlignment="Left" Margin="0,0,0,10" Padding="14,6" Content="Get DLSS (276 MB from NVIDIA)" ToolTip="Downloads NVIDIA's Streamline SDK 2.14.16 from github.com/NVIDIA-RTX/Streamline, checks it, and keeps its DLLs in %LOCALAPPDATA%\vilocity\streamline (scripts\get-dlss.ps1)"/>
           <StackPanel x:Name="Settings"/>
           <TextBlock x:Name="SettingsNote" Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,4,0,0"/>
         </StackPanel></Border>
@@ -364,7 +365,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
 </Window>
 '@
 $w = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
-$ui = @{}; foreach ($n in 'Version', 'FitChip', 'FitDot', 'FitText', 'Settings', 'SettingsNote', 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Measure', 'Sandbox', 'Dlss', 'DlssText', 'FrameGen', 'Steady', 'Rays', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4', 'Progress', 'Backups', 'Restore', 'Bench', 'Update', 'UpdateRail', 'UpdateText') { $ui[$n] = $w.FindName($n) }
+$ui = @{}; foreach ($n in 'Version', 'FitChip', 'FitDot', 'FitText', 'Settings', 'SettingsNote', 'GetDlss', 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Measure', 'Sandbox', 'Dlss', 'DlssText', 'FrameGen', 'Steady', 'Rays', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4', 'Progress', 'Backups', 'Restore', 'Bench', 'Update', 'UpdateRail', 'UpdateText') { $ui[$n] = $w.FindName($n) }
 # The version under the rail's Update button (one line: v<workspace version>), and the commit and its date of a
 # copy made with git (else the engine's build date). ([char]0xB7: the file stays ASCII.)
 $ver = if ((Get-Content (Join-Path $root "Cargo.toml") -Raw -ErrorAction SilentlyContinue) -match '(?m)^version = "([^"]+)"') { $Matches[1] } else { "?" }
@@ -398,14 +399,15 @@ $ui.Full.IsChecked = [bool]$set.full; $ui.LogWindow.IsChecked = [bool]$set.logwi
 $sl = if ($env:VILOCITY_STREAMLINE_DIR) { $env:VILOCITY_STREAMLINE_DIR } else { Join-Path $home_ "streamline" }
 if (-not ((Test-Path (Join-Path $sl "sl.interposer.dll")) -or (Test-Path (Join-Path $sl "bin\x64\sl.interposer.dll")))) {
     $ui.Dlss.IsEnabled = $false; $ui.FrameGen.IsEnabled = $false
-    $ui.DlssText.Text = "DLSS (NVIDIA RTX cards): needs NVIDIA's Streamline SDK, which is not part of Vilocity. Download it from github.com/NVIDIA-RTX/Streamline/releases and unpack it into $sl"
+    $ui.DlssText.Text = "DLSS (NVIDIA RTX cards): needs NVIDIA's Streamline SDK, which is not part of Vilocity. Press Get DLSS below to download it from NVIDIA (once), or unpack it yourself into $sl"
 }
 # Frame generation: Streamline refuses it while Windows' GPU scheduling is off ("requires GPU
 # hardware scheduling to be enabled in the OS"), and the game then runs with DLSS alone.
 # Windows' GPU scheduling: HwSchMode 2 is on, 1 off; on Windows 11 the value is often not there
 # while it is on, its default (issue 2).
 $hags = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' -ErrorAction SilentlyContinue).HwSchMode
-if (-not ($hags -eq 2 -or ($null -eq $hags -and [Environment]::OSVersion.Version.Build -ge 22000))) {
+$hagsOn = $hags -eq 2 -or ($null -eq $hags -and [Environment]::OSVersion.Version.Build -ge 22000)
+if (-not $hagsOn) {
     $ui.FrameGen.IsEnabled = $false
     $note = New-Object Windows.Controls.TextBlock; $note.TextWrapping = 'Wrap'
     $note.Text = "Frame generation (DLSS, RTX 40 and 50): needs Windows' hardware-accelerated GPU scheduling, which is off on this PC. Turn it on in Windows Settings, System, Display, Graphics, and restart the PC."
@@ -772,6 +774,32 @@ foreach ($item in $menuItems) {
     [void]$row.Children.Add($box); [void]$row.Children.Add($t); [void]$ui.Settings.Children.Add($row)
 }
 $ui.SettingsNote.Text = $(if (-not $nvidiaCard) { "DLSS and frame generation are for NVIDIA cards; this one upscales with the game's own AMD FSR." } elseif (-not $ui.Dlss.IsEnabled) { $ui.DlssText.Text } elseif (-not $ui.FrameGen.IsEnabled) { "Frame generation needs Windows' hardware-accelerated GPU scheduling, which is off on this PC (Windows Settings, System, Display, Graphics; then a restart)." } else { "" })
+# Get DLSS: NVIDIA's Streamline SDK fetched by scripts\get-dlss.ps1 in a window of its own (its
+# progress shows there); when it is in place the DLSS settings open up, without a restart.
+if ($nvidiaCard -and -not $ui.Dlss.IsEnabled) { $ui.GetDlss.Visibility = 'Visible' }
+$dlssWatch = New-Object Windows.Threading.DispatcherTimer; $dlssWatch.Interval = [TimeSpan]::FromSeconds(1)
+$ui.GetDlss.Add_Click({
+    $get = Join-Path $PSScriptRoot "get-dlss.ps1"
+    $state.dlssGet = Start-Process powershell -PassThru -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "& '$($get -replace "'", "''")'; `$c = `$LASTEXITCODE; Start-Sleep 6; exit `$c"
+    $ui.GetDlss.IsEnabled = $false; $ui.GetDlss.Content = "Getting DLSS..."; $ui.Status.Text = "Getting DLSS from NVIDIA: see its window."
+    $dlssWatch.Start()
+})
+$dlssWatch.Add_Tick({
+    if (-not $state.dlssGet.HasExited) { return }
+    $dlssWatch.Stop()
+    if (Test-Path (Join-Path $sl "bin\x64\sl.interposer.dll")) {
+        $ui.Dlss.IsEnabled = $true; $ui.FrameGen.IsEnabled = $hagsOn
+        foreach ($item in $menuItems) {
+            if (($item.dlss -or ($item.fg -and $hagsOn)) -and $menuBoxes.ContainsKey($item.key)) { $menuBoxes[$item.key].box.IsEnabled = $true }
+        }
+        $ui.GetDlss.Visibility = 'Collapsed'
+        $ui.SettingsNote.Text = if ($hagsOn) { "" } else { "Frame generation needs Windows' hardware-accelerated GPU scheduling, which is off on this PC (Windows Settings, System, Display, Graphics; then a restart)." }
+        $ui.Status.Text = "DLSS is ready: choose it under Upscaler."
+    } else {
+        $ui.GetDlss.IsEnabled = $true; $ui.GetDlss.Content = "Get DLSS (276 MB from NVIDIA)"
+        $ui.Status.Text = "Could not get DLSS: its window said why. Press Get DLSS to try again."
+    }
+})
 # The picture (the first page's buttons) is kept in menu.txt too, so the game's menu shows it.
 if ($menuNow.ContainsKey('picture')) { $ui[@('Mode0', 'Mode2', 'Mode1')[[math]::Min(2, [int]$menuNow.picture)]].IsChecked = $true }
 foreach ($n in 'Mode0', 'Mode1', 'Mode2') {

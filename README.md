@@ -113,13 +113,11 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-28 17:13
+**Latest test run:** 2026-11-28 17:26
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 25.6 fps, 39 ms a frame |
-| Best while playing | 32.6 fps |
-| Last frame | 24.9 fps, 40 ms, 5364 draws, 274 dropped without a pipeline |
+| Frame rate while playing | no frames of the world in this run (menus only) |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -402,7 +400,10 @@ keyboard and whose every frame was captured and counted.
   quality` (or `balanced`, `performance`), and a box in the launcher's Options.
   It needs NVIDIA's Streamline SDK unpacked at `%LOCALAPPDATA%\vilocity\streamline`
   (NVIDIA's download: nothing of it is in this repository; its library is loaded only
-  if its signature checks, and never fetches anything). In six minutes of the opening
+  if its signature checks, and never fetches anything). Without it the launcher's
+  Options show **Get DLSS** (`scripts\get-dlss.ps1`): NVIDIA's release 2.14.16 from
+  github.com/NVIDIA-RTX/Streamline (276 MB, once), checked against GitHub's SHA-256 and
+  NVIDIA's signature; only its `bin\x64` DLLs and licences are kept. In six minutes of the opening
   at 1440p upscaled to 4K: 8,878 frames, all of them upscaled by DLSS, none failed,
   24 to 40 fps, inside the sandbox; at 1080p in the story save 24 to 28 fps, as without
   it. Frame generation has its switch (`-FrameGen`): Streamline refuses it while

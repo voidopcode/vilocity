@@ -223,7 +223,7 @@ if ($Dlss -ne 'off' -and -not $Defaults) {
         }
         Write-Host "DLSS ($Dlss) through the Streamline SDK in $sl."
     } else {
-        Write-Host "DLSS is not on: it needs an NVIDIA RTX card and NVIDIA's Streamline SDK (sl.interposer.dll) in $sl."
+        Write-Host "DLSS is not on: it needs an NVIDIA RTX card and NVIDIA's Streamline SDK (sl.interposer.dll) in $sl (the launcher's Options: Get DLSS, or scripts\get-dlss.ps1)."
     }
 }
 # The console the title is shown, and the size of the screen it is told of.
