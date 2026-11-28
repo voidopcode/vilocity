@@ -241,7 +241,8 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
           <TextBlock Text="Vilocity" FontSize="19" FontWeight="SemiBold" VerticalAlignment="Center"/>
         </StackPanel>
         <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource Dim}" Margin="8,0,0,0" Text="Your own copy of the game. No network, none of your files: the game runs in a sandbox."/>
-        <Button x:Name="UpdateRail" DockPanel.Dock="Bottom" Margin="0,0,0,14"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE895;" Margin="0,2,10,0"/><TextBlock x:Name="UpdateText" Text="Update"/></StackPanel></Button>
+        <TextBlock x:Name="Version" DockPanel.Dock="Bottom" Style="{StaticResource Dim}" FontSize="11" Margin="8,0,0,14"/>
+        <Button x:Name="UpdateRail" DockPanel.Dock="Bottom" Margin="0,0,0,6"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE895;" Margin="0,2,10,0"/><TextBlock x:Name="UpdateText" Text="Update"/></StackPanel></Button>
         <StackPanel>
           <RadioButton x:Name="Nav0" GroupName="nav" Style="{StaticResource Nav}" IsChecked="True"><StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Glyph}" Text="&#xE768;"/><TextBlock Style="{StaticResource NavText}" Text="Play"/></StackPanel></RadioButton>
           <RadioButton x:Name="Nav1" GroupName="nav" Style="{StaticResource Nav}"><StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Glyph}" Text="&#xE7F8;"/><TextBlock Style="{StaticResource NavText}" Text="This PC"/></StackPanel></RadioButton>
@@ -363,7 +364,13 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
 </Window>
 '@
 $w = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
-$ui = @{}; foreach ($n in 'FitChip', 'FitDot', 'FitText', 'Settings', 'SettingsNote', 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Measure', 'Sandbox', 'Dlss', 'DlssText', 'FrameGen', 'Steady', 'Rays', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4', 'Progress', 'Backups', 'Restore', 'Bench', 'Update', 'UpdateRail', 'UpdateText') { $ui[$n] = $w.FindName($n) }
+$ui = @{}; foreach ($n in 'Version', 'FitChip', 'FitDot', 'FitText', 'Settings', 'SettingsNote', 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Measure', 'Sandbox', 'Dlss', 'DlssText', 'FrameGen', 'Steady', 'Rays', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4', 'Progress', 'Backups', 'Restore', 'Bench', 'Update', 'UpdateRail', 'UpdateText') { $ui[$n] = $w.FindName($n) }
+# The version under the rail's Update button (one line: v<workspace version>), and the commit and its date of a
+# copy made with git (else the engine's build date). ([char]0xB7: the file stays ASCII.)
+$ver = if ((Get-Content (Join-Path $root "Cargo.toml") -Raw -ErrorAction SilentlyContinue) -match '(?m)^version = "([^"]+)"') { $Matches[1] } else { "?" }
+$commit = (git -C $root log -1 --format='%h|%cd' --date=format:'%d %b %Y' 2>$null) -split '\|'
+$dot = " $([char]0xB7) "
+$ui.Version.Text = "v$ver" + $(if ($LASTEXITCODE -eq 0 -and $commit.Count -eq 2) { $dot + ($commit -join $dot) } elseif (Test-Path $exe) { $dot + ("built {0:dd MMM yyyy}" -f (Get-Item $exe).LastWriteTime) } else { "" })
 # The rail: one page shown at a time. The log's page shows the end of the newest log, read again while it is open.
 $showLog = {
     $newest = Get-ChildItem (Join-Path $home_ "logs") -Filter "gta6-*.log" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1

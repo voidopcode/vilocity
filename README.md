@@ -113,13 +113,11 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-28 15:01
+**Latest test run:** 2026-11-28 15:08
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 27.2 fps, 37 ms a frame |
-| Best while playing | 46.9 fps |
-| Last frame | 22.9 fps, 44 ms, 6721 draws, 254 dropped without a pipeline |
+| Frame rate while playing | no frames of the world in this run (menus only) |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -127,6 +125,9 @@ loads saves and gets into the world. The world is where the work is now.
 Latest: "will it work on this PC" in the launcher, clothes and faces drawn with another
 texture's colours, the 4-7 fps drops explained and shown on the overlay, and what the
 picture tests of 2026-11-27 evening ruled out.
+- **The launcher shows its version.** Under the Update button: the workspace version, and for a
+  copy made with git the commit and its date (`v0.1.0 · 10b81fc · 28 Nov 2026`), else the
+  engine's build date, so a report can say which build it comes from.
 - **Helper threads above normal, to try (`VILOCITY_HELPER_PRIORITY=1`, off).** The threads the
   submitting thread waits for (the wide workers, the `land` pools, the heaps' records, the pass
   over the heap's views) ran at normal priority while it runs above normal, and a walking frame
