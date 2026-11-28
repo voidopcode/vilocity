@@ -237,6 +237,12 @@ $monitor = Join-Path $PSScriptRoot "monitor-gta6.ps1"
 $fsr = Join-Path $env:LOCALAPPDATA "vilocity\fidelityfx\amd_fidelityfx_upscaler_dx12.dll"
 if ($env:VILOCITY_FSR_DLL -eq "off") { Remove-Item Env:VILOCITY_FSR_DLL }
 elseif (-not $env:VILOCITY_FSR_DLL -and (Test-Path $fsr)) { $env:VILOCITY_FSR_DLL = $fsr }
+# AMD FSR frame generation (the menu's frame generation on a card other than NVIDIA's, whose is
+# DLSS's): AMD's DLL beside the upscaler (the launcher's Get FSR, or scripts\get-fsr.ps1).
+if (-not $Defaults -and $FrameGen -and $pc.maker -ne 'nvidia' -and $env:VILOCITY_FSR_DLL) {
+    if (Test-Path (Join-Path (Split-Path $env:VILOCITY_FSR_DLL) "amd_fidelityfx_framegeneration_dx12.dll")) { $env:VILOCITY_FSR_FRAMEGEN = "1"; Write-Host "AMD FSR frame generation on." }
+    else { Write-Host "AMD FSR frame generation needs AMD's DLLs: the launcher's Options, Get FSR (or scripts\get-fsr.ps1)." }
+}
 
 # One game at a time: two that start together share the card, the caches and DLSS's
 # own files (of three started at once, two died while DLSS loaded).
@@ -298,7 +304,7 @@ if ($env:VILOCITY_WARM -ne "0" -and (Test-Path (Join-Path $cache "pipelines\know
 if ($PrepareOnly) { Write-Host "Prepared."; return }
 
 $watch = if (-not $NoMonitor) { Start-Process powershell -PassThru -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$monitor`" -Log `"$log`"" }
-# The in-game HUD: frame rate and memory on the right of the game's window
+# The in-game HUD: frame rate, upscaler and memory on the left of the game's window
 # (VILOCITY_HUD=0: none).
 if ($env:VILOCITY_HUD -ne "0") {
     $hud = Join-Path $PSScriptRoot "hud-gta6.ps1"

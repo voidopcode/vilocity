@@ -9543,9 +9543,14 @@ impl Host {
                 // (`VILOCITY_STREAMLINE_PRESENT=1`, DLSS without frame
                 // generation: Streamline's proxy of it, for its present hook;
                 // the swap chain itself otherwise.)
-                None => crate::streamline::present_hooked(
-                    factory.CreateSwapChainForHwnd(&self.queue, hwnd, &desc, None, None)?.cast::<IDXGISwapChain3>()?,
-                ),
+                // (Vilocity: with `VILOCITY_FSR_FRAMEGEN=1`, AMD's frame generation
+                // swap chain, made by its SDK; `crate::fsr_fg`.)
+                None => match crate::fsr_fg::for_window(&factory, hwnd, &desc, &self.queue) {
+                    Some(swap_chain) => swap_chain,
+                    None => crate::streamline::present_hooked(
+                        factory.CreateSwapChainForHwnd(&self.queue, hwnd, &desc, None, None)?.cast::<IDXGISwapChain3>()?,
+                    ),
+                },
             };
             let copy = self.new_list()?;
             copy.close();

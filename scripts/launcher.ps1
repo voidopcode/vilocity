@@ -320,6 +320,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
           <TextBlock Style="{StaticResource Label}" Text="Game settings (also in the game: F1)"/>
           <TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,0,0,10" Text="The same settings as the game's F1 menu. Every change is saved by itself and shows in both places, also while the game runs. Those marked * need a restart of the game; the others change at once."/>
           <Button x:Name="GetDlss" Visibility="Collapsed" HorizontalAlignment="Left" Margin="0,0,0,10" Padding="14,6" Content="Get DLSS (276 MB from NVIDIA)" ToolTip="Downloads NVIDIA's Streamline SDK 2.14.16 from github.com/NVIDIA-RTX/Streamline, checks it, and keeps its DLLs in %LOCALAPPDATA%\vilocity\streamline (scripts\get-dlss.ps1)"/>
+          <Button x:Name="GetFsr" Visibility="Collapsed" HorizontalAlignment="Left" Margin="0,0,0,10" Padding="14,6" Content="Get FSR frame generation (87 MB from AMD)" ToolTip="Downloads AMD's signed FidelityFX DLLs (SDK v2.4.0) from github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK, checks them, and keeps them in %LOCALAPPDATA%\vilocity\fidelityfx (scripts\get-fsr.ps1)"/>
           <StackPanel x:Name="Settings"/>
           <TextBlock x:Name="SettingsNote" Style="{StaticResource Dim}" TextWrapping="Wrap" Margin="0,4,0,0"/>
         </StackPanel></Border>
@@ -365,7 +366,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
 </Window>
 '@
 $w = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
-$ui = @{}; foreach ($n in 'Version', 'FitChip', 'FitDot', 'FitText', 'Settings', 'SettingsNote', 'GetDlss', 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Measure', 'Sandbox', 'Dlss', 'DlssText', 'FrameGen', 'Steady', 'Rays', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4', 'Progress', 'Backups', 'Restore', 'Bench', 'Update', 'UpdateRail', 'UpdateText') { $ui[$n] = $w.FindName($n) }
+$ui = @{}; foreach ($n in 'Version', 'FitChip', 'FitDot', 'FitText', 'Settings', 'SettingsNote', 'GetDlss', 'GetFsr', 'Logo', 'CoverBox', 'Cover', 'Hero', 'GameName', 'Game', 'Browse', 'Checks', 'Recheck', 'Mode0', 'Mode1', 'Mode2', 'ModeText', 'Cap0', 'Cap1', 'Cap2', 'Sharp', 'SharpText', 'Fsr', 'Hud', 'Full', 'LogWindow', 'Measure', 'Sandbox', 'Dlss', 'DlssText', 'FrameGen', 'Steady', 'Rays', 'Night', 'Smooth', 'Leave', 'Extra', 'Status', 'Keys', 'Saves', 'Logs', 'Build', 'Warm', 'Play', 'Profile', 'LogBox', 'LogName', 'Nav0', 'Nav1', 'Nav2', 'Nav3', 'Nav4', 'Page0', 'Page1', 'Page2', 'Page3', 'Page4', 'Progress', 'Backups', 'Restore', 'Bench', 'Update', 'UpdateRail', 'UpdateText') { $ui[$n] = $w.FindName($n) }
 # The version under the rail's Update button (one line: v<workspace version>), and the commit and its date of a
 # copy made with git (else the engine's build date). ([char]0xB7: the file stays ASCII.)
 $ver = if ((Get-Content (Join-Path $root "Cargo.toml") -Raw -ErrorAction SilentlyContinue) -match '(?m)^version = "([^"]+)"') { $Matches[1] } else { "?" }
@@ -732,11 +733,13 @@ $showMenu = {
 # Every setting of the game's F1 menu, here too: a list for each, showing what menu.txt holds (or
 # what a start without it gets) and writing it there when changed. DLSS and frame generation are
 # NVIDIA's alone (AMD cards get the game's own FSR); the picture is the buttons on the first page.
+$fsrFg = Join-Path $home_ "fidelityfx\amd_fidelityfx_framegeneration_dx12.dll"; $fsrFgReady = Test-Path $fsrFg
 $nvidiaCard = [bool](Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Where-Object Name -match 'NVIDIA')
 $menuItems = @(
     @{ key = 'upscaler'; label = 'Upscaler *'; nvidia = $true; dlss = $true; choices = @(@('DLSS Off', 0), @('DLSS Quality', 1), @('DLSS Balanced', 2), @('DLSS Performance', 3)); default = { if ($set.dlss) { 1 } else { 0 } } }
     @{ key = 'dlssmodel'; label = 'DLSS model *'; nvidia = $true; dlss = $true; choices = @(@('Default', 0), @('J', 1), @('K', 2), @('L', 3), @('M', 4)); default = { 0 } }
     @{ key = 'framegen'; label = 'Frame generation'; nvidia = $true; fg = $true; choices = @(@('Off', 0), @('2x', 2), @('3x', 3), @('4x', 4)); default = { if ($set.framegen) { 2 } else { 0 } } }
+    @{ key = 'framegen'; label = 'Frame generation (AMD FSR) *'; amd = $true; fsrfg = $true; choices = @(@('Off', 0), @('On (2x)', 2)); default = { 0 } }
     @{ key = 'light'; label = 'Light in the shade'; choices = @(@('Off', 0), @('0.4', 0.4), @('0.6', 0.6), @('0.8', 0.8), @('1.0', 1.0), @('1.2', 1.2), @('1.5', 1.5)); default = { 1.2 } }
     @{ key = 'shade'; label = 'Shade in creases (faces too)'; choices = @(@('Off', 0), @('0.5', 0.5), @('1.0', 1.0)); default = { 1.0 } }
     @{ key = 'night'; label = 'Brighter nights'; choices = @(@('Off', 0), @('0.03', 0.03), @('0.05', 0.05), @('0.08', 0.08), @('0.12', 0.12)); default = { if ($set.night) { 0.05 } else { 0 } } }
@@ -757,12 +760,13 @@ function Nearest-Choice($choices, [double]$v) {
 $menuBoxes = @{}
 foreach ($item in $menuItems) {
     if ($item.nvidia -and -not $nvidiaCard) { continue }
+    if ($item.amd -and $nvidiaCard) { continue }
     $row = New-Object Windows.Controls.DockPanel; $row.Margin = "0,0,0,8"
     $box = New-Object Windows.Controls.ComboBox; $box.Width = 200; [Windows.Controls.DockPanel]::SetDock($box, 'Right')
     foreach ($c in $item.choices) { [void]$box.Items.Add($c[0]) }
     $v = if ($menuNow.ContainsKey($item.key)) { [double]$menuNow[$item.key] } else { [double](& $item.default) }
     $box.SelectedIndex = Nearest-Choice $item.choices $v
-    if (($item.dlss -and -not $ui.Dlss.IsEnabled) -or ($item.fg -and -not $ui.FrameGen.IsEnabled)) { $box.IsEnabled = $false }
+    if (($item.dlss -and -not $ui.Dlss.IsEnabled) -or ($item.fg -and -not $ui.FrameGen.IsEnabled) -or ($item.fsrfg -and -not $fsrFgReady)) { $box.IsEnabled = $false }
     $key = $item.key; $choices = $item.choices; $menuBoxes[$key] = @{ box = $box; choices = $choices }
     $restart = $item.label -match '\*'; $name = ($item.label -replace '\s*\*.*$', '')
     $box.Add_SelectionChanged({
@@ -773,7 +777,7 @@ foreach ($item in $menuItems) {
     $t = New-Object Windows.Controls.TextBlock; $t.Text = $item.label; $t.VerticalAlignment = 'Center'
     [void]$row.Children.Add($box); [void]$row.Children.Add($t); [void]$ui.Settings.Children.Add($row)
 }
-$ui.SettingsNote.Text = $(if (-not $nvidiaCard) { "DLSS and frame generation are for NVIDIA cards; this one upscales with the game's own AMD FSR." } elseif (-not $ui.Dlss.IsEnabled) { $ui.DlssText.Text } elseif (-not $ui.FrameGen.IsEnabled) { "Frame generation needs Windows' hardware-accelerated GPU scheduling, which is off on this PC (Windows Settings, System, Display, Graphics; then a restart)." } else { "" })
+$ui.SettingsNote.Text = $(if (-not $nvidiaCard -and -not $fsrFgReady) { "This card upscales with AMD FSR (DLSS is for NVIDIA cards). Press Get FSR frame generation above for AMD's frame generation." } elseif (-not $nvidiaCard) { "This card upscales with AMD FSR (DLSS is for NVIDIA cards)." } elseif (-not $ui.Dlss.IsEnabled) { $ui.DlssText.Text } elseif (-not $ui.FrameGen.IsEnabled) { "Frame generation needs Windows' hardware-accelerated GPU scheduling, which is off on this PC (Windows Settings, System, Display, Graphics; then a restart)." } else { "" })
 # Get DLSS: NVIDIA's Streamline SDK fetched by scripts\get-dlss.ps1 in a window of its own (its
 # progress shows there); when it is in place the DLSS settings open up, without a restart.
 if ($nvidiaCard -and -not $ui.Dlss.IsEnabled) { $ui.GetDlss.Visibility = 'Visible' }
@@ -798,6 +802,32 @@ $dlssWatch.Add_Tick({
     } else {
         $ui.GetDlss.IsEnabled = $true; $ui.GetDlss.Content = "Get DLSS (276 MB from NVIDIA)"
         $ui.Status.Text = "Could not get DLSS: its window said why. Press Get DLSS to try again."
+    }
+})
+# Each card's own: NVIDIA's DLSS rows above, AMD's PC upscaler box (and its frame generation)
+# on the others only.
+if ($nvidiaCard) { $ui.Fsr.Visibility = 'Collapsed' }
+# Get FSR frame generation: AMD's DLLs fetched by scripts\get-fsr.ps1 in a window of its own;
+# when they are in place the frame generation row opens up, without a restart.
+if (-not $nvidiaCard -and -not $fsrFgReady) { $ui.GetFsr.Visibility = 'Visible' }
+$fsrWatch = New-Object Windows.Threading.DispatcherTimer; $fsrWatch.Interval = [TimeSpan]::FromSeconds(1)
+$ui.GetFsr.Add_Click({
+    $get = Join-Path $PSScriptRoot "get-fsr.ps1"
+    $state.fsrGet = Start-Process powershell -PassThru -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "& '$($get -replace "'", "''")'; `$c = `$LASTEXITCODE; Start-Sleep 6; exit `$c"
+    $ui.GetFsr.IsEnabled = $false; $ui.GetFsr.Content = "Getting FSR..."; $ui.Status.Text = "Getting AMD FSR from AMD: see its window."
+    $fsrWatch.Start()
+})
+$fsrWatch.Add_Tick({
+    if (-not $state.fsrGet.HasExited) { return }
+    $fsrWatch.Stop()
+    if (Test-Path $fsrFg) {
+        foreach ($item in $menuItems) { if ($item.fsrfg -and $menuBoxes.ContainsKey($item.key)) { $menuBoxes[$item.key].box.IsEnabled = $true } }
+        $ui.GetFsr.Visibility = 'Collapsed'
+        $ui.SettingsNote.Text = "This card upscales with AMD FSR (DLSS is for NVIDIA cards)."
+        $ui.Status.Text = "AMD FSR frame generation is ready: turn it on under Frame generation (AMD FSR)."
+    } else {
+        $ui.GetFsr.IsEnabled = $true; $ui.GetFsr.Content = "Get FSR frame generation (87 MB from AMD)"
+        $ui.Status.Text = "Could not get AMD FSR: its window said why. Press Get FSR to try again."
     }
 })
 # The picture (the first page's buttons) is kept in menu.txt too, so the game's menu shows it.

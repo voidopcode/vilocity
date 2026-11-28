@@ -84,6 +84,9 @@ pub mod signature;
 // (Vilocity: DLSS through Streamline is louketa/foxhound's, lucas-3080 56dba41, GPL-3.0-or-later, as this.)
 #[cfg(windows)]
 pub mod streamline;
+// (Vilocity) AMD FSR frame generation (`VILOCITY_FSR_FRAMEGEN=1`).
+#[cfg(windows)]
+pub mod fsr_fg;
 mod switch;
 #[cfg(all(windows, feature = "diagnostics"))]
 mod ab;

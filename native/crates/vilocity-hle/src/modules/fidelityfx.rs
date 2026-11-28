@@ -507,6 +507,14 @@ extern "system" fn ffxCreateContext(context: *mut *mut c_void, desc: *mut u8, _a
         unsafe { (api.create)(context, desc, std::ptr::null()) }
     });
     drop(patches);
+    if code == OK && ty == CREATE_UPSCALE {
+        // (Vilocity) Its flags (depth inverted...) and largest render size, for FSR frame generation.
+        // SAFETY: `ffxCreateContextDescUpscale`'s flags and `maxRenderSize`, after the header.
+        let word = |at: usize| unsafe { desc.add(at).cast::<u32>().read_unaligned() };
+        *UPSCALE_MADE.lock().unwrap_or_else(|e| e.into_inner()) = (word(16), [word(20), word(24)]);
+        // (The in-game panel shows the upscale from this line.)
+        tracing::info!(render = ?[word(20), word(24)], output = ?[word(28), word(32)], "FSR upscaler: the game's upscale");
+    }
     if code == OK {
         tracing::info!("ffxCreateContext on the PC DLL");
     } else {
@@ -809,6 +817,9 @@ extern "system" fn ffxDispatch(context: *mut *mut c_void, desc: *mut u8) -> u32 
     }
     let recorded = external::record(list, |pass| {
         done = hand_over(pass, api, context, desc, ty, slots, &mut patches);
+        if done == Done::Ran(OK) && ty == DISPATCH_UPSCALE && vilocity_gpu::fsr_fg::wanted() {
+            frame_generation(pass.command_list(), desc);
+        }
         if let Some(upscale) = &upscale
             && done != Done::Ran(OK)
         {
@@ -830,6 +841,39 @@ extern "system" fn ffxDispatch(context: *mut *mut c_void, desc: *mut u8) -> u32 
         Done::Ran(code) => code,
         Done::Refused(..) => ERROR_PARAMETER,
     }
+}
+
+/// (Vilocity) The creation flags of the title's upscaler context (FSR frame generation reads
+/// depth inverted and the like from them), and its largest render size.
+static UPSCALE_MADE: std::sync::Mutex<(u32, [u32; 2])> = std::sync::Mutex::new((0, [0, 0]));
+
+/// (Vilocity) The frame the upscale at `desc` (made the host's: its depth and motion vectors
+/// are host resources in compute-read state) gives FSR frame generation, on `list`.
+fn frame_generation(list: *mut c_void, desc: *mut u8) {
+    // SAFETY: fields of an upscale dispatch description.
+    let float = |at: usize| unsafe { desc.add(at).cast::<f32>().read_unaligned() };
+    // SAFETY: as above.
+    let word = |at: usize| unsafe { desc.add(at).cast::<u32>().read_unaligned() };
+    // SAFETY: as above: a whole `FfxApiResource`.
+    let resource = |at: usize| vilocity_gpu::fsr_fg::Resource(unsafe { desc.add(at).cast::<[u8; RESOURCE_SIZE]>().read_unaligned() });
+    let (upscale_flags, max_render) = *UPSCALE_MADE.lock().unwrap_or_else(|e| e.into_inner());
+    vilocity_gpu::fsr_fg::prepare(
+        list,
+        &vilocity_gpu::fsr_fg::Frame {
+            render: [word(RENDER_SIZE), word(RENDER_SIZE + 4)],
+            jitter: [float(JITTER), float(JITTER + 4)],
+            motion_scale: [float(MOTION_VECTOR_SCALE), float(MOTION_VECTOR_SCALE + 4)],
+            frame_ms: float(FRAME_TIME),
+            near: float(CAMERA),
+            far: float(CAMERA + 4),
+            fov_y: float(CAMERA + 8),
+            meters: float(CAMERA + 12),
+            upscale_flags,
+            max_render,
+            depth: resource(UPSCALE[1].0),
+            motion: resource(UPSCALE[2].0),
+        },
+    );
 }
 
 /// Gives the dispatch at `desc` to the PC DLL on `pass`'s list. Every

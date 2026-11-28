@@ -85,6 +85,14 @@ const FRAME_GEN: Item = Item {
     choices: &[("Off", 0.0), ("2x", 2.0), ("3x", 3.0), ("4x", 4.0)],
     help: "Made-up frames between real ones: DLSS, RTX 40/50, Windows GPU scheduling",
 };
+/// (Vilocity) The other cards' frame generation: AMD FSR's (`crate::fsr_fg`), one made-up
+/// frame between two, from the next start.
+const FRAME_GEN_FSR: Item = Item {
+    name: "Frame generation *",
+    knob: Knob::FrameGen,
+    choices: &[("Off", 0.0), ("2x (FSR)", 2.0)],
+    help: "AMD FSR: a made-up frame between two (needs Get FSR). Next start",
+};
 const PICTURE: Item = Item {
     name: "Picture *",
     knob: Knob::Picture,
@@ -162,7 +170,7 @@ const CAP: Item = Item {
 /// (the game's own AMD FSR, no frame generation).
 static NVIDIA_ITEMS: [Item; 14] =
     [PICTURE, UPSCALER_NVIDIA, DLSS_MODEL, FRAME_GEN, CAP, LIGHT, SHADE, NIGHT, FOG, REFLECTIONS, HAZE, BLUR, STEADY, TORN_FIX];
-static OTHER_ITEMS: [Item; 12] = [PICTURE, UPSCALER_OTHER, CAP, LIGHT, SHADE, NIGHT, FOG, REFLECTIONS, HAZE, BLUR, STEADY, TORN_FIX];
+static OTHER_ITEMS: [Item; 13] = [PICTURE, UPSCALER_OTHER, FRAME_GEN_FSR, CAP, LIGHT, SHADE, NIGHT, FOG, REFLECTIONS, HAZE, BLUR, STEADY, TORN_FIX];
 
 /// The settings this PC's card has.
 fn items() -> &'static [Item] {
@@ -189,7 +197,7 @@ fn at_start(knob: Knob) -> f32 {
             _ => 1.0,
         },
         Knob::Upscaler => 0.0,
-        Knob::FrameGen if on("VILOCITY_FRAMEGEN") => 2.0,
+        Knob::FrameGen if on("VILOCITY_FRAMEGEN") || on("VILOCITY_FSR_FRAMEGEN") => 2.0,
         Knob::FrameGen => 0.0,
         Knob::Picture => match (std::env::var("VILOCITY_CONSOLE").as_deref(), std::env::var("VILOCITY_DISPLAY_MODE").as_deref()) {
             (Ok("series-x"), Ok("2560x1440")) => 1.0,
@@ -640,13 +648,14 @@ mod tests {
         assert!(upscaler(&NVIDIA_ITEMS).iter().all(|c| c.0.starts_with("DLSS")));
         assert!(NVIDIA_ITEMS.iter().any(|i| i.knob == Knob::FrameGen));
         assert!(upscaler(&OTHER_ITEMS).iter().all(|c| c.0.contains("FSR")));
-        assert!(OTHER_ITEMS.iter().all(|i| i.knob != Knob::FrameGen));
+        // The others' frame generation is AMD FSR's, at the next start.
+        assert!(OTHER_ITEMS.iter().filter(|i| i.knob == Knob::FrameGen).all(|i| i.choices.iter().any(|c| c.0.contains("FSR")) && i.name.ends_with(" *")));
         // Every choice's text fits its place on the row.
         for item in NVIDIA_ITEMS.iter().chain(&OTHER_ITEMS) {
             assert!(item.choices.iter().all(|c| c.0.len() <= 18), "{}", item.name);
             assert!(item.help.len() <= 76, "{}", item.help);
         }
-        assert_eq!(NVIDIA_ITEMS.len(), OTHER_ITEMS.len() + 2);
+        assert_eq!(NVIDIA_ITEMS.len(), OTHER_ITEMS.len() + 1);
         // `*` on exactly the settings that wait for a restart (frame generation
         // depends on the start; AMD's one-choice upscaler cannot be changed).
         for item in NVIDIA_ITEMS.iter().chain(&OTHER_ITEMS).filter(|i| i.knob != Knob::FrameGen && i.choices.len() > 1) {

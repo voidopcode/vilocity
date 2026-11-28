@@ -524,7 +524,7 @@ fn default_adapter() -> Option<(String, windows::Win32::Foundation::LUID)> {
 /// `wintrust.dll`, when a library is about to be loaded: named as an import
 /// of the program (as foxhound has it), `wintrust.dll` and what it needs
 /// would be loaded at the start of every run, with or without DLSS.
-fn verify_signature(path: &Path) -> Result<(), String> {
+pub(crate) fn verify_signature(path: &Path) -> Result<(), String> {
     use windows_sys::Win32::Security::WinTrust::{
         WINTRUST_ACTION_GENERIC_VERIFY_V2, WINTRUST_DATA, WINTRUST_DATA_0, WINTRUST_FILE_INFO, WTD_CACHE_ONLY_URL_RETRIEVAL,
         WTD_CHOICE_FILE, WTD_REVOCATION_CHECK_NONE, WTD_REVOKE_NONE, WTD_STATEACTION_CLOSE, WTD_STATEACTION_VERIFY, WTD_UI_NONE,

@@ -113,11 +113,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-28 18:03
+**Latest test run:** 2026-11-28 18:56
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing | no frames of the world in this run (menus only) |
+| Frame rate while playing (typical) | 19.9 fps, 50 ms a frame |
+| Best while playing | 22.4 fps |
+| Last frame | 20.8 fps, 48 ms, 7039 draws, 401 dropped without a pipeline |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -311,6 +313,28 @@ picture tests of 2026-11-27 evening ruled out.
   its default (a camera sweep at the dock), and a 7-minute run at 1440p with DLSS passed.
   Also measured on the card and on WARP: the stand-ins for the console's R9G9B9E5 and f16
   targets clamp values past their range, as the console does, and never make infinities.
+- **AMD FSR frame generation, for AMD and the other cards that have no DLSS.** A made-up
+  frame between every two the game renders, by AMD's FidelityFX SDK v2.4.0 (MIT): F1 or the
+  launcher's Options, "Frame generation (AMD FSR)", Off or On (2x). The launcher's **Get FSR
+  frame generation** (`scripts\get-fsr.ps1`) fetches AMD's signed DLLs (87 MB, once), checked
+  against the files' hashes on GitHub and AMD's signature. Each card sees only its own: NVIDIA
+  cards keep DLSS and its frame generation and get no FSR rows; AMD cards get no DLSS rows.
+  AMD's swap chain is made for the game's window, and right after each of the game's FSR
+  upscales its depth, motion vectors and camera go to AMD's prepare pass. The 1440p and 4K
+  pictures (the Series X renderer) draw the scene at the output's size and never call FSR, so
+  with frame generation on the game is patched to its FidelityFX path at the Quality scale, as
+  for DLSS Quality. AMD's own FSR3 frame generation (3.1.6) and swap chain (3.1.7) are pinned,
+  so every card runs the version tested here (an AMD card could otherwise get its driver's, or
+  the DLL's machine-learning one, which needs camera vectors the game does not give). AMD's
+  frame generation runs on any DirectX 12 card, so it was tested on the RTX 5080: at 1440p,
+  2,000 made-up frames in 100 s (one for each of the game's, about 40 a second shown at 20
+  fps), none refused, the game's own rate unchanged (19.6 fps), three 150 s runs passed. Not
+  yet run on an AMD card. The HUD is interpolated with the scene (no HUD-less picture yet).
+- **The frame rate panel is on the left, and says the upscaler and frame generation.** Two
+  new lines: SCALE (DLSS in green or FSR in orange, its mode, and the game's render height to
+  the output's, as "DLSS Quality 1440p to 2160p"; "game's own" without either) and FRAMES
+  (DLSS 2x to 4x or FSR 2x, with about how many frames a second reach the screen). Under them,
+  Vilocity's own keys as keycaps: F1 settings, F8 hides the panel, F11 full screen.
 - **Every setting, in the launcher and on F1, kept together.** The launcher's options
   have a list for each of the game's settings (upscaler, DLSS model, frame generation,
   light in the shade, shade in creases, brighter nights, fog light cap, reflections
@@ -350,8 +374,8 @@ picture tests of 2026-11-27 evening ruled out.
   folder): light in the shade, brighter nights, the fog light's cap, the reflections
   stand-in, "steadier picture", a frame rate cap (30 to 60). Each card sees its own
   upscaler: on NVIDIA DLSS (off, quality, balanced, performance) and frame generation
-  (off, 2x, 3x, 4x); on AMD and the others the game's own AMD FSR, no frame
-  generation. The upscaler, and frame generation when it was off at the start, are
+  (off, 2x, 3x, 4x); on AMD and the others the game's own AMD FSR and AMD's FSR
+  frame generation (off, 2x). The upscaler, and frame generation when it was off at the start, are
   marked `*`: they are kept now and used from the next start (the game's picture size
   is set when it loads); the play script reads them, and the launcher's DLSS boxes
   follow them. Frame generation needs Windows' hardware-accelerated GPU scheduling;

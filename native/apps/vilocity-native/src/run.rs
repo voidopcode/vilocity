@@ -63,6 +63,15 @@ pub fn run(
     let asked = vilocity_hle::streamline::Asked::from_env(false).map_err(anyhow::Error::msg)?;
     let available = vilocity_hle::streamline::init(&asked);
     let upscaler = (available.dlss || available.framegen).then_some(asked.mode);
+    // (Vilocity) AMD FSR frame generation (`VILOCITY_FSR_FRAMEGEN=1`) takes its depth and motion
+    // from the title's FidelityFX upscale, which the stock Series X renderer never makes (it
+    // renders at the output's size): the same path, at the quality scale (2026-11-28).
+    let upscaler = upscaler.or_else(|| {
+        vilocity_gpu::fsr_fg::wanted().then(|| {
+            println!("upscaling      AMD FSR frame generation: the scene at the quality scale, upscaled by FSR");
+            vilocity_hle::streamline::Mode::Quality
+        })
+    });
     if asked.any() {
         println!(
             "upscaling      DLSS {}, frame generation {}{}",
