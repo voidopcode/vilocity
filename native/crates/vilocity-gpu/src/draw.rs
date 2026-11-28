@@ -616,6 +616,39 @@ pub(crate) static HEAP_BUFFER_MICROS: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "diagnostics")]
 pub(crate) static HEAP_SPLIT: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
 
+/// (Vilocity, from VIctory-NVIDIA 64d4931, GPL-3.0-or-later, as this) The frame
+/// [`PASS_FRAME_NANOS`] counts for, and the nanoseconds its runs of the pass
+/// over textures picked by index took ([`texture_pass_ms`]).
+static PASS_FRAME: AtomicU64 = AtomicU64::new(u64::MAX);
+static PASS_FRAME_NANOS: AtomicU64 = AtomicU64::new(0);
+
+/// The milliseconds a frame's runs of the pass over textures picked by index
+/// take together at most (`VILOCITY_TEXTURE_PASS_MS=<n>`, 1 to 1000; unset or
+/// 0: each run within its own time, `VILOCITY_TEXTURE_STAGE_MS`, as before).
+/// The slots left wait for the next frame's runs, as those past a run's time
+/// do; runs before a bake keep their own budget. In VIctory-NVIDIA's play mode
+/// (8 ms; RTX 4090, Ryzen 9 7950X3D, walking the first boat mission) the mean
+/// went from 39.4 to 47.0 fps: the pass had taken 2.2-2.7 s of each 5 s in
+/// stretches of frames over 50 ms. A texture may then show a frame or more
+/// later in such a burst. Not yet measured on this engine.
+fn texture_pass_ms() -> Option<u64> {
+    static MS: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *MS.get_or_init(|| {
+        std::env::var("VILOCITY_TEXTURE_PASS_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .filter(|&ms| ms > 0)
+            .map(|ms| ms.min(1000))
+    })
+}
+
+/// A run's time within the frame's cap of `cap_ms` milliseconds when the
+/// frame's runs took `spent_ns` nanoseconds already: no more than `span`.
+fn pass_span_left(span: std::time::Duration, cap_ms: u64, spent_ns: u64) -> std::time::Duration {
+    let cap = std::time::Duration::from_millis(cap_ms);
+    span.min(cap.saturating_sub(std::time::Duration::from_nanos(spent_ns)))
+}
+
 /// Passes after which every buffer slot of the heap was looked at again.
 const HEAP_ROUND: u64 = 16;
 
@@ -2686,6 +2719,19 @@ impl State {
             )
         };
 
+        // (Vilocity, from VIctory-NVIDIA 64d4931, GPL-3.0-or-later, as this) A frame's runs of the
+        // pass (its own and the early ones, not those before a bake) within
+        // `VILOCITY_TEXTURE_PASS_MS` together ([`texture_pass_ms`]).
+        let frame_pass = !required && !baking && sync.is_none();
+        let span = match texture_pass_ms() {
+            Some(cap) if frame_pass => {
+                if PASS_FRAME.swap(frame, Ordering::Relaxed) != frame {
+                    PASS_FRAME_NANOS.store(0, Ordering::Relaxed);
+                }
+                pass_span_left(span, cap, PASS_FRAME_NANOS.load(Ordering::Relaxed))
+            }
+            _ => span,
+        };
         let began = std::time::Instant::now();
         if sync.is_none() {
             BAKE_SERVED.store(0, Ordering::Relaxed);
@@ -3080,6 +3126,9 @@ impl State {
         }
         if sync.is_none() && baking && served {
             BAKE_SERVED.store(host.texture_news().0 + 1, Ordering::Relaxed);
+        }
+        if frame_pass && texture_pass_ms().is_some() {
+            PASS_FRAME_NANOS.fetch_add(began.elapsed().as_nanos() as u64, Ordering::Relaxed);
         }
         served
     }
@@ -5249,7 +5298,18 @@ fn staging_budget_per_frame(vram_budget: Option<u64>) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::staging_budget_per_frame;
+    use super::{pass_span_left, staging_budget_per_frame};
+
+    /// A run gets what the frame's cap has left, never more than its own time.
+    #[test]
+    fn a_run_gets_what_the_frames_cap_has_left() {
+        use std::time::Duration;
+        let ms = Duration::from_millis;
+        assert_eq!(pass_span_left(ms(250), 8, 0), ms(8));
+        assert_eq!(pass_span_left(ms(250), 8, 5_000_000), ms(3));
+        assert_eq!(pass_span_left(ms(250), 8, 9_000_000), Duration::ZERO);
+        assert_eq!(pass_span_left(ms(2), 8, 0), ms(2));
+    }
 
     #[test]
     fn staging_budget_scales_with_vram_budget() {

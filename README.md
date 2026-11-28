@@ -113,13 +113,11 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-28 01:36
+**Latest test run:** 2026-11-28 14:42
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 15.7 fps, 64 ms a frame |
-| Best while playing | 22.6 fps |
-| Last frame | 20.7 fps, 48 ms, 3835 draws, 334 dropped without a pipeline |
+| Frame rate while playing | no frames of the world in this run (menus only) |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -127,6 +125,14 @@ loads saves and gets into the world. The world is where the work is now.
 Latest: "will it work on this PC" in the launcher, clothes and faces drawn with another
 texture's colours, the 4-7 fps drops explained and shown on the overlay, and what the
 picture tests of 2026-11-27 evening ruled out.
+- **A per-frame cap for the texture pass, to try (`VILOCITY_TEXTURE_PASS_MS`, off).** The pass
+  that uploads textures picked by index runs several times a frame, each run within 250 ms
+  (750 ms with a backlog), and nothing capped them together: in busy stretches it took seconds
+  of every five. With `VILOCITY_TEXTURE_PASS_MS=8` a frame's runs (not those before a bake)
+  share 8 ms, and what is left waits for the next frame. VIctory-NVIDIA (64d4931, ported with
+  credit) measured 39.4 to 47.0 fps with it on an RTX 4090; textures can show a frame or more
+  later in a burst. Not measured on this engine yet: to try it, put
+  `VILOCITY_TEXTURE_PASS_MS=8` in the launcher's Options, extra settings.
 - **A texture held back on a full card shows grey, not black.** Past 90 % of the card's budget
   new textures are held back for about four seconds, and a slot that views no host texture
   meanwhile read as black (black faces, black streaks on the sun's glint at 1440p with the card
