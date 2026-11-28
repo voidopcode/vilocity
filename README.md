@@ -113,11 +113,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-28 14:42
+**Latest test run:** 2026-11-28 14:43
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing | no frames of the world in this run (menus only) |
+| Frame rate while playing (typical) | 23.3 fps, 43 ms a frame |
+| Best while playing | 30.0 fps |
+| Last frame | 22.6 fps, 44 ms, 7677 draws, 2385 dropped without a pipeline |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -125,6 +127,13 @@ loads saves and gets into the world. The world is where the work is now.
 Latest: "will it work on this PC" in the launcher, clothes and faces drawn with another
 texture's colours, the 4-7 fps drops explained and shown on the overlay, and what the
 picture tests of 2026-11-27 evening ruled out.
+- **Helper threads above normal, to try (`VILOCITY_HELPER_PRIORITY=1`, off).** The threads the
+  submitting thread waits for (the wide workers, the `land` pools, the heaps' records, the pass
+  over the heap's views) ran at normal priority while it runs above normal, and a walking frame
+  here has 3.3 ms of threads woken and not running yet. With the switch they run above normal
+  too (from VIctory-NVIDIA, credited): on a six-core i5-12400F it measured 8.6 against 9.6 fps
+  and the wait for the heaps' records 6.2 against 2.5 ms. Not measured on this engine; to try
+  it, put `VILOCITY_HELPER_PRIORITY=1` in the launcher's extra settings.
 - **A per-frame cap for the texture pass, to try (`VILOCITY_TEXTURE_PASS_MS`, off).** The pass
   that uploads textures picked by index runs several times a frame, each run within 250 ms
   (750 ms with a backlog), and nothing capped them together: in busy stretches it took seconds

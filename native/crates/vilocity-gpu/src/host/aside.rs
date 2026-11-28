@@ -67,6 +67,7 @@ pub(crate) fn begin(work: impl FnOnce() -> Vec<Refresh> + Send + 'static) -> std
             .name("vilocity-aside".into())
             .spawn(move || {
                 crate::cores::keep_on_fast_cores("vilocity-aside");
+                crate::cores::raise_helper();
                 jobs.into_iter().for_each(|job| job())
             })
             .ok()

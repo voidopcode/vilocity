@@ -74,6 +74,22 @@ pub(crate) fn keep_many_on_fast_cores(what: &str) {
     ask(what, 3);
 }
 
+/// (Vilocity, from VIctory-NVIDIA `cores.rs` `helpers_raised`, GPL-3.0-or-later, as this) The
+/// calling thread, one the submitting thread waits for (the wide workers, the pools of `land`,
+/// the heaps' records, the pass over the heap's views beside the lists), runs above normal like
+/// the submitting thread (`queue::behind`): `VILOCITY_HELPER_PRIORITY=1`, off by default, not
+/// yet measured on this engine. On a six-core i5-12400F, where the title's threads and the
+/// translating lists kept every core busy, VIctory measured 8.6 against 9.6 fps, refreshes
+/// 23.1 against 17.6 ms a frame and the wait for the heaps' records 6.2 against 2.5 ms; here
+/// a walking frame has 3.3 ms of threads woken and not running yet.
+pub(crate) fn raise_helper() {
+    use windows_sys::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_ABOVE_NORMAL};
+    if crate::switch::on("VILOCITY_HELPER_PRIORITY") {
+        // SAFETY: our own thread.
+        unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL) };
+    }
+}
+
 fn ask(what: &str, from: u32) {
     use windows_sys::Win32::System::Threading::{GetCurrentThread, SetThreadSelectedCpuSets};
     if stage() < from {

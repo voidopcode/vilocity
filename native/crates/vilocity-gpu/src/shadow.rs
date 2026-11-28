@@ -1567,6 +1567,7 @@ fn workers() -> &'static Workers {
         for i in 0..wide_threads() {
             let _ = std::thread::Builder::new().name(format!("vilocity-wide-{i}")).spawn(move || {
                 crate::cores::keep_helper_on_fast_cores("vilocity-wide");
+                crate::cores::raise_helper();
                 crate::cores::keep_beside("vilocity-wide");
                 let workers = WORKERS.get().expect("made above");
                 loop {

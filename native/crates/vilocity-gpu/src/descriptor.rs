@@ -217,6 +217,7 @@ pub(crate) fn begin_sync_heaps() -> SyncedHeaps {
     STARTED.call_once(|| {
         let made = std::thread::Builder::new().name("vilocity-heap-sync".into()).spawn(|| {
             crate::cores::keep_on_fast_cores("vilocity-heap-sync");
+            crate::cores::raise_helper();
             let rounds = || SYNC_ROUNDS.0.lock().unwrap_or_else(|e| e.into_inner());
             /// A round is over, however it ends.
             struct Over;

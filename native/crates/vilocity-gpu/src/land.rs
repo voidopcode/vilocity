@@ -240,6 +240,7 @@ impl Pool {
             let _ = std::thread::Builder::new().name(format!("{name}-{i}")).spawn(move || {
                 if name == "vilocity-land" {
                     crate::cores::keep_helper_on_fast_cores(name);
+                    crate::cores::raise_helper();
                 } else {
                     crate::cores::keep_many_on_fast_cores(name);
                     crate::cores::keep_beside(name);
