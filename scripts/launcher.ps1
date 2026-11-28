@@ -1,6 +1,6 @@
 # The Vilocity launcher: one window to check the PC, pick the game folder, set the
-# options and play GTA VI. Start it with "Vilocity Launcher.cmd" in the repository's
-# folder. It runs scripts\play-gta6.ps1, which holds the engine's settings; what is
+# options and play GTA VI. Start it with the "Vilocity" shortcut in the repository's folder
+# (made once the engine is built; before that "Vilocity Launcher.cmd"). It runs scripts\play-gta6.ps1, which holds the engine's settings; what is
 # chosen here is kept in %LOCALAPPDATA%\vilocity\launcher.json.
 #   scripts\launcher.ps1 [-Shot <file.png> [-Page <0-4>]]   (-Shot: draw the window, at that page, to a picture and leave)
 param([string]$Shot, [int]$Page = 0)
@@ -340,7 +340,7 @@ if (-not (& $there $set.game) -and (& $there $known)) { $set.game = $known }
           <DockPanel Margin="0,0,0,12"><Button x:Name="Saves" DockPanel.Dock="Right" Content="Open" MinWidth="110"/><StackPanel><TextBlock Text="Saves"/><TextBlock Style="{StaticResource Dim}" Text="The folder with your saved games and the game's settings."/></StackPanel></DockPanel>
           <DockPanel Margin="0,0,0,12"><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button x:Name="Backups" Content="Open" MinWidth="110"/><Button x:Name="Restore" Content="Restore..." MinWidth="110" Margin="8,0,0,0"/></StackPanel><StackPanel><TextBlock Text="Save backups"/><TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Text="Your saves are copied at each PLAY; the last 10 copies are kept. Restore puts one back (your saves of now are copied first)."/></StackPanel></DockPanel>
           <DockPanel Margin="0,0,0,12"><Button x:Name="Bench" DockPanel.Dock="Right" Content="Start" MinWidth="110"/><StackPanel><TextBlock Text="Benchmark"/><TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Text="Starts the game; once you are in the world it measures 60 seconds of play (move around as you usually do), then shows the result and copies it to share."/></StackPanel></DockPanel>
-          <DockPanel Margin="0,0,0,12"><Button x:Name="Update" DockPanel.Dock="Right" Content="Update" MinWidth="110"/><StackPanel><TextBlock Text="Update Vilocity"/><TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Text="Gets the newest Vilocity (git pull) and builds the engine, in a window of its own."/></StackPanel></DockPanel>
+          <DockPanel Margin="0,0,0,12"><Button x:Name="Update" DockPanel.Dock="Right" Content="Update" MinWidth="110"/><StackPanel><TextBlock Text="Update Vilocity"/><TextBlock Style="{StaticResource Dim}" TextWrapping="Wrap" Text="Asks GitHub for a newer Vilocity; if there is one, gets it and builds the engine, here in the launcher."/></StackPanel></DockPanel>
           <DockPanel Margin="0,0,0,12"><Button x:Name="Logs" DockPanel.Dock="Right" Content="Open" MinWidth="110"/><StackPanel><TextBlock Text="Logs"/><TextBlock Style="{StaticResource Dim}" Text="One file for each start of the game."/></StackPanel></DockPanel>
           <DockPanel Margin="0,0,0,12"><Button x:Name="Warm" DockPanel.Dock="Right" Content="Build" MinWidth="110"/><StackPanel><TextBlock Text="Build all pipelines ahead"/><TextBlock Style="{StaticResource Dim}" Text="Optional, about an hour and a half once: nothing is compiled while you play in a new place."/></StackPanel></DockPanel>
           <DockPanel><Button x:Name="Build" DockPanel.Dock="Right" Content="Build" MinWidth="110"/><StackPanel><TextBlock Text="Build the engine"/><TextBlock Style="{StaticResource Dim}" Text="cargo build --release -p vilocity, in a window of its own. After an update of Vilocity."/></StackPanel></DockPanel>
@@ -624,11 +624,51 @@ $ui.Bench.Add_Click({
     $ui.Play.RaiseEvent((New-Object Windows.RoutedEventArgs ([Windows.Controls.Primitives.ButtonBase]::ClickEvent)))
 })
 
-# Update: the newest Vilocity from git and the engine built again, in a window of its own.
+# Update: asks GitHub first. Up to date: says so, nothing else runs. Newer: asks, then gets it
+# (git pull) and builds the engine in the background, here, and opens the launcher again.
+function Behind-Count { $n = git -C $root rev-list --count 'HEAD..@{u}' 2>$null; if ($LASTEXITCODE -eq 0) { [int]$n } else { -1 } }
+function Show-Update([int]$n) {
+    if ($n -gt 0) {
+        $ui.UpdateText.Text = "Update ready ($n new)"
+        $ui.UpdateRail.Background = (New-Object Windows.Media.BrushConverter).ConvertFromString("#7C5CFF")
+    } elseif ($n -eq 0) { $ui.UpdateText.Text = "Up to date"; $ui.UpdateRail.ClearValue([Windows.Controls.Control]::BackgroundProperty) }
+}
 $ui.Update.Add_Click({
-    if (-not (Test-Path (Join-Path $root ".git"))) { $ui.Status.Text = "This copy of Vilocity was not made with git: download the newest from github.com/voidopcode/vilocity."; return }
-    if ($state.started -or (Game-Process)) { $ui.Status.Text = "Close the game first: its engine is built again."; return }
-    Start-Process cmd -ArgumentList '/k', "cd /d `"$root`" && git pull --ff-only && cargo build --release -p vilocity && echo. && echo Updated. Close this window, then close the launcher and open it again."
+    if (-not (Test-Path (Join-Path $root ".git"))) { [void][Windows.MessageBox]::Show("This copy of Vilocity was not made with git: download the newest from github.com/voidopcode/vilocity.", "Vilocity"); return }
+    if ($state.updating) { return }
+    git -C $root fetch --quiet 2>$null
+    $n = Behind-Count; Show-Update $n
+    if ($n -lt 0) { [void][Windows.MessageBox]::Show("GitHub could not be reached. Check the internet connection and try again.", "Vilocity", 'OK', 'Warning'); return }
+    if ($n -eq 0) { [void][Windows.MessageBox]::Show("Vilocity is up to date.", "Vilocity", 'OK', 'Information'); return }
+    if ($state.started -or (Game-Process)) { [void][Windows.MessageBox]::Show("A new version of Vilocity is ready. Close the game first, then press Update again: it builds the game's engine again.", "Vilocity", 'OK', 'Information'); return }
+    $sure = [Windows.MessageBox]::Show("A new version of Vilocity is ready ($n new $(if ($n -eq 1) { 'change' } else { 'changes' })).`n`nUpdate now? It downloads it and builds the engine again: a few minutes, here in the launcher. The launcher opens again when it is done.", "Vilocity", 'YesNo', 'Question')
+    if ($sure -ne 'Yes') { return }
+    $log = Join-Path $home_ "logs\update.txt"; New-Item -ItemType Directory -Force (Split-Path $log) | Out-Null
+    $state.updating = Start-Process cmd -ArgumentList '/c', "cd /d `"$root`" && (git pull --ff-only && cargo build --release -p vilocity) > `"$log`" 2>&1" -WindowStyle Hidden -PassThru
+    $null = $state.updating.Handle   # (so that its exit code can be read once it ends)
+    $ui.UpdateText.Text = "Updating..."; $ui.Play.IsEnabled = $false; $ui.Nav0.IsChecked = $true
+    $ui.Status.Text = "Updating Vilocity: downloading, then building the engine (a few minutes)..."
+    $updWatch.Start()
+})
+# While it updates: the build's last line as the status; at the end the launcher opens again, or the log.
+$updWatch = New-Object Windows.Threading.DispatcherTimer; $updWatch.Interval = [TimeSpan]::FromSeconds(1)
+$updWatch.Add_Tick({
+    $log = Join-Path $home_ "logs\update.txt"
+    if (-not $state.updating.HasExited) {
+        $last = Get-Content $log -Tail 1 -ErrorAction SilentlyContinue
+        if ($last -match '^\s*(Compiling|Updating|Fast-forward)\s*(\S*)') { $ui.Status.Text = "Updating Vilocity: $($Matches[1].ToLower()) $($Matches[2])..." }
+        return
+    }
+    $updWatch.Stop(); $code = $state.updating.ExitCode; $state.updating = $null; $ui.Play.IsEnabled = $true
+    if ($code -eq 0) {
+        [void][Windows.MessageBox]::Show("Vilocity is updated. The launcher opens again now, with the new version.", "Vilocity", 'OK', 'Information')
+        $exe = Join-Path $root "target\release\vilocity-launcher.exe"
+        if (Test-Path $exe) { Start-Process $exe } else { Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"" }
+        $w.Close()
+    } else {
+        $ui.UpdateText.Text = "Update failed"; $ui.Status.Text = "The update did not finish: its log is open. Ask in the Discord's help channel with it if it is not clear."
+        Start-Process notepad $log
+    }
 })
 # The rail's Update button, always there: lit up when GitHub has a newer Vilocity (one git fetch, in the background, at start).
 $ui.UpdateRail.Add_Click({ $ui.Update.RaiseEvent((New-Object Windows.RoutedEventArgs ([Windows.Controls.Primitives.ButtonBase]::ClickEvent))) })
@@ -638,14 +678,21 @@ if (-not $Shot -and (Test-Path (Join-Path $root ".git"))) {
 $updCheck = New-Object Windows.Threading.DispatcherTimer; $updCheck.Interval = [TimeSpan]::FromSeconds(1)
 $updCheck.Add_Tick({
     if (-not $state.fetch.HasExited) { return }
-    $updCheck.Stop()
-    $n = git -C $root rev-list --count 'HEAD..@{u}' 2>$null
-    if ($LASTEXITCODE -eq 0 -and [int]$n -gt 0) {
-        $ui.UpdateText.Text = "Update ready ($n new)"
-        $ui.UpdateRail.Background = (New-Object Windows.Media.BrushConverter).ConvertFromString("#7C5CFF")
-    } elseif ($LASTEXITCODE -eq 0) { $ui.UpdateText.Text = "Up to date" }
+    $updCheck.Stop(); Show-Update (Behind-Count)
 })
 if ($state.fetch) { $updCheck.Start() }
+# The "Vilocity" shortcut in the repository's folder: opens the launcher with no console window,
+# through target\release\vilocity-launcher.exe (built with the engine).
+$launcherExe = Join-Path $root "target\release\vilocity-launcher.exe"
+if (-not $Shot -and (Test-Path $launcherExe)) {
+    try {
+        $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $root "Vilocity.lnk"))
+        if ($lnk.TargetPath -ne $launcherExe) {
+            $lnk.TargetPath = $launcherExe; $lnk.WorkingDirectory = $root; $lnk.Description = "Vilocity launcher"
+            $lnk.IconLocation = (Join-Path $root "assets\logo.ico") + ",0"; $lnk.Save()
+        }
+    } catch {}
+}
 $ui.Build.Add_Click({ Start-Process cmd -ArgumentList '/k', "cd /d `"$root`" && cargo build --release -p vilocity && echo. && echo Built. Close this window and press Check again." })
 
 # Every pipeline the game has made in earlier runs (the engine keeps the list), compiled in a

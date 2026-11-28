@@ -3,6 +3,8 @@
 *.exe
 *.dll
 *.pdb
+# The launcher's own shortcut to target\release\vilocity-launcher.exe
+/Vilocity.lnk
 
 # Local notes, not published
 /docs/LINEAGE.md
