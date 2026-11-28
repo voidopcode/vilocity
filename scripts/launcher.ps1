@@ -6,6 +6,12 @@
 param([string]$Shot, [int]$Page = 0)
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
 
+# A taskbar button of its own, with the window's logo: without an app id of its own the window,
+# which powershell.exe opens, is put under PowerShell's button and shows PowerShell's icon.
+# (Before any window: Windows reads it when the first one opens.)
+Add-Type -Namespace Vilocity -Name Taskbar -MemberDefinition '[DllImport("shell32.dll")] public static extern int SetCurrentProcessExplicitAppUserModelID([MarshalAs(UnmanagedType.LPWStr)] string id);'
+[void][Vilocity.Taskbar]::SetCurrentProcessExplicitAppUserModelID("Vilocity.Launcher")
+
 # NVIDIA Smooth Motion (the driver's own frame generation, RTX 40 and 50 series) for one
 # executable, through the driver's settings (NVAPI DRS): setting 0xB0D384C0 (0 off, 1 on)
 # and 0xB0CC0875 (1: Direct3D 12) in the driver profile that holds the executable, made
