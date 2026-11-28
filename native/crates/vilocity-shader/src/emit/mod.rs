@@ -159,6 +159,30 @@ pub fn helper_own() -> bool {
     *ON.get_or_init(|| std::env::var_os("VILOCITY_HELPER_OWN").is_none_or(|v| v != "0"))
 }
 
+#[cfg(test)]
+thread_local! {
+    /// [`water_light`] for the tests of one thread.
+    pub(crate) static WATER_LIGHT_FOR_TESTS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// `VILOCITY_WATER_LIGHT=1`: console wave64 compute programs on a host of 32-lane waves get
+/// upstream's wave64 lowering (trustno1-coder/VIctory-NVIDIA 64d4931, with foxhound's pair
+/// meetings): the water's and the underwater fog's tiled light and the triangle clip's heap
+/// defragmentation in the wave-wide form ([`widen`]), loops kept together per host wave
+/// ([`emit_program`]), LDS set up by the group's first thread, LDS atomics in loops without a
+/// meeting, and skips kept around loops that would not end ([`ir::without_skips`]). Off by
+/// default: some of these forms make host waves wait for each other inside branches and loops
+/// (pair meetings spin), and a related form hung this PC's card. Off, every program translates
+/// as before. Part of the translation: the shader cache keys on it ([`host_settings`]).
+pub fn water_light() -> bool {
+    #[cfg(test)]
+    if let Some(on) = WATER_LIGHT_FOR_TESTS.with(std::cell::Cell::get) {
+        return on;
+    }
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VILOCITY_WATER_LIGHT").is_some_and(|v| v == "1"))
+}
+
 /// Which of a translated program's group barriers wait for the whole
 /// group (`GroupMemoryBarrierWithGroupSync`); the others keep their memory
 /// fence and lose the wait. A wait that some thread of the group never
@@ -593,6 +617,27 @@ pub fn emit(
                 [0x58, 0x1d, 0xab, 0x2c, 0xd8, 0xbc, 0xf2, 0x2e, 0x5c, 0x96, 0x4b, 0x98, 0xe9, 0x03, 0x48, 0xd1]
                     | [0x24, 0x31, 0xbb, 0xe7, 0xdc, 0x15, 0x4a, 0xd7, 0x59, 0xd2, 0x0b, 0xc9, 0x54, 0x82, 0x9c, 0x1c]
             );
+        // (Vilocity: these from trustno1-coder/VIctory-NVIDIA d12eb1b, GPL-3.0-or-later, and
+        // only with `VILOCITY_WATER_LIGHT=1`.) The volumetric light's two tiled programs
+        // (`CS_TransmissionVolumetrics_Tiled` and `_Tiled_LocalLights`) are of that shape too:
+        // groups of 64, an LDS read and write in one lane-branch region, so no other form
+        // translates them on 32-lane hosts and their dispatches are dropped. Widened, they
+        // translate (4 and 7 branches taken wave-wide). The underwater one
+        // (`CS_TransmissionVolumetricsSubmerged`) likewise (29 branches). The triangle clip's
+        // heap defragmentation (`vfx_triangleClip:CS_DefragHeap_ComputeRelocations`, groups of
+        // 128) holds two console waves, which walk the heap each its own way: their host waves
+        // meet per console wave ([`widen`]'s `groups`, pair meetings).
+        let water_kernel = water_light()
+            && (matches!(native.io, crate::native::StageIo::Cs(cs) if cs.threads.iter().product::<u32>() == 64)
+                && matches!(
+                    c.digest,
+                    [0x24, 0x12, 0x6c, 0x14, 0xdc, 0x76, 0x19, 0xb0, 0x82, 0xef, 0x57, 0x12, 0x96, 0x03, 0x88, 0x90]
+                        | [0x70, 0x99, 0xa5, 0x7f, 0xde, 0xd1, 0x42, 0x61, 0x3b, 0x44, 0xf4, 0x10, 0x46, 0x3d, 0x6b, 0xe6]
+                        | [0xf1, 0xf1, 0x61, 0xe4, 0x7e, 0xef, 0xa3, 0x64, 0x69, 0x18, 0x39, 0xfd, 0x72, 0x06, 0xcc, 0xf6]
+                )
+                || matches!(native.io, crate::native::StageIo::Cs(cs) if cs.threads.iter().product::<u32>() == 128)
+                    && c.digest == [0x50, 0xcf, 0x28, 0x32, 0x8b, 0x58, 0x05, 0x3d, 0xa8, 0x9a, 0x8d, 0xa0, 0x1a, 0xa1, 0x23, 0xc6]);
+        let scene_kernel = scene_kernel || water_kernel;
         // `VILOCITY_WAVE_WIDE_ONLY=<hash>,...` (the hashes of the log): the wide form for
         // those programs too, as for the two kernels above; `VILOCITY_WAVE_WIDE` still
         // wins (TaynanGT/Vice-Tay's rule). The list used to count only with
@@ -637,7 +682,7 @@ pub fn emit(
                         Some(p),
                     ];
                     if let Some(base) = bases.into_iter().flatten().next() {
-                        let again = widen(c, native, base, why, driver_loop);
+                        let again = widen(c, native, base, why, driver_loop, wide_on && water_light());
                         report("wave-wide branches", &again);
                         if done(&again) {
                             return again.map(|(shader, _)| shader);
@@ -699,7 +744,7 @@ pub fn emit(
                 && what == lower::LANE_MASK
                 && std::env::var_os("VILOCITY_WAVE_WIDE").is_none_or(|v| v != "0") =>
         {
-            let again = widen(c, native, p, std::env::var_os("VILOCITY_WAVE_WHY").is_some(), false);
+            let again = widen(c, native, p, std::env::var_os("VILOCITY_WAVE_WHY").is_some(), false, false);
             match again {
                 Ok(_) => again,
                 Err(_) => emit_program(c, native, p, st, io, res),
@@ -738,15 +783,18 @@ pub fn emit(
 /// branches around its cross-lane code taken wave-wide ([`structure::structure_wide`]): the
 /// lowering names the blocks where the two host waves must meet and could not
 /// (`lower::take_needs`), the branches whose regions hold them are widened, and so on until
-/// it translates or a branch cannot be widened. Only where a thread group is one console
-/// wave: with several, the waves of a group would decide differently and a barrier inside
-/// such a branch would wait for threads that never come.
+/// it translates or a branch cannot be widened. Where a thread group is several console
+/// waves, those decide differently and a group barrier inside such a branch would wait for
+/// threads that never come: the host waves of each console wave meet on their own there
+/// ([`lower::with_pair_meetings`]; whole console waves only), when `groups` allows it
+/// (only with [`water_light`]).
 fn widen(
     c: &Container,
     native: &NativeProgram,
     p: &ir::Program,
     why: bool,
     active_loop_only: bool,
+    groups: bool,
 ) -> Result<(HostShader, Option<u32>), ShaderError> {
     const NOT: ShaderError = ShaderError::Unsupported {
         offset: 0,
@@ -756,6 +804,7 @@ fn widen(
         // (a program whose waves are the host's meets no one: no barrier, any group)
         crate::native::StageIo::Cs(_) if !(native.wave64 && lower::host_max_wave() == 32) => {}
         crate::native::StageIo::Cs(cs) if cs.threads.iter().product::<u32>() == 64 => {}
+        crate::native::StageIo::Cs(cs) if groups && cs.threads.iter().product::<u32>() % 64 == 0 => {}
         crate::native::StageIo::Cs(cs) => {
             if why {
                 eprintln!("WAVE64-WIDE not tried: thread groups of {:?}", cs.threads);
@@ -764,13 +813,21 @@ fn widen(
         }
         _ => return Err(NOT),
     }
+    // (several console waves to a group, each two host waves)
+    let pairs = native.wave64
+        && lower::host_max_wave() == 32
+        && matches!(native.io, crate::native::StageIo::Cs(cs) if cs.threads.iter().product::<u32>() > 64);
     let mut wide = std::collections::HashSet::new();
     loop {
         let st = structure::structure_wide(p, &wide)?;
         let io = io::raise(p, native)?;
         let res = resource::track(p, &native.layout, native.stage, Some(&st))?;
         lower::take_needs();
-        let r = emit_program(c, native, p, &st, &io, &res);
+        let r = if pairs {
+            lower::with_pair_meetings(|| emit_program(c, native, p, &st, &io, &res))
+        } else {
+            emit_program(c, native, p, &st, &io, &res)
+        };
         let needs = lower::take_needs();
         // (or translated for 64-lane waves still: shared memory read and written where not
         // every lane runs, whose blocks the lowering names too)
@@ -798,7 +855,8 @@ fn widen(
             }
             return r;
         }
-        let more: Vec<usize> = lower::branches_around(&st, &needs)
+        let around = || lower::branches_around(&st, &needs);
+        let more: Vec<usize> = if pairs { lower::with_pair_meetings(around) } else { around() }
             .unwrap_or_default()
             .into_iter()
             .filter(|b| !wide.contains(b))
@@ -837,8 +895,92 @@ fn widen(
     }
 }
 
+/// Whether a program gets the branches that close or leave its loops taken by each host wave
+/// together where cross-lane code depends on the wave ([`emit_program`]): only with
+/// [`water_light`]; then
+/// - unset or `1`: console wave64 compute programs on a host of 32-lane waves;
+/// - `2`: every compute program;
+/// - `0`: none, as before.
+fn loops_wave(native: &NativeProgram) -> bool {
+    if native.stage != HwStage::Cs || !water_light() {
+        return false;
+    }
+    match std::env::var("VILOCITY_LOOPS_WAVE").ok().as_deref().map(str::trim) {
+        Some("0") => false,
+        Some("2") => true,
+        _ => native.wave64 && lower::host_max_wave() == 32,
+    }
+}
+
 /// The translated program, and the wave size it requires of the host.
+/// [`emit_program_plain`]; with [`loops_wave`], a program that comes out depending on the
+/// host's waves is translated once more with the per-lane branches that close or leave its
+/// loops taken by each host wave together ([`structure::structure_wide_host`]), and that
+/// translation is the one given if it needs no wider waves.
+///
+/// Why: the lowering turns the console's wave loops into loops each lane leaves on its own,
+/// and takes the code behind a loop as code the whole wave runs together. On NVIDIA the lanes
+/// that left a loop early run on as a wave of their own, so a ballot, a first-lane read or an
+/// exchange between the halves of a console wave behind the loop saw a part of the wave.
+/// Seen in `water_shading:CS_TransmissionVolumetrics_GenerateTiles` (the game, build 1.0.2.1,
+/// capture water2): the tiles with local lights never counted themselves in (the lanes without
+/// one arrived later and wrote "no lane" over their ballot), their list stayed empty and those
+/// tiles of the water kept no light: dark rectangles beside lit objects.
+/// (Vilocity: wave64 lowering ported from trustno1-coder/VIctory-NVIDIA 64d4931 and foxhound's
+/// pair meetings, GPL-3.0-or-later, as this.)
 fn emit_program(
+    c: &Container,
+    native: &NativeProgram,
+    p: &ir::Program,
+    st: &structure::Structured,
+    io: &io::Io,
+    res: &resource::Resources,
+) -> Result<(HostShader, Option<u32>), ShaderError> {
+    let first = emit_program_plain(c, native, p, st, io, res);
+    if !loops_wave(native) || !st.host_wide.is_empty() {
+        return first;
+    }
+    let Ok((_, Some(wave))) = &first else {
+        return first;
+    };
+    let loops = lower::loop_branches(p, st);
+    if loops.is_empty() {
+        return first;
+    }
+    let needs = lower::take_needs();
+    let again = structure::structure_wide_host(p, &st.wide, &loops).and_then(|st| {
+        let res = resource::track(p, &native.layout, native.stage, Some(&st))?;
+        emit_program_plain(c, native, p, &st, io, &res)
+    });
+    let why = std::env::var_os("VILOCITY_WAVE_WHY").is_some();
+    // (Vilocity: and only a translation the host runs. One still of 64 lanes on a host of 32
+    // goes back to `emit` and `widen` with the first one's needs. Upstream took it here and
+    // forgot them, `widen` stopped short and the program was refused: the test program of
+    // `wave64_tests`' water light switch, and the archived kernels' form of it.)
+    let runs = |w: u32| !(w == 64 && lower::host_max_wave() == 32);
+    match again {
+        Ok((shader, Some(w))) if w <= *wave && runs(w) => {
+            if why {
+                eprintln!("WAVE-LOOPS {} loop branches taken by each host wave together", loops.len());
+            }
+            lower::take_needs();
+            Ok((shader, Some(w)))
+        }
+        other => {
+            if why {
+                let what = match &other {
+                    Ok((_, w)) => format!("wave {w:?}"),
+                    Err(e) => e.to_string(),
+                };
+                eprintln!("WAVE-LOOPS not taken ({} loop branches): {what}", loops.len());
+            }
+            lower::set_needs(needs);
+            first
+        }
+    }
+}
+
+fn emit_program_plain(
     c: &Container,
     native: &NativeProgram,
     p: &ir::Program,

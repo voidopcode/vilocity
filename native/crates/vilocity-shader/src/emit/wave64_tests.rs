@@ -817,3 +817,277 @@ fn the_console_threads_of_a_two_dimensional_group_are_each_given_once() {
     }
     eprintln!("ran on the hardware device: 64 of 64 console threads, each once");
 }
+
+/// The wave size a lowering of `native` at a host of 32-lane waves asks for, and the shader.
+/// (Vilocity: the two tests after it are trustno1-coder/VIctory-NVIDIA d12eb1b's, for
+/// foxhound's pair meetings and LDS order; GPL-3.0-or-later, as this.)
+fn lowered_with_wave(
+    native: &NativeProgram,
+    p: &ir::Program,
+    wide: &HashSet<usize>,
+) -> (Option<u32>, HostShader) {
+    let st = structure::structure_wide(p, wide).expect("structure");
+    let res = resource::track(p, &native.layout, native.stage, Some(&st)).expect("resource::track");
+    let io = io::raise(p, native).expect("io::raise");
+    let was = lower::TEST_HOST_WAVE.replace(Some(32));
+    let lowered = lower::lower(&lower::Parts {
+        native,
+        p,
+        st: &st,
+        io: &io,
+        res: &res,
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        prims: Vec::new(),
+        mesh_stride: 0,
+    });
+    lower::TEST_HOST_WAVE.set(was);
+    let lowered = lowered.expect("lower");
+    let shader = HostShader {
+        stage: HwStage::Cs,
+        dxil: lowered.dxil,
+        user_data: lowered.user_data,
+        samplers: lowered.samplers,
+        static_samplers: Vec::new(),
+        root_cbvs: lowered.root_cbvs,
+        root_srvs: lowered.root_srvs,
+        root_uavs: lowered.root_uavs,
+        root_indexed_views: res.root_indexed_views,
+        half_views: lowered.half_views,
+    };
+    (lowered.wave_size, shader)
+}
+
+/// Two console waves in a group of 128 threads, each run as two host waves of 32. Lane t goes
+/// round a per-lane loop (t >> 4) + 1 times: it writes its sum to LDS and adds that of lane
+/// t ^ 63 (in the other host wave of its console wave) with no barrier between, as one console
+/// wave may; after the loop every lane adds lane 63's sum (`v_readlane_b32`). The loop's back
+/// edge is taken as the console takes it, by each console wave as a whole, and the two console
+/// waves go round 4 and 8 times: their host waves meet per console wave
+/// ([`lower::with_pair_meetings`]). A group barrier in the loop would wait for the threads of
+/// the console wave that left it (`CS_DefragHeap_ComputeRelocations`, groups of 128, whose
+/// console waves walk a heap each its own way).
+/// (Vilocity) The meetings spin (bounded), the kind of form that hung this PC's card once:
+/// the program goes to the card only with `VILOCITY_TEST_SPIN_ON_CARD=1`.
+#[test]
+fn console_waves_of_one_group_meet_on_their_own_in_loops_of_their_own() {
+    let words = [
+        0x3402_0082, // v_lshlrev_b32 v1, 2, v0: this lane's LDS dword
+        0x3A06_00BF, // v_xor_b32 v3, 63, v0
+        0x3406_0682, // v_lshlrev_b32 v3, 2, v3: the partner lane's (other half, same wave)
+        0x4A04_0000, // v_add_nc_u32 v2, s0, v0: the sum starts at s0 + t
+        0x2C0E_0084, // v_lshrrev_b32 v7, 4, v0
+        0x4A0E_0E81, // v_add_nc_u32 v7, 1, v7: rounds (t >> 4) + 1
+        0x7E0A_0280, // v_mov_b32 v5, 0
+        0xBE8E_047E, // s_mov_b64 s[14:15], exec
+        0xD834_0000,
+        0x0000_0201, // loop: ds_write_b32 v1, v2
+        0xD8D8_0000,
+        0x0400_0003, // ds_read_b32 v4, v3
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0x4A04_0902, // v_add_nc_u32 v2, v2, v4
+        0x4A0A_0A81, // v_add_nc_u32 v5, 1, v5
+        0x7DA8_0B07, // v_cmpx_gt_u32 exec, v7, v5: the lanes with rounds left
+        0xBF89_FFF7, // s_cbranch_execnz loop
+        0xBEFE_040E, // s_mov_b64 exec, s[14:15]
+        0xD760_0007,
+        0x0001_7F02, // v_readlane_b32 s7, v2, 63
+        0x4A04_0407, // v_add_nc_u32 v2, s7, v2
+        0xE070_1000,
+        0x8002_0201, // buffer_store_dword v2, v1, s[8:11], 0 offen
+    ];
+    let mut native = native_of(&words, true, 128);
+    if let StageIo::Cs(cs) = &mut native.io {
+        cs.rsrc2 |= 1 << 15; // 512 bytes of LDS
+    }
+    let p = ir::build(&native.code, native.wave64, native.vgprs).expect("ir::build");
+    let back = (0..p.blocks.len())
+        .find(|&b| p.blocks[b].insts.last().is_some_and(|i| i.name() == "s_cbranch_execnz"))
+        .expect("the back edge");
+    // per lane, the loop's LDS write and read stand where not every lane runs: still 64 lanes,
+    // and the lowering names the loop
+    lower::take_needs();
+    let (wave, _) = lower::with_pair_meetings(|| lowered_with_wave(&native, &p, &HashSet::new()));
+    assert_eq!(wave, Some(64));
+    let needs = lower::take_needs();
+    let st = structure::structure(&p).expect("structure");
+    assert_eq!(lower::with_pair_meetings(|| lower::branches_around(&st, &needs)), Some(vec![back]));
+    // the back edge taken per console wave: waves of 32, meeting per console wave
+    let wide = HashSet::from([back]);
+    let (wave, shader) = lower::with_pair_meetings(|| lowered_with_wave(&native, &p, &wide));
+    assert_eq!(wave, Some(32));
+    assert!(lower::take_needs().is_empty());
+    if let Ok(mut v) = validator::Validator::load(validator::Validator::default_path().as_deref()) {
+        let mut copy = shader.dxil.clone();
+        v.validate(&mut copy).expect("DXIL validation failed");
+    }
+    if std::env::var_os("VILOCITY_TEST_SPIN_ON_CARD").is_none_or(|v| v != "1") {
+        eprintln!("the console waves' meetings spin: not run on the card (VILOCITY_TEST_SPIN_ON_CARD=1 runs it)");
+        return;
+    }
+    // the console: each wave's lanes in step, writes before reads
+    let console = |s0: u32| {
+        let mut out = [0u32; 128];
+        let mut lds = [0u32; 128];
+        for w in 0..2u32 {
+            let lanes = 64 * w..64 * w + 64;
+            let mut sum: Vec<u32> = lanes.clone().map(|t| s0.wrapping_add(t)).collect();
+            for round in 0..8 {
+                let on: Vec<u32> = lanes.clone().filter(|t| round < (t >> 4) + 1).collect();
+                if on.is_empty() {
+                    break;
+                }
+                for &t in &on {
+                    lds[t as usize] = sum[(t - 64 * w) as usize];
+                }
+                for &t in &on {
+                    let k = (t - 64 * w) as usize;
+                    sum[k] = sum[k].wrapping_add(lds[(t ^ 63) as usize]);
+                }
+            }
+            let last = sum[63];
+            for t in lanes {
+                out[t as usize] = sum[(t - 64 * w) as usize].wrapping_add(last);
+            }
+        }
+        out
+    };
+    let _one = super::valu_tests::ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(host) = Host::new(false) else {
+        eprintln!("no SM 6.6 hardware device; not run");
+        return;
+    };
+    let (root, pso) = match host.compute_pipeline(&shader) {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("the hardware device does not take this program: {e}; not run");
+            return;
+        }
+    };
+    for s0 in [0u32, 1000, 0xFFFF_FF00] {
+        let mut ud = vec![0u32; shader.user_data_dwords().max(1) as usize];
+        for u in &shader.user_data {
+            if let (RootType::Constants, 0, 0) = (u.root, u.slot, u.dword) {
+                ud[u.index as usize] = s0;
+            }
+        }
+        let out = host
+            .dispatch(
+                &root,
+                &pso,
+                &Dispatch {
+                    roots: vec![(0, Root::Constants(ud))],
+                    views: &[View::RawUav(128)],
+                    samplers: &[],
+                    groups: [1, 1, 1],
+                },
+            )
+            .unwrap_or_else(|e| panic!("dispatch failed: {e}"));
+        let want = console(s0);
+        assert_eq!(&out[0][..128], &want[..], "s0 = {s0:#x}");
+    }
+    eprintln!("ran on the hardware device: both console waves' loops, as the console runs them");
+}
+
+/// Which LDS accesses need the host waves of their console wave to meet
+/// ([`lower::LdsOrder`]): before a barrier a lane writes its dword and reads it back (the
+/// order counts); after it the lanes read and add with atomics only (it does not: a read
+/// there may see another lane's atomic, so it is not taken as alike in every lane).
+#[test]
+fn lds_accesses_after_the_last_plain_write_need_no_meeting() {
+    let words = [
+        0x3402_0082, // v_lshlrev_b32 v1, 2, v0
+        0xD834_0000,
+        0x0000_0001, // ds_write_b32 v1, v0
+        0xD8D8_0000,
+        0x0400_0001, // ds_read_b32 v4, v1
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0xBF8A_0000, // s_barrier
+        0xD8D8_0000,
+        0x0500_0001, // ds_read_b32 v5, v1
+        0xD800_0000,
+        0x0000_0001, // ds_add_u32 v1, v0
+    ];
+    let mut native = native_of(&words, true, 128);
+    if let StageIo::Cs(cs) = &mut native.io {
+        cs.rsrc2 |= 1 << 15;
+    }
+    let p = ir::build(&native.code, native.wave64, native.vgprs).expect("ir::build");
+    let st = structure::structure(&p).expect("structure");
+    let order = lower::lds_order(&p, &st);
+    let name = |&(b, i): &(usize, usize)| (p.blocks[b].insts[i].name(), p.blocks[b].insts[i].machine.offset);
+    let mut unordered: Vec<_> = order.unordered.iter().map(name).collect();
+    unordered.sort_unstable_by_key(|x| x.1);
+    let unstable: Vec<_> = order.unstable.iter().map(name).collect();
+    assert_eq!(unordered.iter().map(|x| x.0).collect::<Vec<_>>(), ["ds_read_b32", "ds_add_u32"]);
+    assert_eq!(unstable.iter().map(|x| x.0).collect::<Vec<_>>(), ["ds_read_b32"]);
+    assert!(unordered[0].1 > 0x10, "the read after the barrier");
+}
+
+/// (Vilocity) `VILOCITY_WATER_LIGHT` gates the port. A console wave64 program of one wave (64
+/// threads) on a host of 32-lane waves whose LDS write and read stand in one lane-branch region
+/// (a per-lane loop of two blocks), as in the water's tiled light, in a container with the
+/// digest of one of the programs upstream widens: refused with the switch off, as before; the
+/// wave-wide form with it on, the same the archived kernels get either way. A program not
+/// named stays refused either way. (That every other program translates as before with the
+/// switch off was checked once, by hashes of 168 translations before and after the port.)
+#[test]
+fn the_water_light_switch_alone_gives_the_named_programs_the_wide_form() {
+    const NO_WAVE32: &str = "no wave32 lowering for this wave64 program";
+    let words = [
+        0x3402_0082, // v_lshlrev_b32 v1, 2, v0
+        0x3A06_00BF, // v_xor_b32 v3, 63, v0
+        0x3406_0682, // v_lshlrev_b32 v3, 2, v3
+        0x4A04_0000, // v_add_nc_u32 v2, s0, v0
+        0x2C0E_0084, // v_lshrrev_b32 v7, 4, v0
+        0x4A0E_0E81, // v_add_nc_u32 v7, 1, v7
+        0x7E0A_0280, // v_mov_b32 v5, 0
+        0xBE8E_047E, // s_mov_b64 s[14:15], exec
+        0xD834_0000,
+        0x0000_0201, // loop: ds_write_b32 v1, v2
+        0xD8D8_0000,
+        0x0400_0003, // ds_read_b32 v4, v3
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0x4A04_0902, // v_add_nc_u32 v2, v2, v4
+        0xBF06_8001, // s_cmp_eq_u32 s1, 0
+        0xBF85_0001, // s_cbranch_scc1 over the next (a second block in the loop)
+        0x4A04_0481, // v_add_nc_u32 v2, 1, v2
+        0x4A0A_0A81, // v_add_nc_u32 v5, 1, v5
+        0x7DA8_0B07, // v_cmpx_gt_u32 exec, v7, v5
+        0xBF89_FFF4, // s_cbranch_execnz loop
+        0xBEFE_040E, // s_mov_b64 exec, s[14:15]
+        0xE070_1000,
+        0x8002_0201, // buffer_store_dword v2, v1, s[8:11], 0 offen
+    ];
+    let mut native = native_of(&words, true, 64);
+    if let StageIo::Cs(cs) = &mut native.io {
+        cs.rsrc2 |= 1 << 15;
+    }
+    let p = ir::build(&native.code, native.wave64, native.vgprs).expect("ir::build");
+    let st = structure::structure(&p).expect("structure");
+    let io = io::raise(&p, &native).expect("io::raise");
+    let res = resource::track(&p, &native.layout, native.stage, Some(&st)).expect("resource::track");
+    let translate = |digest: [u8; 16], on: bool| {
+        let mut bytes = crate::dxbc::build(&[]);
+        bytes[4..20].copy_from_slice(&digest);
+        let c = crate::dxbc::Container::parse(&bytes).expect("container");
+        super::WATER_LIGHT_FOR_TESTS.with(|w| w.set(Some(on)));
+        let was = lower::TEST_HOST_WAVE.replace(Some(32));
+        let r = super::emit(&c, &native, &p, &st, &io, &res).map(|s| s.dxil);
+        lower::TEST_HOST_WAVE.set(was);
+        super::WATER_LIGHT_FOR_TESTS.with(|w| w.set(None));
+        r
+    };
+    let refused = |r: &Result<Vec<u8>, ShaderError>| {
+        matches!(r, Err(ShaderError::Unsupported { what, .. }) if *what == NO_WAVE32)
+    };
+    let named = [0x24, 0x12, 0x6c, 0x14, 0xdc, 0x76, 0x19, 0xb0, 0x82, 0xef, 0x57, 0x12, 0x96, 0x03, 0x88, 0x90];
+    let archived = [0x58, 0x1d, 0xab, 0x2c, 0xd8, 0xbc, 0xf2, 0x2e, 0x5c, 0x96, 0x4b, 0x98, 0xe9, 0x03, 0x48, 0xd1];
+    let off = translate(named, false);
+    assert!(refused(&off), "{:?}", off.err());
+    assert!(refused(&translate([0; 16], false)));
+    let wide = translate(archived, false).expect("the archived kernel's wide form");
+    assert_eq!(translate(named, true).expect("the wide form with the switch on"), wide);
+    assert_eq!(translate(archived, true).expect("the archived kernel, switch on"), wide);
+    assert!(refused(&translate([0; 16], true)));
+}

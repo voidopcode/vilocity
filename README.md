@@ -60,7 +60,8 @@ PowerShell they can show in red as `NativeCommandError`): it worked when the
 last line says `Finished`.
 
 **4. Play**
-1. Double-click **`Vilocity Launcher.cmd`** in the `vilocity` folder.
+1. Double-click **`Vilocity Launcher.cmd`** in the `vilocity` folder. From then on use the
+   **Vilocity** shortcut it leaves next to it: the same launcher, with no console window.
 2. Pick your game folder. **This PC** shows what the launcher found (card,
    video memory, RAM); fix anything it marks in red. If another program holds
    video memory, **Close it** frees it.
@@ -77,8 +78,10 @@ session stutters while the graphics driver builds its pipelines;
   [Controls](#controls).
 - **F11**: full screen or window. **F8**: hides or shows the frame rate panel.
 
-**Updating**: in the `vilocity` folder run `git pull`, then
-`cargo build --release -p vilocity` again.
+**Updating**: the launcher's **Update** button (bottom left) turns purple when a newer
+Vilocity is out. Pressing it asks first, then downloads it and builds the engine in the
+background, and opens the launcher again when done; up to date, it only says so. By hand:
+in the `vilocity` folder run `git pull`, then `cargo build --release -p vilocity` again.
 
 **Something wrong?**
 - "Engine: not built yet": run the build in step 3, then press **Check again** in the launcher.
@@ -104,13 +107,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-27 23:36
+**Latest test run:** 2026-11-28 00:07
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 28.6 fps, 35 ms a frame |
-| Best while playing | 43.7 fps |
-| Last frame | 28.5 fps, 35 ms, 4363 draws, 179 dropped without a pipeline |
+| Frame rate while playing (typical) | 21.8 fps, 46 ms a frame |
+| Best while playing | 23.9 fps |
+| Last frame | 23.0 fps, 44 ms, 3394 draws, 380 dropped without a pipeline |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -758,7 +761,7 @@ engine's own commands are under `vilocity native ...` and `vilocity compat ...`.
 
 ### GTA VI first run
 
-Double-click `Vilocity Launcher.cmd`: pick the game folder, look at what the
+Double-click the `Vilocity` shortcut (or `Vilocity Launcher.cmd` before the first build): pick the game folder, look at what the
 check of the PC says, press PLAY. Without the window:
 `scripts\play-gta6.ps1 -Game <game folder>` starts the game with the engine's
 measured settings and opens `scripts\monitor-gta6.ps1`: frame rate, memory, CPU
