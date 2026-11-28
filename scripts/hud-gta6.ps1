@@ -52,13 +52,13 @@ $cores = [Environment]::ProcessorCount
 $s = @{ fps = $null; ms = $null; draws = $null; gameCpu = $null; gameGpu = $null; vramUsed = $null; vramAll = $null
         gameVram = $null; gameShared = $null; gameRam = $null; gameCommit = $null; ram = $null; ramAll = $null
         # From the game's log: the upscaler (DLSS or FSR), its mode and sizes, and frame generation.
-        up = $null; upMode = $null; upFrom = $null; upTo = $null; fg = $null; fgTimes = 0 }
+        console = $null; up = $null; upMode = $null; upFrom = $null; upTo = $null; fg = $null; fgTimes = 0 }
 $state = @{ logAt = 0L; id = 0; owner = [IntPtr]::Zero; lastCpu = $null; lastAt = $null; seen = $false; hidden = $false; f8 = $false; tick = 0 }
 # The card's memory in GB, for cards without nvidia-smi (the largest the driver reports).
 $cardAll = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0*' -ErrorAction SilentlyContinue |
     ForEach-Object { [double]$_.'HardwareInformation.qwMemorySize' } | Measure-Object -Maximum).Maximum / 1GB
 
-$PW = 270; $PH = 212
+$PW = 270; $PH = 230
 # The panel never takes the processor from the game.
 try { [Diagnostics.Process]::GetCurrentProcess().PriorityClass = 'BelowNormal' } catch {}
 $form = New-Object HudForm
@@ -122,18 +122,20 @@ $form.Add_Paint({
     }
     else { & $row 88 "VIDEO" ("{0} of {1} GB   + {2} shared" -f (N $s.gameVram), (N $s.vramAll), (N $s.gameShared)) $s.gameVram $s.vramAll $null }
     & $row 110 "RAM" ("{0} of {1} GB" -f (N $s.gameRam), (N $s.ramAll "N0")) $s.gameRam $s.ramAll $null
-    # A thin line between what the PC uses and the picture, and another above the keys.
+    # A thin line between what the game uses and the picture, and another above the keys.
     $g.FillRectangle((& $brush $track), 13, 134, ($PW - 26), 1)
-    $g.FillRectangle((& $brush $track), 13, 180, ($PW - 26), 1)
+    $g.FillRectangle((& $brush $track), 13, 198, ($PW - 26), 1)
+    # The console the game is run as (its picture: Series S for 1080p, Series X for 1440p and 4K).
+    & $row 140 "XBOX" $(if ($s.console) { $s.console } else { "-" }) $null $null $null
     # The upscaler: which (DLSS in NVIDIA's green, FSR in orange), its mode, and the game's render
     # size to the output's ("game's own": no DLSS or FSR call seen, the console renderer's own size).
     $tint = if ($s.up -eq "DLSS") { $nvidia } elseif ($s.up -eq "FSR") { $amd } else { $white }
     $sizes = if ($s.upFrom) { "   {0}p to {1}p" -f $s.upFrom, $s.upTo } else { "" }
-    & $row 140 "SCALE" $(if ($s.up) { "{0} {1}{2}" -f $s.up, $s.upMode, $sizes } else { "game's own" }) $null $null $null $tint
+    & $row 158 "SCALE" $(if ($s.up) { "{0} {1}{2}" -f $s.up, $s.upMode, $sizes } else { "game's own" }) $null $null $null $tint
     # Frame generation: which, how many frames shown for each of the game's, and about how many reach the screen.
     $shown = if ($s.fgTimes -gt 1 -and $null -ne $s.fps) { "   ~{0} fps shown" -f (N ($s.fps * $s.fgTimes) "N0") } else { "" }
     $fgTint = if ($s.fgTimes -le 1) { $white } elseif ($s.fg -like 'DLSS*') { $nvidia } else { $amd }
-    & $row 158 "FRAMES" $(if ($s.fg) { "{0}{1}" -f $s.fg, $shown } else { "no frame generation" }) $null $null $null $fgTint
+    & $row 176 "FRAMES" $(if ($s.fg) { "{0}{1}" -f $s.fg, $shown } else { "no frame generation" }) $null $null $null $fgTint
     # A key as a keycap and what it does, from x; gives the x after it.
     $cap = { param($x, $y, $key, $does)
         $w = [int]$g.MeasureString($key, $name).Width + 5
@@ -146,7 +148,7 @@ $form.Add_Paint({
         $x + $w + 12 + [int]$g.MeasureString($does, $value).Width
     }
     # The keys that are Vilocity's own.
-    $x = & $cap 13 188 "F1" "settings"; $x = & $cap $x 188 "F8" "hide"; [void](& $cap $x 188 "F11" "full screen")
+    $x = & $cap 13 206 "F1" "settings"; $x = & $cap $x 206 "F8" "hide"; [void](& $cap $x 206 "F11" "full screen")
 })
 
 # The game's process and window: looked for until found, then kept.
@@ -186,6 +188,7 @@ function Read-Upscaling([string]$text) {
     if ($last) {
         if ($last.Groups[1].Value -eq 'true') { $s.fgTimes = [int]$last.Groups[2].Value; $s.fg = "DLSS {0}x" -f $s.fgTimes } else { $s.fg = "DLSS's: off now"; $s.fgTimes = 0 }
     }
+    if ($text -match 'console\s+Xbox (Series [SX])') { $s.console = $Matches[1] }
     if ($text -match 'upscaling\s+AMD FSR frame generation') { $s.up = "FSR"; $s.upMode = "Quality" }
     foreach ($m in [regex]::Matches($text, "FSR upscaler: the game's upscale render=\[(\d+), (\d+)\] output=\[(\d+), (\d+)\]")) {
         if ($s.up -eq "DLSS") { continue }

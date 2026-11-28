@@ -330,8 +330,11 @@ picture tests of 2026-11-27 evening ruled out.
   2,000 made-up frames in 100 s (one for each of the game's, about 40 a second shown at 20
   fps), none refused, the game's own rate unchanged (19.6 fps), three 150 s runs passed. Not
   yet run on an AMD card. The HUD is interpolated with the scene (no HUD-less picture yet).
-- **The frame rate panel is on the left, and says the upscaler and frame generation.** Two
-  new lines: SCALE (DLSS in green or FSR in orange, its mode, and the game's render height to
+- **The frame rate panel is on the left, and says the upscaler and frame generation.** Its
+  CPU, GPU, VIDEO and RAM lines are the game's own use, each with a bar (the whole PC's are
+  gone; a red "CARD FULL" still names what else fills the card). XBOX says the console the
+  game runs as (Series S for the 1080p picture, Series X for 1440p and 4K). Two
+  more lines: SCALE (DLSS in green or FSR in orange, its mode, and the game's render height to
   the output's, as "DLSS Quality 1440p to 2160p"; "game's own" without either) and FRAMES
   (DLSS 2x to 4x or FSR 2x, with about how many frames a second reach the screen). Under them,
   Vilocity's own keys as keycaps: F1 settings, F8 hides the panel, F11 full screen.
