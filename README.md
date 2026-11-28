@@ -85,6 +85,11 @@ background, and opens the launcher again when done; up to date, it only says so.
 in the `vilocity` folder run `git pull`, then `cargo build --release -p vilocity` again.
 
 **Something wrong?**
+- The launcher does not open, or `vilocity-launcher.exe` is gone: an antivirus may have removed
+  it. That is a false alarm: the program is new and unsigned, so antivirus programs do not know
+  it yet. It only opens the launcher, and you build it yourself from its source
+  (`apps/vilocity/src/bin/vilocity-launcher.rs`). Double-click **`Vilocity Launcher.cmd`** in the
+  `vilocity` folder instead: it opens the same launcher.
 - "Engine: not built yet": run the build in step 3, then press **Check again** in the launcher.
 - Logs are in `%LOCALAPPDATA%\vilocity\logs`. Bring the newest one, with your
   card, driver and Windows version, to the
