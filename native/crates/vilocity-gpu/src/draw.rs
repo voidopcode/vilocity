@@ -2819,6 +2819,9 @@ impl State {
                     && heap.handle(index).is_some_and(|handle| host.texture_slot_made_from(index, handle));
                 if !has_its_texture {
                     refused += 1;
+                    if let Some(handle) = heap.handle(index) {
+                        host.texture_slot_grey(index, handle);
+                    }
                     if full_card_pass() {
                         // Held back for the frames of about four seconds
                         // (`most`), or until the card has room; the pass

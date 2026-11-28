@@ -113,13 +113,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-28 01:06
+**Latest test run:** 2026-11-28 01:23
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 23.4 fps, 43 ms a frame |
-| Best while playing | 25.7 fps |
-| Last frame | 20.8 fps, 48 ms, 3448 draws, 227 dropped without a pipeline |
+| Frame rate while playing (typical) | 20.8 fps, 48 ms a frame |
+| Best while playing | 28.0 fps |
+| Last frame | 16.1 fps, 62 ms, 10122 draws, 253 dropped without a pipeline |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -127,6 +127,14 @@ loads saves and gets into the world. The world is where the work is now.
 Latest: "will it work on this PC" in the launcher, clothes and faces drawn with another
 texture's colours, the 4-7 fps drops explained and shown on the overlay, and what the
 picture tests of 2026-11-27 evening ruled out.
+- **A texture held back on a full card shows grey, not black.** Past 90 % of the card's budget
+  new textures are held back for about four seconds, and a slot that views no host texture
+  meanwhile read as black (black faces, black streaks on the sun's glint at 1440p with the card
+  full). Such a slot now shows the engine's neutral grey (1x1, no memory), as late textures
+  already do; one that still shows an earlier copy keeps it. Two 1440p walks with 3 GB of the
+  card held: no black spots in either at this scene, and no grey blotches with it on (21 fps
+  against 24 in the run without). Also checked against the #5 ghosting: the reporter's logs
+  refused no card copies, so that is not the copy race; it stays open.
 - **PCs with 16 GB of RAM, and a launcher that blocks nobody.** PLAY is never turned off by
   the "will it work" verdict any more (it only warns); only a missing game folder or engine
   turns it off. Under 24 GB of RAM the play script uses the 1080p picture (1440p and 4K take

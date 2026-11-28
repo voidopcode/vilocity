@@ -1878,6 +1878,20 @@ impl HostHeap {
         self.textures.lock().unwrap_or_else(|e| e.into_inner()).hold(index, write, due);
     }
 
+    /// (Vilocity) Slot `index`, held back for lack of room on the card, shows the neutral
+    /// grey ([`neutral_for`], no card memory) while it views no host texture, instead of
+    /// nothing, which reads as black: black faces and black streaks on the sun's glint at
+    /// 1440p with the card full (2026-11-28). A slot that still shows an earlier copy keeps it.
+    pub(crate) fn texture_slot_grey(&self, index: u32, handle: u64) {
+        if self.kept_in(index).is_some() {
+            return;
+        }
+        let Some(view) = crate::descriptor::view(handle) else { return };
+        if let Some(grey) = neutral_for(&view, self.at(index)) {
+            self.keep(index, Some(grey));
+        }
+    }
+
     /// See [`TextureQueue::room`].
     pub(crate) fn texture_slots_room(&self, frame: u64) -> usize {
         self.textures.lock().unwrap_or_else(|e| e.into_inner()).room(frame)
