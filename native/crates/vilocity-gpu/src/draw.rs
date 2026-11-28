@@ -17,7 +17,7 @@ use crate::descriptor::View;
 use windows::Win32::Foundation::RECT;
 use windows::Win32::Graphics::Direct3D::D3D_PRIMITIVE_TOPOLOGY;
 use windows::Win32::Graphics::Direct3D12::*;
-use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT;
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT, DXGI_FORMAT_R10G10B10A2_UNORM};
 use windows::core::Interface;
 
 use crate::host::HostList;
@@ -3125,8 +3125,8 @@ impl State {
     /// what it writes stayed zero, and the scene seen through water, which is
     /// multiplied by it, black with only the particles drawn after it showing
     /// (2026-11-27, day walk under water, RTX 5080). Its images are set to
-    /// clear water instead: no light scattered (0, 0, 0), all of it let
-    /// through (1).
+    /// clear water instead. The packed UNORM targets also carry transmission
+    /// in G and B; setting those channels to zero hides the whole scene.
     fn submerged(&mut self, list: &HostList) {
         let Some(outputs) = crate::pipeline::submerged_outputs(self.pipeline as This) else {
             return;
@@ -3147,12 +3147,19 @@ impl State {
         let mut said = Vec::new();
         crate::external::record_here(list, |pass| {
             for &resource in &found {
-                let kind = crate::resource::host_copy(resource as This).map(|c| {
+                let desc = crate::resource::host_copy(resource as This).map(|c| {
                     // SAFETY: a live resource.
-                    let d = unsafe { c.texture.GetDesc() };
+                    unsafe { c.texture.GetDesc() }
+                });
+                let kind = desc.map(|d| {
                     format!("{:?} {:?} {}x{}x{}", d.Dimension, d.Format, d.Width, d.Height, d.DepthOrArraySize)
                 });
-                said.push((kind, pass.fill(resource as *const std::ffi::c_void, [0.0, 0.0, 0.0, 1.0])));
+                let value = if desc.is_some_and(|d| d.Format == DXGI_FORMAT_R10G10B10A2_UNORM) {
+                    [0.0, 1.0, 1.0, 1.0]
+                } else {
+                    [0.0, 0.0, 0.0, 1.0]
+                };
+                said.push((kind, pass.fill(resource as *const std::ffi::c_void, value)));
             }
         });
         self.after_external();
