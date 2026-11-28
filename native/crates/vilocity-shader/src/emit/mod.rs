@@ -174,8 +174,9 @@ thread_local! {
 /// accesses outside the program's own shared memory done as the console does them (every
 /// program with LDS, `VILOCITY_LDS_BOUNDS=0` leaves that out). Off by
 /// default: some of these forms make host waves wait for each other inside branches and loops
-/// (pair meetings spin), and a related form hung this PC's card. `VILOCITY_WATER_LIGHT=0`
-/// turns it off; every program then translates as before.
+/// (pair meetings spin), and a related form hung this PC's card. With it on, every wave64
+/// program that translates no other way gets the wave-wide form; that was the default for one
+/// release (v0.1.117) and is off again until each group of programs has run on an RTX.
 /// Part of the translation: the shader cache keys on it ([`host_settings`]).
 pub fn water_light() -> bool {
     #[cfg(test)]
@@ -183,7 +184,7 @@ pub fn water_light() -> bool {
         return on;
     }
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("VILOCITY_WATER_LIGHT").is_none_or(|v| v != "0"))
+    *ON.get_or_init(|| std::env::var_os("VILOCITY_WATER_LIGHT").is_some_and(|v| v == "1"))
 }
 
 /// `VILOCITY_LANE_EXITS=1`: a console wave64 compute program whose wave operations sit in a

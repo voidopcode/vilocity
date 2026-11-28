@@ -113,18 +113,26 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-28 15:31
+**Latest test run:** 2026-11-28 15:44
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing | no frames of the world in this run (menus only) |
-| Shaders that failed to translate | none |
+| Frame rate while playing (typical) | 27.9 fps, 36 ms a frame |
+| Best while playing | 28.4 fps |
+| Last frame | 27.5 fps, 36 ms, 5166 draws, 272 dropped without a pipeline |
+| Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
 Latest: "will it work on this PC" in the launcher, clothes and faces drawn with another
 texture's colours, the 4-7 fps drops explained and shown on the overlay, and what the
 picture tests of 2026-11-27 evening ruled out.
+- **The wave-wide shader forms are off by default again (`VILOCITY_WATER_LIGHT=1` to try them).**
+  v0.1.117 turned them on for every wave64 program that translates no other way. That family
+  once hung an RTX 5080 and froze the whole PC, and it also covered programs that lost the card
+  before (the particle light atlas) and the heap defragmenter, whose form spins. Each group comes
+  back on its own once it has run on an RTX: so far the water's tiled light and the shadow masks
+  have, with no hang. Everything else of v0.1.117 stays, the AMD restart fix below among it.
 - **A start after a good run no longer crashes on AMD (issue 3, to confirm there).** On an RX 9070
   XT the start after a run crashed two seconds in, inside AMD's shader compiler (a null pointer),
   until the cache was deleted. Both crashes came a second after the run's first save of the host
