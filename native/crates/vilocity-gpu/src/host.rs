@@ -1281,7 +1281,7 @@ pub(crate) struct HostList {
     states: Mutex<States>,
     /// What the list does with depth textures that have a colour twin, by
     /// twin ([`TwinUse`]).
-    twins: Mutex<std::collections::HashMap<usize, TwinUse>>,
+    twins: Mutex<ByCopy<TwinUse>>,
     /// The list that runs those transitions just before this one, made
     /// when the list first has such transitions ([`lazy_prelude`]).
     prelude: OnceLock<Option<Prelude>>,
@@ -1352,10 +1352,11 @@ const STAMPS: u32 = 4096;
 #[cfg(feature = "diagnostics")]
 type Note = (String, Option<(u64, u64)>);
 
-type States = std::collections::HashMap<
-    usize,
-    (u32, u32, std::sync::Arc<crate::resource::HostTexture>),
->;
+/// By host copy, as every table of a list that is asked at each draw: the keys are addresses of
+/// ours ([`AddressHash`]). (Vilocity, from ProjectLeonida/mandy 46f0ef3, GPL-3.0-or-later, after
+/// DoubleGhosty/cool_fox 74eda3b: this, a list's twins, the textures it and the submission bring
+/// up to date and the root view slots were the last per-draw tables on the standard SipHash.)
+type States = ByCopy<(u32, u32, std::sync::Arc<crate::resource::HostTexture>)>;
 
 /// What a list does with a depth texture that has a colour twin
 /// ([`crate::resource::Twin`]). Lists are recorded on many threads and run
@@ -1934,10 +1935,16 @@ impl Drop for Counted {
 }
 
 /// A chunk of upload memory for lists' scratch data: the buffer, its
-/// mapping.
+/// mapping, and its address on the card. (Vilocity, from ProjectLeonida/mandy
+/// 956a1fc, GPL-3.0-or-later, after maren-halv/VIctory-DXR e0e549a) A buffer
+/// has one address for as long as it lives, so it is asked once, when the
+/// chunk is made: a list asked the buffer each time it took scratch memory
+/// (every constant buffer of a table made afresh, every root constant buffer
+/// copied), and took a reference to the buffer for the asking.
 struct Chunk {
     buffer: ID3D12Resource,
     data: usize,
+    gpu: u64,
 }
 
 // SAFETY: a D3D12 resource (free-threaded) and its persistent mapping,
@@ -2033,9 +2040,12 @@ fn take_chunk(host: &Host, size: u64) -> Option<Chunk> {
     name(&buffer, || "list scratch".into());
     ALIVE[1].fetch_add(1, Ordering::Relaxed);
     ALIVE[2].fetch_add(size, Ordering::Relaxed);
+    // SAFETY: a live buffer.
+    let gpu = unsafe { buffer.GetGPUVirtualAddress() };
     Some(Chunk {
         buffer,
         data: data as usize,
+        gpu,
     })
 }
 
@@ -2391,7 +2401,7 @@ struct Deferred {
     /// wrote title memory (source, bytes): its host address.
     filled: std::collections::HashMap<(usize, usize), u64, std::hash::BuildHasherDefault<AddressHash>>,
     /// Textures whose contents the list brings up to date.
-    textures: std::collections::HashSet<usize>,
+    textures: std::collections::HashSet<usize, std::hash::BuildHasherDefault<AddressHash>>,
     /// Bottom-of-pipe writes, done once the list has run: address, what,
     /// bytes.
     writes: Vec<(usize, crate::queue::Written, usize)>,
@@ -7097,31 +7107,39 @@ impl HostList {
     /// `len` bytes of upload memory (256-byte aligned) until the list is
     /// reset: the host GPU address and the CPU pointer.
     pub(crate) fn scratch(&self, len: u64) -> Option<(u64, *mut u8)> {
-        let (buffer, at, data) = self.scratch_at(len)?;
-        // SAFETY: a live buffer.
-        Some((unsafe { buffer.GetGPUVirtualAddress() } + at, data))
+        let (base, at, data, _) = self.scratch_piece(len, false)?;
+        Some((base + at, data))
     }
 
     /// [`HostList::scratch`] and the buffer it lies in, for a descriptor
     /// slot to hold: the slot outlives the list's use of it.
     pub(crate) fn scratch_held(&self, len: u64) -> Option<(ID3D12Resource, u64, *mut u8)> {
-        let (buffer, at, data) = self.scratch_at(len)?;
-        // SAFETY: a live buffer.
-        let gpu = unsafe { buffer.GetGPUVirtualAddress() } + at;
-        Some((buffer, gpu, data))
+        let (base, at, data, buffer) = self.scratch_piece(len, true)?;
+        Some((buffer?, base + at, data))
     }
 
     /// [`HostList::scratch`]: the buffer, the offset in it and the CPU
     /// pointer.
     fn scratch_at(&self, len: u64) -> Option<(ID3D12Resource, u64, *mut u8)> {
+        let (_, at, data, buffer) = self.scratch_piece(len, true)?;
+        Some((buffer?, at, data))
+    }
+
+    /// A piece of the list's scratch memory: its buffer's address on the card
+    /// ([`Chunk`]: not asked of the buffer each time), the offset in the
+    /// buffer, the CPU pointer and, with `held`, the buffer.
+    fn scratch_piece(&self, len: u64, held: bool) -> Option<(u64, u64, *mut u8, Option<ID3D12Resource>)> {
         let host = host()?;
         let mut s = self.scratch.lock().unwrap_or_else(|e| e.into_inner());
         let len = len.max(1).next_multiple_of(256);
         if len > SCRATCH_CHUNK {
             let (buffer, data) = host.upload_buffer(len)?;
             name(&buffer, || format!("list scratch {len:#x}"));
-            self.deferred().hold_upload(buffer.clone(), len);
-            return Some((buffer, 0, data));
+            // SAFETY: a live buffer.
+            let base = unsafe { buffer.GetGPUVirtualAddress() };
+            let kept = held.then(|| buffer.clone());
+            self.deferred().hold_upload(buffer, len);
+            return Some((base, 0, data, kept));
         }
         // The chunk in use while `len` fits in what is left of it, else the
         // next one (a list's first chunk may be a small one).
@@ -7138,10 +7156,10 @@ impl HostList {
             s.chunks.push((chunk, size));
             s.used = 0;
         }
-        let (data, buffer) = (s.chunks[s.current].0.data, s.chunks[s.current].0.buffer.clone());
         let at = s.used;
         s.used += len;
-        Some((buffer, at, (data + at as usize) as *mut u8))
+        let chunk = &s.chunks[s.current].0;
+        Some((chunk.gpu, at, (chunk.data + at as usize) as *mut u8, held.then(|| chunk.buffer.clone())))
     }
 
     /// The bytes of scratch chunks the list holds now (after a reset:
@@ -7822,7 +7840,7 @@ struct Batch {
     index: ByCopy<usize>,
     /// Staging buffers (by address) refreshed since the last title write,
     /// or due to be.
-    textures: std::collections::HashSet<usize>,
+    textures: std::collections::HashSet<usize, std::hash::BuildHasherDefault<AddressHash>>,
     /// Those due ([`Batch::refresh_textures`]).
     due: Vec<std::sync::Arc<crate::texture::Staging>>,
     /// What copies at their place in the submission's lists put into title
@@ -10915,3 +10933,92 @@ mod batch {   // Batch::texture_due lives here; `mod tests` is already taken at 
     }
 }
 
+
+/// (From ProjectLeonida/mandy 956a1fc.) A list's scratch memory is where its buffer is: the
+/// address kept with a chunk is the buffer's own, pieces follow each other in whole 256 bytes on
+/// the card as in the mapping, and a piece bigger than a chunk has a buffer to itself.
+#[cfg(test)]
+mod scratch_address_tests {
+    use super::*;
+
+    #[test]
+    fn a_lists_scratch_memory_is_at_its_buffers_address() {
+        let Some(host) = host() else {
+            eprintln!("no D3D12 device; scratch addresses not tested");
+            return;
+        };
+        let list = host.new_list().unwrap();
+        let (first, first_data) = list.scratch(100).unwrap();
+        let (buffer, held, held_data) = list.scratch_held(300).unwrap();
+        // SAFETY: a live buffer.
+        let base = unsafe { buffer.GetGPUVirtualAddress() };
+        assert_eq!(first, base);
+        assert_eq!(held, base + 256);
+        assert_eq!(held_data as usize, first_data as usize + 256);
+        let (third, third_data) = list.scratch(1).unwrap();
+        assert_eq!(third, base + 256 + 512);
+        assert_eq!(third_data as usize, first_data as usize + 256 + 512);
+        let (big, big_at, _) = list.scratch_held(SCRATCH_CHUNK + 1).unwrap();
+        // SAFETY: a live buffer.
+        assert_eq!(big_at, unsafe { big.GetGPUVirtualAddress() });
+        assert_ne!(big_at, base);
+        list.close();
+        list.reset();
+    }
+}
+
+/// (From ProjectLeonida/mandy 46f0ef3.) The tables a list asks at every draw are keyed by
+/// addresses of ours (host copies, title heaps, title addresses): keys that differ in few bits,
+/// at even steps. [`AddressHash`] has to tell them apart and spread them over a table's places.
+#[cfg(test)]
+mod address_hash_tests {
+    use super::AddressHash;
+    use std::hash::{BuildHasher, BuildHasherDefault};
+
+    fn hash<K: std::hash::Hash>(key: K) -> u64 {
+        BuildHasherDefault::<AddressHash>::default().hash_one(key)
+    }
+
+    /// What a table makes of `hashes`: its place from the low bits, its tag from the top seven.
+    /// No two the same, every tag in use, and with as many places as keys no place crowded and
+    /// the keys looked at to find one not many more than chance leaves (1.5).
+    fn spread(what: &str, hashes: &[u64]) {
+        let places = hashes.len().next_power_of_two();
+        let mut at = vec![0u32; places];
+        let mut tags = [false; 128];
+        let mut seen = std::collections::BTreeSet::new();
+        for &h in hashes {
+            assert!(seen.insert(h), "{what}: two keys with one hash");
+            at[h as usize & (places - 1)] += 1;
+            tags[(h >> 57) as usize] = true;
+        }
+        let fullest = at.iter().copied().max().unwrap_or(0);
+        assert!(fullest <= 32, "{what}: {fullest} keys in one place of {places}");
+        let looked: u64 = at.iter().map(|&n| u64::from(n) * u64::from(n + 1) / 2).sum();
+        let looked = looked as f64 / hashes.len() as f64;
+        assert!(looked <= 2.5, "{what}: {looked:.2} keys looked at to find one");
+        let used = tags.iter().filter(|&&t| t).count();
+        assert!(used >= 120, "{what}: {used} tags of 128 in use");
+    }
+
+    #[test]
+    fn the_keys_of_a_lists_per_draw_tables_spread() {
+        // Host copies by address: objects of one size, one after the other.
+        for step in [16usize, 48, 64, 192, 4096, 1 << 16] {
+            let keys: Vec<u64> = (0..4096).map(|i| hash(0x0000_01f4_8a20_0040usize + i * step)).collect();
+            spread(&format!("copies {step} bytes apart"), &keys);
+        }
+        // Root views: (title heap, title address), bit 63 for a view that begins early.
+        let heap = 0x0000_0234_5678_9000usize;
+        let keys: Vec<u64> = (0..2048u64)
+            .flat_map(|i| {
+                let address = 0x4_2000_0000 + i * 0x140;
+                [hash((heap, address)), hash((heap, address | 1 << 63))]
+            })
+            .collect();
+        spread("root views", &keys);
+        // Fills of scratch memory: (source, bytes).
+        let keys: Vec<u64> = (0..4096usize).map(|i| hash((0x2_8000_0000usize + (i / 4) * 0x100, 0x100usize << (i % 4)))).collect();
+        spread("fills", &keys);
+    }
+}

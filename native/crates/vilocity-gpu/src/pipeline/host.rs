@@ -366,6 +366,11 @@ pub(crate) struct Stage {
     /// Root UAVs: one-view tables like the SRVs (or root descriptors with
     /// `VILOCITY_ROOT_SRV_DIRECT=1`).
     pub(crate) root_uavs: Vec<(u8, u32)>,
+    /// (Vilocity, from ProjectLeonida/mandy cce1184, GPL-3.0-or-later, after maren-halv/VIctory-DXR
+    /// e0e549a) Which of `root_srvs` the shader reads from the bytes its raw view begins early by
+    /// ([`biased_root_srvs`]): a bit for each of the first 64, worked out with the pipeline; a
+    /// draw asked it of the shader's user data for every root SRV it binds (`draw::State::bind`).
+    pub(crate) root_srvs_biased: u64,
 }
 
 impl Stage {
@@ -374,6 +379,34 @@ impl Stage {
             .translated()
             .expect("host pipelines are made from translated shaders")
     }
+
+    /// Whether the shader adds the bytes the raw view of `root_srvs[at]` begins early by
+    /// (`vilocity_shader::emit::USER_VIEW_BIAS`).
+    pub(crate) fn root_srv_biased(&self, at: usize) -> bool {
+        match at {
+            0..64 => self.root_srvs_biased >> at & 1 != 0,
+            // (A root signature has no room for so many; asked as before.)
+            _ => self.root_srvs.get(at).is_some_and(|&(slot, _)| biases(&self.translated().host.user_data, slot)),
+        }
+    }
+}
+
+/// Whether a shader with `user_data` adds the bytes the raw view of the root SRV in the title's
+/// root parameter `slot` begins early by.
+fn biases(user_data: &[vilocity_shader::emit::UserData], slot: u8) -> bool {
+    let bias = vilocity_shader::RootType::Other(vilocity_shader::emit::USER_VIEW_BIAS);
+    user_data.iter().any(|u| u.slot == slot && u.root == bias)
+}
+
+/// [`Stage::root_srvs_biased`] for a shader with `user_data`: a bit for each of the first 64
+/// `root_srvs` (title root parameter, ours) it [`biases`].
+fn biased_root_srvs(root_srvs: &[(u8, u32)], user_data: &[vilocity_shader::emit::UserData]) -> u64 {
+    root_srvs
+        .iter()
+        .take(64)
+        .enumerate()
+        .filter(|&(_, &(slot, _))| biases(user_data, slot))
+        .fold(0, |mask, (at, _)| mask | 1 << at)
 }
 
 pub(crate) struct HostPipeline {
@@ -492,6 +525,7 @@ impl HostPipeline {
                 root_cbvs: Vec::new(),
                 root_srvs: Vec::new(),
                 root_uavs: Vec::new(),
+                root_srvs_biased: 0,
             };
             let dwords = t.user_data_dwords();
             if dwords > 0 {
@@ -600,6 +634,7 @@ impl HostPipeline {
                     ShaderVisibility: visibility,
                 });
             }
+            stage.root_srvs_biased = biased_root_srvs(&stage.root_srvs, &t.user_data);
             bound.push(stage);
         }
         let (root, root_blob) = match root_signature(&host.device, &params, &samplers, compute.is_some()) {
@@ -1081,6 +1116,42 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     use super::*;
+
+    /// (From mandy cce1184.) The root SRVs a shader reads with a bias are known with the pipeline
+    /// as a draw found them: by a user-data word of that kind for the title's root parameter,
+    /// whatever else names the parameter; a bit for each by its place among the stage's root SRVs.
+    #[test]
+    fn the_root_srvs_read_with_a_bias_are_those_a_draw_found() {
+        use vilocity_shader::RootType;
+        use vilocity_shader::emit::{USER_ROOT_ADDRESS, USER_VIEW_ADDRESS, USER_VIEW_BIAS, UserData};
+        let word = |index: u32, slot: u8, root: RootType| UserData { index, slot, root, dword: 0 };
+        let user_data = [
+            word(0, 3, RootType::Constants),
+            word(1, 5, RootType::Other(USER_VIEW_BIAS)),
+            // Another word of the host's for a root view: not a bias.
+            word(2, 7, RootType::Other(USER_ROOT_ADDRESS)),
+            word(3, 7, RootType::Other(USER_ROOT_ADDRESS + 1)),
+            // A bias, and a table of the same parameter number.
+            word(4, 9, RootType::Table),
+            word(5, 9, RootType::Other(USER_VIEW_BIAS)),
+            // A view's address taken through a table: not a root view's bias.
+            word(6, 2, RootType::Other(USER_VIEW_ADDRESS)),
+        ];
+        // (Title root parameter, ours), in the order the stage binds them.
+        let root_srvs = [(2u8, 10u32), (5, 11), (7, 12), (9, 13), (3, 14)];
+        let mask = biased_root_srvs(&root_srvs, &user_data);
+        assert_eq!(mask, 0b01010);
+        for (at, &(slot, _)) in root_srvs.iter().enumerate() {
+            let scanned = user_data.iter().any(|u| u.slot == slot && u.root == RootType::Other(USER_VIEW_BIAS));
+            assert_eq!(mask >> at & 1 != 0, scanned, "root SRV {at}");
+            assert_eq!(biases(&user_data, slot), scanned);
+        }
+        assert_eq!(biased_root_srvs(&root_srvs, &[]), 0);
+        assert_eq!(biased_root_srvs(&[], &user_data), 0);
+        // Past 64 root SRVs the mask says nothing (the stage asks as before).
+        let many: Vec<(u8, u32)> = (0..70).map(|n| (5u8, n)).collect();
+        assert_eq!(biased_root_srvs(&many, &user_data), u64::MAX);
+    }
 
     /// A triangle mesh shader of our own and a pixel shader for it.
     const MS: &str = "struct V { float4 p : SV_Position; };
