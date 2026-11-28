@@ -113,7 +113,7 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-28 17:26
+**Latest test run:** 2026-11-28 18:03
 
 | Measure | Value |
 |---------|-------|
@@ -304,6 +304,13 @@ picture tests of 2026-11-27 evening ruled out.
   scene, not over it). "Shade in creases" on and off changed nothing visible on the
   opening's faces. The reflections stand-in on and off changed nothing visible in the
   opening or the daylight town; the glitter on skin (pool party) is in no test save yet.
+- **The black sun is gone.** The sun's disc drew black (and the glints on water had black
+  holes): the "Fog light cap" stand-in wrote the game's light-scattering volume back with
+  three channels where it capped it, toward the sun, and the fourth (what the air lets
+  through) was lost there. It now keeps the fourth; the sun is white with every setting at
+  its default (a camera sweep at the dock), and a 7-minute run at 1440p with DLSS passed.
+  Also measured on the card and on WARP: the stand-ins for the console's R9G9B9E5 and f16
+  targets clamp values past their range, as the console does, and never make infinities.
 - **Every setting, in the launcher and on F1, kept together.** The launcher's options
   have a list for each of the game's settings (upscaler, DLSS model, frame generation,
   light in the shade, shade in creases, brighter nights, fog light cap, reflections

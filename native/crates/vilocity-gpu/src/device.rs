@@ -346,16 +346,15 @@ fn feature_levels(data: *mut c_void) -> HRESULT {
     }
 }
 
-/// Device methods 0x1c8 and 0x218 (`SLOT`). The title calls both
+/// Device methods 0x1c8 and 0x218 (`SLOT`): `DeserializeGraphicsPipelineStateX` and
+/// `DeserializeComputePipelineStateX` (named by the GDK). The title calls both
 /// (title+0x2477578 and title+0x24800d5) as `(this, description, interface
-/// id, out)`, asks for `ID3D12PipelineState`, and on success keeps the
-/// object `out` names and draws with it; on failure it goes without that
-/// pipeline, silently. What the descriptions hold is not known: the calls
-/// fail as they always did, with `out` null, and the first ones log the
-/// description's words and what its first word points at, so that the two
-/// methods can be written.
-/// shortcut: not implemented. Answering `S_OK` here without making the
-/// pipeline would hand the title whatever its stack held as an object.
+/// id, out)`: its pipeline cache. On failure it makes the pipeline the usual way
+/// from the whole shader, so refusing loses nothing. (Vilocity, 2026-11-28: a run
+/// that accepted the compute ones, 2,689 calls, packed as FSPX, got 783 programs
+/// that did not translate, 7 before, and 972 compute pipelines bound against 1,023.)
+/// The first calls log the description's words and what its first word points at.
+/// shortcut: not implemented, on purpose: the usual way gives the whole shader.
 extern "system" fn unknown_pipeline<const SLOT: usize>(
     _: This,
     desc: *const u8,
@@ -393,7 +392,7 @@ extern "system" fn unknown_pipeline<const SLOT: usize>(
             calls,
             description = format_args!("{description:x?}"),
             first_points_at = format_args!("{first:x?}"),
-            "a pipeline creation method that is not implemented: the title goes without this pipeline"
+            "a pipeline from the title's cache refused: it makes it the usual way"
         );
     }
     E_NOTIMPL

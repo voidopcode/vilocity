@@ -2885,3 +2885,87 @@ fn a_format_load_read_as_halves_loads_the_integer() {
     }
     assert!(ran > 0, "no SM 6.6 device available");
 }
+
+/// (Vilocity) What a typed store of floats past R11G11B10_FLOAT's range leaves there: the
+/// stand-in for the console's R9G9B9E5 targets, which clamp to their largest value (65408)
+/// as the format has no infinity. Measured on the card and on WARP (grey disc at the sun,
+/// 2026-11-28): both clamp, so neither stand-in makes an infinity of a bright value.
+#[test]
+fn r11g11b10_store_past_its_range() {
+    use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R11G11B10_FLOAT;
+    let _serial = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    // Unsigned 11/10-bit floats: 5 exponent bits, 6 (5) mantissa bits, no sign.
+    let channel = |bits: u32, mantissa: u32| {
+        let (e, m) = (bits >> mantissa, bits & ((1 << mantissa) - 1));
+        match e {
+            31 if m == 0 => f32::INFINITY,
+            31 => f32::NAN,
+            0 => m as f32 / (1 << mantissa) as f32 * 2f32.powi(-14),
+            _ => (1.0 + m as f32 / (1 << mantissa) as f32) * 2f32.powi(e as i32 - 15),
+        }
+    };
+    let rows: [[f32; 3]; 2] = [[65504.0, 70000.0, 1.0e6], [f32::INFINITY, 65024.0, 64512.0]];
+    for (backend, warp) in [("hardware", false), ("warp", true)] {
+        let Ok(host) = Host::new(warp) else { continue };
+        for row in rows {
+            let mut body = Vec::new();
+            body.extend_from_slice(&s_load_dwordx4_off(12, 4, 0));
+            for (k, v) in row.iter().chain([&1.0]).enumerate() {
+                body.push(vop1(0x01, 2 + k as u8, 0xFF)); // v_mov_b32 v[2+k], literal
+                body.push(v.to_bits());
+            }
+            body.extend_from_slice(&mubuf_idxen(0x07, 2, 0, 12)); // buffer_store_format_xyzw (alpha unused)
+            let used = vec![UsedResource {
+                kind: ResourceType::Uav,
+                root: RootType::Table,
+                table_offset_dwords: 0,
+                lower_bound: 0,
+                stride: 4,
+                dwords: 4,
+                user_data: 4,
+                slot: 0,
+            }];
+            let shader = build_table_typed_cs(&body, used);
+            let (root, pso) = host.compute_pipeline(&shader).unwrap_or_else(|e| panic!("{backend}: {e}"));
+            let zeros = [0u32; 4];
+            let views = [View::TypedUav { data: &zeros, format: DXGI_FORMAT_R11G11B10_FLOAT, elem_bytes: 4 }];
+            let mut ud = vec![0u32; shader.user_data_dwords().max(1) as usize];
+            for u in &shader.user_data {
+                if u.root == RootType::Table && u.slot == 0 {
+                    ud[u.index as usize] = 0;
+                }
+            }
+            let out = host
+                .dispatch(
+                    &root,
+                    &pso,
+                    &Dispatch {
+                        roots: vec![(0, Root::Constants(ud)), (1, Root::View { srv: true, data: vec![4] })],
+                        views: &views,
+                        samplers: &[],
+                        groups: [1, 1, 1],
+                    },
+                )
+                .unwrap_or_else(|e| panic!("{backend}: {e}"));
+            let w = out[0][0];
+            let got = [channel(w & 0x7FF, 6), channel(w >> 11 & 0x7FF, 6), channel(w >> 22, 5)];
+            // Clamped to the largest finite values (65024; 64512 in blue), never infinity.
+            assert_eq!(got, [65024.0, 65024.0, 64512.0], "R11G11B10 {backend}: stored {row:?} ({w:#010x})");
+            // The same into R16G16B16A16_FLOAT.
+            let views = [View::TypedUav { data: &zeros, format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R16G16B16A16_FLOAT, elem_bytes: 8 }];
+            let mut ud = vec![0u32; shader.user_data_dwords().max(1) as usize];
+            for u in &shader.user_data {
+                if u.root == RootType::Table && u.slot == 0 {
+                    ud[u.index as usize] = 0;
+                }
+            }
+            let out = host
+                .dispatch(&root, &pso, &Dispatch { roots: vec![(0, Root::Constants(ud)), (1, Root::View { srv: true, data: vec![8] })], views: &views, samplers: &[], groups: [1, 1, 1] })
+                .unwrap_or_else(|e| panic!("{backend}: {e}"));
+            let (a, b) = (out[0][0], out[0][1]);
+            let half = |h: u32| channel(h & 0x7FFF, 10);
+            let got = [half(a & 0xFFFF), half(a >> 16), half(b & 0xFFFF)];
+            assert!(got.iter().zip(row).all(|(g, r)| *g == r.min(65504.0)), "R16G16B16A16F {backend}: stored {row:?} -> {got:?}");
+        }
+    }
+}
