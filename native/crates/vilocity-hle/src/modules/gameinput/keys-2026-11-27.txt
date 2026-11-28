@@ -1,0 +1,72 @@
+# Vilocity keys. Change the keys on the right of '='; save; the running title
+# takes them within a second. Several keys: separate them with commas.
+# Keys: letters, digits, F1 to F10, F12, Shift, RightShift, Ctrl, RightCtrl,
+# RightAlt, Space, Enter, Esc, Tab, CapsLock, Backspace, Insert, Delete, Home,
+# End, PageUp, PageDown, Pause, ScrollLock, Apps, ArrowUp, ArrowDown, ArrowLeft,
+# ArrowRight, Comma, Period, Slash, Semicolon, Quote, Minus, Equals, Backquote,
+# LeftBracket, RightBracket, Backslash, Num0 to Num9, NumAdd, NumSubtract,
+# NumMultiply, NumDivide, NumDecimal, LeftClick, RightClick, MiddleClick,
+# Mouse4, Mouse5. The mouse's motion is always the right stick.
+# Every key does something. Left out on purpose: Left Alt and Esc give the
+# mouse back (Esc is the menu too), F1 opens Vilocity's settings, F8 hides
+# the frame rate panel, F11 is
+# the whole screen and back, and the keys Windows keeps for itself (Windows,
+# PrintScreen, NumLock).
+# Delete this file to get the one Vilocity comes with again.
+
+[general]
+# Switches between the two layouts below (the window's log says which).
+SWITCH = G
+
+[walk]
+MOVE_UP = W
+MOVE_DOWN = S
+MOVE_LEFT = A
+MOVE_RIGHT = D
+LT = RightClick, U, RightAlt, Num1
+RT = LeftClick, O, Num3
+A = Space, Enter, Num0, 9
+B = R, Backspace, B, RightCtrl, Delete, NumDecimal, 0
+X = Ctrl, X, CapsLock, Slash, 7, F9
+Y = F, E, Y, Insert, Backslash, 8, F10
+LB = Tab, Mouse4, Semicolon, 5, Num7, F6
+RB = Q, Mouse5, Quote, 6, Num9, F7
+L3 = Shift, RightShift, Z
+R3 = C, MiddleClick, H, Num5, F12
+UP = ArrowUp, 1, T, PageUp, NumAdd, F2
+DOWN = ArrowDown, 2, N, PageDown, NumSubtract, F3
+LEFT = ArrowLeft, 3, LeftBracket, Minus, Comma, NumDivide, F4
+RIGHT = ArrowRight, 4, RightBracket, Equals, Period, NumMultiply, F5
+MENU = Esc, P, Home, Pause, Apps
+VIEW = V, M, Backquote, End, ScrollLock
+LOOK_UP = I, Num8
+LOOK_DOWN = K, Num2
+LOOK_LEFT = J, Num4
+LOOK_RIGHT = L, Num6
+
+[drive]
+# W and S are the triggers (accelerate, brake), A and D steer.
+RT = W, O, Num3
+LT = S, U, RightAlt, Num1
+MOVE_LEFT = A
+MOVE_RIGHT = D
+MOVE_UP = ArrowUp
+MOVE_DOWN = ArrowDown
+LB = LeftClick, RightClick, Tab, Mouse4, Semicolon, 5, Num7, F6
+RB = Space, Q, Mouse5, Quote, 6, Num9, F7
+A = Shift, Enter, RightShift, Num0, 9
+B = R, Backspace, Ctrl, B, RightCtrl, Delete, NumDecimal, 0
+X = X, CapsLock, Slash, 7, F9
+Y = F, E, Y, Insert, Backslash, 8, F10
+L3 = H, Z
+R3 = C, MiddleClick, Num5, F12
+UP = 1, T, PageUp, NumAdd, F2
+DOWN = 2, N, PageDown, NumSubtract, F3
+LEFT = 3, ArrowLeft, LeftBracket, Minus, Comma, NumDivide, F4
+RIGHT = 4, ArrowRight, RightBracket, Equals, Period, NumMultiply, F5
+MENU = Esc, P, Home, Pause, Apps
+VIEW = V, M, Backquote, End, ScrollLock
+LOOK_UP = I, Num8
+LOOK_DOWN = K, Num2
+LOOK_LEFT = J, Num4
+LOOK_RIGHT = L, Num6

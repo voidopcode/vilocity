@@ -528,7 +528,9 @@ impl Hub {
         let (pads, keys, mouse) = {
             let mut source = lock(&self.source);
             let pads: [_; PADS] = std::array::from_fn(|slot| source.pad(slot));
-            let wanted = pads.iter().all(Option::is_none);
+            // (With one pad, the default, the mouse counts with a pad connected too: a pad that
+            // was on, or a remapper's (Steam, DS4Windows), had stopped the camera, 2026-11-28.)
+            let wanted = self.one_pad || pads.iter().all(Option::is_none);
             (pads, source.keys(), source.mouse(now(), wanted, window))
         };
         let events = self.state().poll(&self.devices, self.one_pad, pads, keys, &mouse);
@@ -1324,7 +1326,7 @@ mod host {
             // to the pad (the title's start screen) saw nothing.
             if slot == 0 {
                 for vk in scripted() {
-                    for (key, part) in super::binds::layout(|_| false) {
+                    for (key, part) in super::binds::current() {
                         if let (true, super::Part::Button(button)) = (key == vk, part) {
                             pad.buttons |= button;
                         }
@@ -1748,9 +1750,10 @@ mod tests {
             (MENU, &[0x1B, b'P']),
             (VIEW, b"V"),
             (A, &[0x0D, b' ']),
-            (B, &[0x08, b'R']),
-            // (Vilocity) Ctrl crouches, as in GTA V: X on the pad (the game's controls page).
-            (X, &[0xA2, b'X']),
+            // (Vilocity) Ctrl crouches, as in GTA V: B on the pad, and R is melee (X), as the
+            // game's own controls page says (Settings, Control Scheme "Default", 2026-11-28).
+            (B, &[0x08, 0xA2, b'X']),
+            (X, &[b'R', b'B']),
             (Y, b"FYE"),
             (UP, &[0x26, b'1']),
             (DOWN, &[0x28, b'2']),
@@ -1835,7 +1838,7 @@ mod tests {
         hub.poll();
         hub.poll();
         let state = look(hub);
-        assert_eq!((state.right_trigger, state.buttons), (1.0, B));
+        assert_eq!((state.right_trigger, state.buttons), (1.0, X));
         hub.poll();
         assert_eq!(look(hub), PadState::default());
         // A title that does not look gets no old presses.

@@ -3813,6 +3813,7 @@ pub(crate) mod awake;
 mod card_steps;
 pub(crate) mod indirects;
 pub(crate) mod menu;
+mod menu_window;
 mod overlay;
 #[cfg(feature = "diagnostics")]
 mod panel;

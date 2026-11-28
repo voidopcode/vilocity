@@ -87,6 +87,8 @@ pub mod streamline;
 // (Vilocity) AMD FSR frame generation (`VILOCITY_FSR_FRAMEGEN=1`).
 #[cfg(windows)]
 pub mod fsr_fg;
+#[cfg(windows)]
+mod volume;
 mod switch;
 #[cfg(all(windows, feature = "diagnostics"))]
 mod ab;
@@ -127,6 +129,36 @@ pub fn frame_phase() -> u32 {
 #[cfg(windows)]
 pub fn menu_holds_input() -> bool {
     host::menu::holds_input()
+}
+
+/// (Vilocity) The mouse as the in-game menu has it: sensitivity, up and down inverted,
+/// smoothing (frames); the input reads it at each poll.
+pub fn mouse_settings() -> (f32, bool, f32) {
+    live::mouse()
+}
+
+/// (Vilocity) What the in-game menu's keys page shows and changes; the input's (its keys
+/// file) gives it at the start ([`set_keys_page`]).
+pub trait KeysPage: Send + Sync {
+    /// The rows: what a key does ("On foot: run"), and its key now.
+    fn rows(&self) -> Vec<(String, String)>;
+    /// Makes virtual key `vk` the key of `row` (in its file); false if `vk` has no name there.
+    fn bind(&self, row: usize, vk: u8) -> bool;
+    /// Every key as Vilocity comes (the file kept beside); false if it could not be.
+    fn reset(&self) -> bool {
+        false
+    }
+}
+
+static KEYS_PAGE: std::sync::OnceLock<Box<dyn KeysPage>> = std::sync::OnceLock::new();
+
+/// (Vilocity) The keys page, once.
+pub fn set_keys_page(page: Box<dyn KeysPage>) {
+    let _ = KEYS_PAGE.set(page);
+}
+
+pub(crate) fn keys_page() -> Option<&'static dyn KeysPage> {
+    KEYS_PAGE.get().map(|p| p.as_ref())
 }
 
 /// Frames the title has begun (its frame waits that ended), for logs.

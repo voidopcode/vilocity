@@ -26,7 +26,8 @@ pub(crate) enum Knob {
     /// Frames a second at most (0: no cap).
     Cap,
     /// The upscaler at the next start (`scripts\play-gta6.ps1` reads it): 0 the
-    /// game's own (AMD FSR), 1 DLSS quality, 2 DLSS balanced, 3 DLSS performance.
+    /// game's own (AMD FSR), 1 quality, 2 balanced, 3 performance, 4 ultra performance,
+    /// 5 DLAA (native AA): DLSS's on NVIDIA cards, FSR's at that scale on the others.
     Upscaler,
     /// DLSS frame generation: 0 off, 2 to 4 frames shown for each one rendered;
     /// live when it was on at the start, else from the next start.
@@ -45,9 +46,21 @@ pub(crate) enum Knob {
     Shade,
     /// The title's motion blur at the next start: 0 left out (the default), 1 as the game has it.
     Blur,
+    /// Mouse sensitivity (`VILOCITY_MOUSE_SENSITIVITY`; 1 as Vilocity comes).
+    Mouse,
+    /// The mouse's up and down: 0 as it comes, 1 inverted.
+    InvertY,
+    /// Mouse smoothing: 0 none, else how many more frames its motion is spread over.
+    Smooth,
+    /// The frame rate panel (`scripts\hud-gta6.ps1` reads it): 0 hidden, 1 compact, 2 normal (as it comes), 3 detailed.
+    Panel,
+    /// The panel's side of the game's window: 0 left, 1 right.
+    PanelSide,
+    /// The game's sound volume in Windows' mixer, 0 to 100 (`crate::volume`).
+    Volume,
 }
 
-pub(crate) const KNOBS: [Knob; 14] = [
+pub(crate) const KNOBS: [Knob; 20] = [
     Knob::Light,
     Knob::Night,
     Knob::Fog,
@@ -62,6 +75,12 @@ pub(crate) const KNOBS: [Knob; 14] = [
     Knob::TornFix,
     Knob::Shade,
     Knob::Blur,
+    Knob::Mouse,
+    Knob::InvertY,
+    Knob::Smooth,
+    Knob::Panel,
+    Knob::PanelSide,
+    Knob::Volume,
 ];
 
 impl Knob {
@@ -82,6 +101,12 @@ impl Knob {
             Knob::TornFix => "tornfix",
             Knob::Shade => "shade",
             Knob::Blur => "blur",
+            Knob::Mouse => "mouse",
+            Knob::InvertY => "invert",
+            Knob::Smooth => "smooth",
+            Knob::Panel => "panel",
+            Knob::PanelSide => "panelside",
+            Knob::Volume => "volume",
         }
     }
 }
@@ -122,7 +147,26 @@ fn load() {
             VALUES[knob as usize].store(value.to_bits(), Relaxed);
         }
         tracing::info!("the in-game menu's settings of the last start: {}", text.trim().replace('\n', ", "));
+        // (Vilocity) The sound volume kept, set again (`crate::volume`).
+        #[cfg(windows)]
+        if let Some((_, volume)) = parse(&text).into_iter().find(|(k, _)| *k == Knob::Volume) {
+            crate::volume::set(volume / 100.0);
+        }
     });
+}
+
+/// (Vilocity) The mouse as the menu has it: sensitivity (else `VILOCITY_MOUSE_SENSITIVITY`,
+/// else 1), up and down inverted, smoothing (frames).
+pub fn mouse() -> (f32, bool, f32) {
+    let start = || {
+        std::env::var("VILOCITY_MOUSE_SENSITIVITY")
+            .ok()
+            .and_then(|s| s.trim().parse::<f32>().ok())
+            .filter(|s| s.is_finite() && *s > 0.0)
+            .unwrap_or(1.0)
+    };
+    let sensitivity = get(Knob::Mouse).filter(|s| *s > 0.0).unwrap_or_else(start);
+    (sensitivity, get(Knob::InvertY).is_some_and(|v| v >= 0.5), get(Knob::Smooth).unwrap_or(0.0))
 }
 
 fn parse(text: &str) -> Vec<(Knob, f32)> {

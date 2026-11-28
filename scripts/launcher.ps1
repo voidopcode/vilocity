@@ -736,7 +736,8 @@ $showMenu = {
 $fsrFg = Join-Path $home_ "fidelityfx\amd_fidelityfx_framegeneration_dx12.dll"; $fsrFgReady = Test-Path $fsrFg
 $nvidiaCard = [bool](Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Where-Object Name -match 'NVIDIA')
 $menuItems = @(
-    @{ key = 'upscaler'; label = 'Upscaler *'; nvidia = $true; dlss = $true; choices = @(@('DLSS Off', 0), @('DLSS Quality', 1), @('DLSS Balanced', 2), @('DLSS Performance', 3)); default = { if ($set.dlss) { 1 } else { 0 } } }
+    @{ key = 'upscaler'; label = 'Upscaler *'; nvidia = $true; dlss = $true; choices = @(@('DLSS Off', 0), @('DLSS Quality', 1), @('DLSS Balanced', 2), @('DLSS Performance', 3), @('DLSS Ultra Performance', 4)); default = { if ($set.dlss) { 1 } else { 0 } } }
+    @{ key = 'upscaler'; label = 'Upscaler (AMD FSR) *'; amd = $true; choices = @(@("FSR (game's own)", 0), @('FSR Quality', 1), @('FSR Balanced', 2), @('FSR Performance', 3), @('FSR Ultra Performance', 4)); default = { 0 } }
     @{ key = 'dlssmodel'; label = 'DLSS model *'; nvidia = $true; dlss = $true; choices = @(@('Default', 0), @('J', 1), @('K', 2), @('L', 3), @('M', 4)); default = { 0 } }
     @{ key = 'framegen'; label = 'Frame generation'; nvidia = $true; fg = $true; choices = @(@('Off', 0), @('2x', 2), @('3x', 3), @('4x', 4)); default = { if ($set.framegen) { 2 } else { 0 } } }
     @{ key = 'framegen'; label = 'Frame generation (AMD FSR) *'; amd = $true; fsrfg = $true; choices = @(@('Off', 0), @('On (2x)', 2)); default = { 0 } }
@@ -749,6 +750,12 @@ $menuItems = @(
     @{ key = 'blur'; label = 'Motion blur *'; choices = @(@('Off', 0), @('On', 1)); default = { 0 } }
     @{ key = 'steady'; label = 'Steadier picture (about 1.5 ms slower)'; choices = @(@('Off', 0), @('On', 1)); default = { if ($set.steady) { 1 } else { 0 } } }
     @{ key = 'tornfix'; label = 'Torn-frame fix * (much slower)'; choices = @(@('Off', 0), @('On', 1)); default = { 0 } }
+    @{ key = 'mouse'; label = 'Mouse sensitivity'; choices = @(@('0.25', 0.25), @('0.5', 0.5), @('0.75', 0.75), @('1.0', 1.0), @('1.25', 1.25), @('1.5', 1.5), @('2.0', 2.0), @('2.5', 2.5), @('3.0', 3.0), @('4.0', 4.0)); default = { 1.0 } }
+    @{ key = 'invert'; label = 'Invert mouse up/down'; choices = @(@('Off', 0), @('On', 1)); default = { 0 } }
+    @{ key = 'smooth'; label = 'Mouse smoothing'; choices = @(@('Off', 0), @('Low', 0.5), @('Medium', 1.0), @('High', 2.0)); default = { 0 } }
+    @{ key = 'volume'; label = 'Sound volume'; choices = @(0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 | ForEach-Object { , @("$_", $_) }); default = { 100 } }
+    @{ key = 'panel'; label = 'Frame rate panel'; choices = @(@('Hidden', 0), @('Compact', 1), @('Normal', 2), @('Detailed', 3)); default = { 2 } }
+    @{ key = 'panelside'; label = 'Panel side'; choices = @(@('Left', 0), @('Right', 1)); default = { 0 } }
 )
 $readMenu = ${function:Read-Menu}; $writeMenu = ${function:Write-Menu}
 $menuNow = Read-Menu

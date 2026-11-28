@@ -108,7 +108,7 @@ impl Asked {
         let dlss = forced || on("VILOCITY_DLSS");
         let framegen = dlss && on("VILOCITY_FRAMEGEN");
         let mode = match var("VILOCITY_DLSS_MODE").filter(|_| dlss) {
-            Some(name) => Mode::from_name(&name).ok_or_else(|| {
+            Some(name) => Mode::from_name(&name).map(Mode::renderable).ok_or_else(|| {
                 format!("VILOCITY_DLSS_MODE={name}: not one of dlaa, quality, balanced, performance, ultraperformance")
             })?,
             None => Mode::Quality,

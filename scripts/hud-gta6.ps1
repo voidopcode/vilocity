@@ -8,7 +8,7 @@
 # Windows joins the input queues of an owner and what it owns, and the game then
 # got no key and no mouse while this script was busy.)
 # F8 (while the game is in front) hides and shows it.   scripts\hud-gta6.ps1 [-Log <file>]
-param([string]$Log)
+param([string]$Log, [string]$Menu)
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing @'
 using System; using System.Runtime.InteropServices; using System.Windows.Forms;
@@ -37,6 +37,7 @@ public class HudWin {
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
   [DllImport("kernel32.dll")] public static extern bool GlobalMemoryStatusEx(ref MEMORY m);
   public struct RECT { public int L, T, R, B; }
   public struct POINT { public int X, Y; }
@@ -58,18 +59,42 @@ $state = @{ logAt = 0L; id = 0; owner = [IntPtr]::Zero; lastCpu = $null; lastAt 
 $cardAll = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0*' -ErrorAction SilentlyContinue |
     ForEach-Object { [double]$_.'HardwareInformation.qwMemorySize' } | Measure-Object -Maximum).Maximum / 1GB
 
-$PW = 270; $PH = 230
+# How the panel is shown, from the settings file the launcher and the in-game menu (F1) keep
+# (`panel`: 0 hidden, 1 compact, 2 normal, 3 detailed; `panelside`: 0 left, 1 right), read
+# every second so a change in either shows at once.
+$view = @{ style = 2; side = 0; read = $null }
+# The frame rate of the last 60 seconds (detailed), and when the game was found.
+$state.hist = New-Object System.Collections.Generic.List[double]; $state.began = $null
 # The panel never takes the processor from the game.
 try { [Diagnostics.Process]::GetCurrentProcess().PriorityClass = 'BelowNormal' } catch {}
 $form = New-Object HudForm
 $form.FormBorderStyle = 'None'; $form.TopMost = $true; $form.ShowInTaskbar = $false
 $form.BackColor = [Drawing.Color]::FromArgb(14, 16, 22); $form.Opacity = 0.86
-$form.StartPosition = 'Manual'; $form.Size = New-Object Drawing.Size($PW, $PH); $form.Location = New-Object Drawing.Point(-4000, -4000)
-# Rounded corners.
-$path = New-Object Drawing.Drawing2D.GraphicsPath; $rad = 14
-$path.AddArc(0, 0, $rad, $rad, 180, 90); $path.AddArc($PW - $rad, 0, $rad, $rad, 270, 90)
-$path.AddArc($PW - $rad, $PH - $rad, $rad, $rad, 0, 90); $path.AddArc(0, $PH - $rad, $rad, $rad, 90, 90); $path.CloseFigure()
-$form.Region = New-Object Drawing.Region($path)
+$form.StartPosition = 'Manual'; $form.Location = New-Object Drawing.Point(-4000, -4000)
+# The panel's size for its style, with rounded corners.
+function Set-Shape {
+    $script:PW, $script:PH = switch ($view.style) { 1 { 250, 62 } 3 { 290, 330 } default { 270, 230 } }
+    $form.Size = New-Object Drawing.Size($PW, $PH)
+    $path = New-Object Drawing.Drawing2D.GraphicsPath; $rad = 14
+    $path.AddArc(0, 0, $rad, $rad, 180, 90); $path.AddArc($PW - $rad, 0, $rad, $rad, 270, 90)
+    $path.AddArc($PW - $rad, $PH - $rad, $rad, $rad, 0, 90); $path.AddArc(0, $PH - $rad, $rad, $rad, 90, 90); $path.CloseFigure()
+    $form.Region = New-Object Drawing.Region($path)
+}
+Set-Shape
+# The style and side kept in the settings file, when it changed.
+function Read-View {
+    if (-not $Menu -or -not (Test-Path $Menu)) { return }
+    try {
+        $text = [IO.File]::ReadAllText($Menu)
+        if ($text -eq $view.read) { return }
+        $view.read = $text
+        $style = if ($text -match '(?m)^\s*panel\s*=\s*([\d.]+)') { [int][double]$Matches[1] } else { 2 }
+        $side = if ($text -match '(?m)^\s*panelside\s*=\s*([\d.]+)') { [int][double]$Matches[1] } else { 0 }
+        $style = [math]::Max(0, [math]::Min(3, $style))
+        if ($style -ne $view.style -or $side -ne $view.side) { $view.style = $style; $view.side = $side; Set-Shape; $form.Invalidate() }
+    } catch {}
+}
+Read-View
 
 $big = New-Object Drawing.Font("Segoe UI", 21, [Drawing.FontStyle]::Bold)
 $unit = New-Object Drawing.Font("Segoe UI", 9)
@@ -94,6 +119,14 @@ $form.Add_Paint({
     $g.DrawString("fps", $unit, (& $brush $grey), 10 + $wide, 20)
     $right = New-Object Drawing.StringFormat; $right.Alignment = 'Far'
     $g.DrawString((N $s.ms) + " ms", $value, (& $brush $white), ($PW - 12), 10, $right)
+    # The picture in a few words: Xbox and size, upscaler, frame generation.
+    $res = if ($s.console -eq "Series S") { "1080p" } elseif ($s.shownH -eq 2160) { "4K" } elseif ($s.shownH) { "{0}p" -f $s.shownH } else { "" }
+    if ($view.style -eq 1) {
+        # Compact: the frame rate and one line under it.
+        $line = @($(if ($s.console) { "$($s.console) $res" }), $(if ($s.up) { "$($s.up) $($s.upMode)" } else { "game's own" }), $(if ($s.fgTimes -gt 1) { $s.fg })) | Where-Object { $_ }
+        $g.DrawString(($line -join "  -  "), $name, (& $brush $grey), 13, 42)
+        return
+    }
     if ($null -ne $s.draws) { $g.DrawString(("{0:N0} draws" -f $s.draws), $name, (& $brush $grey), ($PW - 12), 26, $right) }
     # A line: its name, what it says, and a bar of how full it is ($null: no bar).
     $row = { param($y, $what, $says, $part, $whole, $inner, $tint = $white, $warn = $true)
@@ -124,10 +157,10 @@ $form.Add_Paint({
     & $row 110 "RAM" ("{0} of {1} GB" -f (N $s.gameRam), (N $s.ramAll "N0")) $s.gameRam $s.ramAll $null
     # A thin line between what the game uses and the picture, and another above the keys.
     $g.FillRectangle((& $brush $track), 13, 134, ($PW - 26), 1)
-    $g.FillRectangle((& $brush $track), 13, 198, ($PW - 26), 1)
+    $g.FillRectangle((& $brush $track), 13, ($PH - 32), ($PW - 26), 1)
     # The console the game is run as and its picture: Series S is the 1080p one; on Series X the
     # display's size it is told (2560x1440 or 3840x2160) is the 1440p or the 4K one.
-    & $row 140 "XBOX" $(if ($s.console) { "{0}   {1}" -f $s.console, $(if ($s.console -eq "Series S") { "1080p" } elseif ($s.shownH -eq 2160) { "4K" } elseif ($s.shownH) { "{0}p" -f $s.shownH } else { "" }) } else { "-" }) $null $null $null
+    & $row 140 "XBOX" $(if ($s.console) { "{0}   {1}" -f $s.console, $res } else { "-" }) $null $null $null
     # The upscaler: which (DLSS in NVIDIA's green, FSR in orange), its mode, and the game's render
     # size to the output's ("game's own": no DLSS or FSR call seen, the console renderer's own size).
     $tint = if ($s.up -eq "DLSS") { $nvidia } elseif ($s.up -eq "FSR") { $amd } else { $white }
@@ -148,8 +181,29 @@ $form.Add_Paint({
         $g.DrawString($does, $value, (& $brush $grey), ($x + $w + 3), ($y - 1))
         $x + $w + 12 + [int]$g.MeasureString($does, $value).Width
     }
+    if ($view.style -eq 3) {
+        # Detailed: the last minute's frame rate (mean, lowest, highest, and a graph with 30 fps
+        # marked), the game's committed memory and what other programs hold of the card, and
+        # how long the game has run.
+        $g.FillRectangle((& $brush $track), 13, 198, ($PW - 26), 1)
+        $h = $state.hist
+        $says = if ($h.Count) { "{0} mean   {1} low   {2} high" -f (N (($h | Measure-Object -Average).Average) "N0"), (N (($h | Measure-Object -Minimum).Minimum) "N0"), (N (($h | Measure-Object -Maximum).Maximum) "N0") } else { "-" }
+        & $row 204 "60 S" $says $null $null $null
+        $top = [math]::Max(60.0, [double](($h | Measure-Object -Maximum).Maximum)); $gx = 62; $gw = $PW - 74; $gy = 224; $gh = 28
+        $g.FillRectangle((& $brush $track), $gx, $gy, $gw, $gh)
+        $g.FillRectangle((& $brush $grey), $gx, [int]($gy + $gh - $gh * 30 / $top), $gw, 1)
+        for ($i = 0; $i -lt $h.Count; $i++) {
+            $v = $h[$i]; $c = if ($v -ge 28) { $good } elseif ($v -ge 20) { $fair } else { $bad }
+            $bh = [math]::Max(1, [int]($gh * [math]::Min(1.0, $v / $top)))
+            $g.FillRectangle((& $brush $c), [int]($gx + $gw - ($h.Count - $i) * $gw / 60), ($gy + $gh - $bh), [math]::Max(1, [int]($gw / 60) - 1), $bh)
+        }
+        & $row 258 "MEMORY" ("commit {0} GB   others' video {1} GB" -f (N $s.gameCommit), (N $others)) $null $null $null
+        $up = if ($state.began) { (Get-Date) - $state.began } else { $null }
+        & $row 276 "TIME" $(if ($up) { "running {0}:{1:00}:{2:00}" -f [int][math]::Floor($up.TotalHours), $up.Minutes, $up.Seconds } else { "-" }) $null $null $null
+    }
     # The keys that are Vilocity's own.
-    $x = & $cap 13 206 "F1" "settings"; $x = & $cap $x 206 "F8" "hide"; [void](& $cap $x 206 "F11" "full screen")
+    $y = $PH - 24
+    $x = & $cap 13 $y "F1" "settings"; $x = & $cap $x $y "F8" "hide"; [void](& $cap $x $y "F11" "full screen")
 })
 
 # The game's process and window: looked for until found, then kept.
@@ -158,18 +212,23 @@ function Game {
     $game = Get-CimInstance Win32_Process -Filter "Name='vilocity.exe'" | Where-Object CommandLine -like '*native run*' | Select-Object -First 1
     if ($game) { $state.id = $game.ProcessId; Get-Process -Id $game.ProcessId -ErrorAction SilentlyContinue }
 }
-# In the upper left corner of the game's picture; shown with the game's window.
+# In the upper left (or right) corner of the game's picture; shown with the game's window.
 function Place($win) {
     $r = New-Object HudWin+RECT; $p = New-Object HudWin+POINT
     $shown = [HudWin]::IsWindowVisible($win) -and -not [HudWin]::IsIconic($win) -and [HudWin]::GetClientRect($win, [ref]$r) -and [HudWin]::ClientToScreen($win, [ref]$p)
     if ($shown) {
-        $at = New-Object Drawing.Point(($p.X + 14), ($p.Y + 14)); if ($form.Location -ne $at) { $form.Location = $at }
+        $x = if ($view.side -eq 1) { $p.X + $r.R - $PW - 14 } else { $p.X + 14 }
+        $at = New-Object Drawing.Point($x, ($p.Y + 14)); if ($form.Location -ne $at) { $form.Location = $at }
         # Only where the game's picture is what the user sees there (the panel is over all
         # windows, as it must be to be over the game's without belonging to it): asked
-        # just right of and just under the panel, where the panel itself is not found.
-        $shown = [HudWin]::Seen($win, ($at.X + $PW + 5), ($at.Y + $PH / 2)) -and [HudWin]::Seen($win, ($at.X + $PW / 2), ($at.Y + $PH + 5))
+        # just beside (toward the middle) and just under the panel, where the panel itself is not found.
+        $beside = if ($view.side -eq 1) { $at.X - 5 } else { $at.X + $PW + 5 }
+        $shown = [HudWin]::Seen($win, $beside, ($at.Y + $PH / 2)) -and [HudWin]::Seen($win, ($at.X + $PW / 2), ($at.Y + $PH + 5))
     }
-    $want = $shown -and -not $state.hidden
+    # (Hidden while the in-game menu, F1, is open: its window is over the game's too.)
+    $menu = [HudWin]::FindWindow("VilocityMenu", $null)
+    $f1 = $menu -ne [IntPtr]::Zero -and [HudWin]::IsWindowVisible($menu)
+    $want = $shown -and -not $state.hidden -and $view.style -ne 0 -and -not $f1
     if ($form.Visible -ne $want) { $form.Visible = $want }
 }
 
@@ -177,12 +236,13 @@ function Place($win) {
 # "DLSS: upscaling recorded", "DLSS Frame Generation switched") and FSR's ("FSR upscaler: the
 # game's upscale", "FSR frame generation: on"). The last of each kind holds.
 function Read-Upscaling([string]$text) {
-    $title = { param($w) (Get-Culture).TextInfo.ToTitleCase($w.ToLower()) }
+    # A mode's name as DLSS and FSR show it (dlaa: DLAA for DLSS, Native AA for FSR).
+    $title = { param($w, $fsr = $false) switch ($w.ToLower()) { 'dlaa' { if ($fsr) { 'Native AA' } else { 'DLAA' } } 'native' { 'Native AA' } 'ultraperformance' { 'Ultra Performance' } default { (Get-Culture).TextInfo.ToTitleCase($w.ToLower()) } } }
     foreach ($m in [regex]::Matches($text, 'upscaling\s+DLSS on, frame generation ([^,\r\n]+)(?:, scene at the (\w+) scale)?')) {
         $s.up = "DLSS"; if ($m.Groups[2].Success) { $s.upMode = & $title $m.Groups[2].Value }
         if ($m.Groups[1].Value -like 'asked*') { $s.fg = "DLSS's: not available"; $s.fgTimes = 0 }
     }
-    foreach ($m in [regex]::Matches($text, 'DLSS: upscaling recorded.*?render=\[(\d+), (\d+)\] output=\[(\d+), (\d+)\] mode="(\w+)"')) {
+    foreach ($m in [regex]::Matches($text, 'DLSS: upscaling recorded.*?render=\[(\d+), (\d+)\] output=\[(\d+), (\d+)\] mode="([^"]+)"')) {
         $s.up = "DLSS"; $s.upFrom = [int]$m.Groups[2].Value; $s.upTo = [int]$m.Groups[4].Value; $s.upMode = & $title $m.Groups[5].Value
     }
     $last = [regex]::Matches($text, 'DLSS Frame Generation switched.*?on=(true|false) times=(\d+)') | Select-Object -Last 1
@@ -191,7 +251,7 @@ function Read-Upscaling([string]$text) {
     }
     if ($text -match 'console\s+Xbox (Series [SX])') { $s.console = $Matches[1] }
     if ($text -match 'display mode reported to the title width=\d+ height=(\d+)') { $s.shownH = [int]$Matches[1] }
-    if ($text -match 'upscaling\s+AMD FSR frame generation') { $s.up = "FSR"; $s.upMode = "Quality" }
+    if ($text -match 'upscaling\s+AMD FSR (\w+):') { $s.up = "FSR"; $s.upMode = & $title $Matches[1] $true }
     foreach ($m in [regex]::Matches($text, "FSR upscaler: the game's upscale render=\[(\d+), (\d+)\] output=\[(\d+), (\d+)\]")) {
         if ($s.up -eq "DLSS") { continue }
         $s.up = "FSR"; $s.upFrom = [int]$m.Groups[2].Value; $s.upTo = [int]$m.Groups[4].Value
@@ -210,12 +270,16 @@ $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 1000
 $timer.Add_Tick({
     $g = Game
-    if ($g) { $state.seen = $true } elseif ($state.seen) { $form.Close(); return } else { return }
+    if ($g) { $state.seen = $true; if (-not $state.began) { $state.began = Get-Date } } elseif ($state.seen) { $form.Close(); return } else { return }
+    Read-View
     $g.Refresh(); $win = $g.MainWindowHandle
     if ($win -eq [IntPtr]::Zero) { return }
     $state.owner = $win
     # The engine puts the frame rate in the window's title.
-    if ($g.MainWindowTitle -match '([\d.]+) fps ([\d.]+) ms/frame (\d+) draws') { $s.fps = [double]$Matches[1]; $s.ms = [double]$Matches[2]; $s.draws = [int]$Matches[3] }
+    if ($g.MainWindowTitle -match '([\d.]+) fps ([\d.]+) ms/frame (\d+) draws') {
+        $s.fps = [double]$Matches[1]; $s.ms = [double]$Matches[2]; $s.draws = [int]$Matches[3]
+        $state.hist.Add($s.fps); if ($state.hist.Count -gt 60) { $state.hist.RemoveAt(0) }
+    }
     try {
         if ($state.lastCpu) { $s.gameCpu = ($g.TotalProcessorTime - $state.lastCpu).TotalSeconds / ((Get-Date) - $state.lastAt).TotalSeconds / $cores * 100 }
         $state.lastCpu = $g.TotalProcessorTime; $state.lastAt = Get-Date

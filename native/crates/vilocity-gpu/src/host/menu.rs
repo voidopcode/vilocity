@@ -23,7 +23,7 @@ use windows::Win32::Foundation::{COLORREF, RECT};
 use windows::Win32::Graphics::Direct3D12::ID3D12Resource;
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT;
 use windows::Win32::Graphics::Gdi::{
-    ANTIALIASED_QUALITY, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CLIP_DEFAULT_PRECIS, CreateCompatibleDC, CreateDIBSection,
+    BI_RGB, CLEARTYPE_QUALITY, ClientToScreen, DT_CENTER, BITMAPINFO, BITMAPINFOHEADER, CLIP_DEFAULT_PRECIS, CreateCompatibleDC, CreateDIBSection,
     CreateFontW, CreateSolidBrush, DEFAULT_CHARSET, DIB_RGB_COLORS, DRAW_TEXT_FORMAT, DT_END_ELLIPSIS, DT_LEFT,
     DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, FillRect, GdiFlush, HBITMAP,
     HDC, HFONT, HGDIOBJ, OUT_DEFAULT_PRECIS, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
@@ -32,7 +32,7 @@ use windows::core::w;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
-use super::overlay::{Overlay, Place};
+use super::menu_window::{self, Input};
 use super::{Host, HostList};
 use crate::live::{self, Knob};
 
@@ -43,7 +43,11 @@ const DOWN: u8 = 0x28;
 const LEFT: u8 = 0x25;
 const RIGHT: u8 = 0x27;
 const ENTER: u8 = 0x0D;
-const KEYS: [u8; 7] = [F1, ESC, UP, DOWN, LEFT, RIGHT, ENTER];
+const TAB: u8 = 0x09;
+const PAGE_UP: u8 = 0x21;
+const PAGE_DOWN: u8 = 0x22;
+const SHIFT: u8 = 0x10;
+const KEYS: [u8; 10] = [F1, ESC, UP, DOWN, LEFT, RIGHT, ENTER, TAB, PAGE_UP, PAGE_DOWN];
 
 /// A held arrow key repeats after this, then every `REPEAT`.
 const FIRST_REPEAT: Duration = Duration::from_millis(400);
@@ -70,14 +74,16 @@ struct Item {
 const UPSCALER_NVIDIA: Item = Item {
     name: "Upscaler *",
     knob: Knob::Upscaler,
-    choices: &[("DLSS Off", 0.0), ("DLSS Quality", 1.0), ("DLSS Balanced", 2.0), ("DLSS Performance", 3.0)],
+    choices: &[("DLSS Off", 0.0), ("DLSS Quality", 1.0), ("DLSS Balanced", 2.0), ("DLSS Performance", 3.0), ("DLSS Ultra Perf.", 4.0)],
     help: "NVIDIA DLSS (Off: the game's own upscaling). Applies at the next start",
 };
+/// (Vilocity) The other cards' upscaler: AMD FSR at the game's own size, or at a mode's
+/// (the game's FidelityFX path at that scale, as for DLSS; `VILOCITY_FSR_MODE`).
 const UPSCALER_OTHER: Item = Item {
-    name: "Upscaler",
+    name: "Upscaler *",
     knob: Knob::Upscaler,
-    choices: &[("AMD FSR", 0.0)],
-    help: "The game's own AMD FidelityFX upscaling",
+    choices: &[("FSR (game's)", 0.0), ("FSR Quality", 1.0), ("FSR Balanced", 2.0), ("FSR Performance", 3.0), ("FSR Ultra Perf.", 4.0)],
+    help: "AMD FSR at the game's size or a mode's (faster lower). Next start",
 };
 const FRAME_GEN: Item = Item {
     name: "Frame generation",
@@ -166,11 +172,49 @@ const CAP: Item = Item {
     help: "Even frames: pick one the game reaches",
 };
 
+const MOUSE: Item = Item {
+    name: "Mouse sensitivity",
+    knob: Knob::Mouse,
+    choices: &[("0.25", 0.25), ("0.5", 0.5), ("0.75", 0.75), ("1.0", 1.0), ("1.25", 1.25), ("1.5", 1.5), ("2.0", 2.0), ("2.5", 2.5), ("3.0", 3.0), ("4.0", 4.0)],
+    help: "How fast the camera turns with the mouse",
+};
+const INVERT_Y: Item = Item {
+    name: "Invert mouse up/down",
+    knob: Knob::InvertY,
+    choices: &[("Off", 0.0), ("On", 1.0)],
+    help: "On: moving the mouse up looks down",
+};
+const SMOOTH: Item = Item {
+    name: "Mouse smoothing",
+    knob: Knob::Smooth,
+    choices: &[("Off", 0.0), ("Low", 0.5), ("Medium", 1.0), ("High", 2.0)],
+    help: "Spreads mouse motion over more frames: smoother, a little later",
+};
+const VOLUME: Item = Item {
+    name: "Sound volume",
+    knob: Knob::Volume,
+    choices: &[("0", 0.0), ("10", 10.0), ("20", 20.0), ("30", 30.0), ("40", 40.0), ("50", 50.0), ("60", 60.0), ("70", 70.0), ("80", 80.0), ("90", 90.0), ("100", 100.0)],
+    help: "The game's volume (Windows' mixer)",
+};
+const PANEL: Item = Item {
+    name: "Frame rate panel",
+    knob: Knob::Panel,
+    choices: &[("Hidden", 0.0), ("Compact", 1.0), ("Normal", 2.0), ("Detailed", 3.0)],
+    help: "How much the panel shows; F8 hides and shows it too",
+};
+const PANEL_SIDE: Item = Item {
+    name: "Panel side",
+    knob: Knob::PanelSide,
+    choices: &[("Left", 0.0), ("Right", 1.0)],
+    help: "Which top corner of the game the panel is in",
+};
+
 /// The settings of an NVIDIA card (DLSS, frame generation), and of the others
 /// (the game's own AMD FSR, no frame generation).
-static NVIDIA_ITEMS: [Item; 14] =
-    [PICTURE, UPSCALER_NVIDIA, DLSS_MODEL, FRAME_GEN, CAP, LIGHT, SHADE, NIGHT, FOG, REFLECTIONS, HAZE, BLUR, STEADY, TORN_FIX];
-static OTHER_ITEMS: [Item; 13] = [PICTURE, UPSCALER_OTHER, FRAME_GEN_FSR, CAP, LIGHT, SHADE, NIGHT, FOG, REFLECTIONS, HAZE, BLUR, STEADY, TORN_FIX];
+static NVIDIA_ITEMS: [Item; 20] =
+    [PICTURE, UPSCALER_NVIDIA, DLSS_MODEL, FRAME_GEN, CAP, LIGHT, SHADE, NIGHT, FOG, REFLECTIONS, HAZE, BLUR, STEADY, TORN_FIX, MOUSE, INVERT_Y, SMOOTH, VOLUME, PANEL, PANEL_SIDE];
+static OTHER_ITEMS: [Item; 19] =
+    [PICTURE, UPSCALER_OTHER, FRAME_GEN_FSR, CAP, LIGHT, SHADE, NIGHT, FOG, REFLECTIONS, HAZE, BLUR, STEADY, TORN_FIX, MOUSE, INVERT_Y, SMOOTH, VOLUME, PANEL, PANEL_SIDE];
 
 /// The settings this PC's card has.
 fn items() -> &'static [Item] {
@@ -191,11 +235,16 @@ fn at_start(knob: Knob) -> f32 {
         Knob::Reflections => f32::from(u8::from(on("VILOCITY_AMBIENT_SPECULAR"))),
         Knob::Steady => f32::from(u8::from(number("VILOCITY_SUBMIT_DEPTH") == Some(1.0))),
         Knob::Cap => 0.0,
-        Knob::Upscaler if on("VILOCITY_DLSS") => match std::env::var("VILOCITY_DLSS_MODE").as_deref().map(str::trim) {
-            Ok("balanced") => 2.0,
-            Ok("performance") => 3.0,
-            _ => 1.0,
-        },
+        Knob::Upscaler if on("VILOCITY_DLSS") || on("VILOCITY_FSR_MODE") => {
+            let mode = std::env::var(if on("VILOCITY_DLSS") { "VILOCITY_DLSS_MODE" } else { "VILOCITY_FSR_MODE" });
+            match mode.as_deref().map(str::trim) {
+                Ok("balanced") => 2.0,
+                Ok("performance") => 3.0,
+                Ok("ultraperformance") => 4.0,
+                Ok("dlaa" | "native") => 5.0,
+                _ => 1.0,
+            }
+        }
         Knob::Upscaler => 0.0,
         Knob::FrameGen if on("VILOCITY_FRAMEGEN") || on("VILOCITY_FSR_FRAMEGEN") => 2.0,
         Knob::FrameGen => 0.0,
@@ -219,6 +268,11 @@ fn at_start(knob: Knob) -> f32 {
             .and_then(|v| v.split(',').next().and_then(|s| s.trim().parse::<f32>().ok()))
             .filter(|v| v.is_finite() && *v >= 0.0)
             .unwrap_or(1.0),
+        Knob::Mouse => crate::live::mouse().0,
+        Knob::InvertY | Knob::Smooth => 0.0,
+        Knob::Panel => 2.0,
+        Knob::PanelSide => 0.0,
+        Knob::Volume => 100.0,
     }
 }
 
@@ -241,32 +295,109 @@ fn nearest(choices: &[(&str, f32)], v: f32) -> usize {
     (0..choices.len()).min_by(|&a, &b| (choices[a].1 - v).abs().total_cmp(&(choices[b].1 - v).abs())).unwrap_or(0)
 }
 
-/// What the menu shows: its rows (name, value, waits for the next start),
-/// the row picked (the reset row after the items), the help, the frame rate.
-#[derive(Clone, PartialEq, Debug)]
-struct Model {
-    rows: Vec<(&'static str, String, bool)>,
-    picked: usize,
-    help: &'static str,
-    fps: Option<(u32, u32)>,
+/// (Vilocity) The menu's tabs, each a page: settings, or the keys (2026-11-28).
+const TABS: [&str; 6] = ["Graphics", "Light", "Mouse", "Keyboard", "Panel", "Sound"];
+const KEYBOARD: usize = 3;
+
+/// The tab a setting is on.
+fn tab_of(knob: Knob) -> usize {
+    match knob {
+        Knob::Light | Knob::Shade | Knob::Night | Knob::Fog | Knob::Reflections => 1,
+        Knob::Mouse | Knob::InvertY | Knob::Smooth => 2,
+        Knob::Panel | Knob::PanelSide => 4,
+        Knob::Volume => 5,
+        _ => 0,
+    }
 }
 
-fn model(picked: usize, fps: Option<(f64, f64)>) -> Model {
-    let mut rows: Vec<(&'static str, String, bool)> = items()
-        .iter()
+/// The settings of a tab, in the order of [`items`].
+fn tab_items(tab: usize) -> Vec<&'static Item> {
+    items().iter().filter(|i| tab_of(i.knob) == tab).collect()
+}
+
+/// What a row does: a setting's choices, a key to press anew, or an action (Enter, a click).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Kind {
+    Choice,
+    Key,
+    Action,
+}
+
+/// A row: its name, what it shows, what it does, and whether its change waits for a restart.
+#[derive(Clone, PartialEq, Debug)]
+struct Row {
+    name: String,
+    value: String,
+    kind: Kind,
+    pending: bool,
+}
+
+/// How many rows the menu shows at once (a longer tab scrolls).
+const ROWS: usize = 13;
+
+/// All the rows of `tab`, each with its help; `waiting`: the keys row whose new key is awaited.
+fn rows_of(tab: usize, waiting: Option<usize>) -> Vec<(Row, &'static str)> {
+    if tab == KEYBOARD {
+        let mut rows: Vec<(Row, &'static str)> = crate::keys_page()
+            .map(|p| p.rows())
+            .unwrap_or_default()
+            .into_iter()
+            .enumerate()
+            .map(|(i, (name, key))| {
+                let wait = waiting == Some(i);
+                let row = Row { name, value: if wait { "press a key".to_owned() } else { key }, kind: Kind::Key, pending: false };
+                (row, if wait { "Press the new key (Esc: keep the one it has)" } else { "Enter or a click, then the new key: kept in keys.txt at once" })
+            })
+            .collect();
+        rows.push((
+            Row { name: "GTA V's keys again".to_owned(), value: "Enter".to_owned(), kind: Kind::Action, pending: false },
+            "Every key as Vilocity comes (your file kept as keys-before-reset.txt)",
+        ));
+        return rows;
+    }
+    let mut rows: Vec<(Row, &'static str)> = tab_items(tab)
+        .into_iter()
         .map(|item| {
             let v = value(item.knob);
             let at = nearest(item.choices, v);
             let shown = if (item.choices[at].1 - v).abs() < 1e-4 { item.choices[at].0.to_owned() } else { format!("{v:.2}") };
             let pending = next_start(item.knob) && (v - at_start(item.knob)).abs() > 1e-4;
-            (item.name, shown, pending)
+            (Row { name: item.name.to_owned(), value: shown, kind: Kind::Choice, pending }, item.help)
         })
         .collect();
-    rows.push(("Reset to the launcher's settings", "Enter".to_owned(), false));
+    rows.push((
+        Row { name: "Reset this tab".to_owned(), value: "Enter".to_owned(), kind: Kind::Action, pending: false },
+        "This tab's settings back to what the launcher started the game with",
+    ));
+    rows
+}
+
+/// What the menu shows: the tab, a window of its rows (from `first` of `total`), the row
+/// picked (in the window), the help, the frame rate.
+#[derive(Clone, PartialEq, Debug)]
+struct Model {
+    tab: usize,
+    rows: Vec<Row>,
+    first: usize,
+    total: usize,
+    picked: usize,
+    help: &'static str,
+    fps: Option<(u32, u32)>,
+}
+
+fn model(tab: usize, picked: usize, waiting: bool, fps: Option<(f64, f64)>) -> Model {
+    let all = rows_of(tab, waiting.then_some(picked));
+    let total = all.len();
+    let picked = picked.min(total.saturating_sub(1));
+    let first = picked.saturating_sub(ROWS / 2).min(total.saturating_sub(ROWS));
+    let help = all.get(picked).map_or("", |r| r.1);
     Model {
-        rows,
-        picked,
-        help: items().get(picked).map_or("Every setting back to what the launcher started the game with", |i| i.help),
+        tab,
+        rows: all.into_iter().skip(first).take(ROWS).map(|r| r.0).collect(),
+        first,
+        total,
+        picked: picked - first,
+        help,
         // (Tenths: a picture painted anew only when what it shows changes.)
         fps: fps.map(|(f, ms)| ((f * 10.0).round() as u32, (ms * 10.0).round() as u32)),
     }
@@ -286,11 +417,47 @@ const BRAND: COLORREF = rgb(124, 92, 255);
 const TRACK: COLORREF = rgb(40, 44, 56);
 
 /// Sizes in pixels at 1080 lines.
-const WIDTH: f32 = 460.0;
-const TOP: f32 = 74.0;
-const ROW: f32 = 30.0;
+const WIDTH: f32 = 520.0;
+const TABS_TOP: f32 = 58.0;
+const TABS_BOTTOM: f32 = 92.0;
+const TOP: f32 = 104.0;
+const ROW: f32 = 32.0;
 const FOOT: f32 = 90.0;
 const RADIUS: f32 = 14.0;
+/// Where a row's value starts (its arrows: left half back, right half on).
+const VALUE: f32 = 300.0;
+/// The close button, top right.
+const CLOSE: [f32; 4] = [WIDTH - 40.0, 8.0, WIDTH - 12.0, 36.0];
+
+fn height() -> f32 {
+    TOP + ROW * ROWS as f32 + FOOT
+}
+
+/// What a point of the menu (at 1080 lines) is on.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Hit {
+    Close,
+    Tab(usize),
+    /// A row of the window, and whether on its value's left (back) or right (on) half.
+    Row(usize, Option<bool>),
+    Nothing,
+}
+
+fn hit(x: f32, y: f32) -> Hit {
+    let inside = |r: [f32; 4]| x >= r[0] && x < r[2] && y >= r[1] && y < r[3];
+    if inside(CLOSE) {
+        return Hit::Close;
+    }
+    if (TABS_TOP..TABS_BOTTOM).contains(&y) && (12.0..WIDTH - 12.0).contains(&x) {
+        let each = (WIDTH - 24.0) / TABS.len() as f32;
+        return Hit::Tab((((x - 12.0) / each) as usize).min(TABS.len() - 1));
+    }
+    if (TOP..TOP + ROW * ROWS as f32).contains(&y) && (10.0..WIDTH - 10.0).contains(&x) {
+        let side = (x >= VALUE).then(|| x >= (VALUE + WIDTH - 20.0) / 2.0);
+        return Hit::Row(((y - TOP) / ROW) as usize, side);
+    }
+    Hit::Nothing
+}
 
 /// GDI's things for painting the menu at one scale.
 struct Painter {
@@ -310,7 +477,7 @@ unsafe impl Send for Painter {}
 impl Painter {
     fn new(scale: f32) -> Option<Painter> {
         let px = |v: f32| (v * scale).round() as i32;
-        let size = (px(WIDTH) as u32, px(TOP + ROW * (items().len() + 1) as f32 + FOOT) as u32);
+        let size = (px(WIDTH) as u32, px(height()) as u32);
         let info = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: size_of::<BITMAPINFOHEADER>() as u32,
@@ -336,6 +503,7 @@ impl Painter {
                 return None;
             };
             let old = SelectObject(dc, bitmap.into());
+            // ClearType: the menu is shown at the screen's own pixels, on its opaque background.
             let font = |height: f32, weight: i32| {
                 CreateFontW(
                     -px(height),
@@ -349,7 +517,7 @@ impl Painter {
                     DEFAULT_CHARSET,
                     OUT_DEFAULT_PRECIS,
                     CLIP_DEFAULT_PRECIS,
-                    ANTIALIASED_QUALITY,
+                    CLEARTYPE_QUALITY,
                     0,
                     w!("Segoe UI"),
                 )
@@ -396,9 +564,9 @@ impl Painter {
         }
     }
 
-    /// The menu as BGRA rows.
+    /// The menu as BGRA rows, alpha premultiplied: clear outside its rounded corners.
     fn paint(&self, m: &Model) -> Vec<u8> {
-        let (w, h) = (WIDTH, self.size.1 as f32 / self.scale);
+        let (w, h) = (WIDTH, height());
         self.fill(BACK, [0.0, 0.0, w, h]);
         // The frame rate, in the colour of how it plays, as on the panel.
         let colour = match m.fps {
@@ -412,47 +580,73 @@ impl Painter {
         self.text(0, colour, &fps, [18.0, 4.0, 120.0, 48.0], DT_LEFT);
         self.text(3, GREY, "fps", [18.0 + 19.0 * fps.len() as f32, 22.0, 140.0, 44.0], DT_LEFT);
         self.text(2, WHITE, &ms, [120.0, 12.0, 220.0, 34.0], DT_LEFT);
-        self.text(1, WHITE, "Settings", [220.0, 8.0, w - 18.0, 30.0], DT_RIGHT);
-        self.text(3, GREY, "F1 or Esc to close", [220.0, 30.0, w - 18.0, 48.0], DT_RIGHT);
-        self.fill(TRACK, [14.0, TOP - 14.0, w - 14.0, TOP - 13.0]);
-        for (i, (name, value, pending)) in m.rows.iter().enumerate() {
-            let y = TOP + ROW * i as f32 - 6.0;
+        self.text(1, WHITE, "Settings", [220.0, 8.0, CLOSE[0] - 10.0, 30.0], DT_RIGHT);
+        self.text(3, GREY, "F1 or Esc to close", [220.0, 30.0, CLOSE[0] - 10.0, 48.0], DT_RIGHT);
+        self.fill(TRACK, CLOSE);
+        self.text(1, WHITE, "\u{00D7}", CLOSE, DT_CENTER);
+        // The tabs: the one shown lit, underlined in the brand's colour.
+        let each = (w - 24.0) / TABS.len() as f32;
+        for (i, name) in TABS.iter().enumerate() {
+            let x = 12.0 + each * i as f32;
+            if i == m.tab {
+                self.fill(TRACK, [x + 2.0, TABS_TOP, x + each - 2.0, TABS_BOTTOM]);
+                self.fill(BRAND, [x + 2.0, TABS_BOTTOM - 3.0, x + each - 2.0, TABS_BOTTOM]);
+            }
+            self.text(2, if i == m.tab { WHITE } else { GREY }, name, [x, TABS_TOP, x + each, TABS_BOTTOM], DT_CENTER);
+        }
+        for (i, row) in m.rows.iter().enumerate() {
+            let y = TOP + ROW * i as f32;
             let picked = i == m.picked;
             if picked {
-                self.fill(TRACK, [10.0, y, w - 10.0, y + ROW - 2.0]);
+                self.fill(TRACK, [10.0, y, w - 14.0, y + ROW - 2.0]);
                 self.fill(BRAND, [10.0, y, 13.0, y + ROW - 2.0]);
             }
-            self.text(2, if picked { WHITE } else { GREY }, name, [22.0, y, 230.0, y + ROW - 2.0], DT_LEFT);
-            let star = if *pending { "  *" } else { "" };
-            let shown = if i < items().len() { format!("\u{2039}  {value}  \u{203A}{star}") } else { value.clone() };
+            self.text(2, if picked { WHITE } else { GREY }, &row.name, [22.0, y, VALUE, y + ROW - 2.0], DT_LEFT);
+            let star = if row.pending { "  *" } else { "" };
+            let shown = match row.kind {
+                Kind::Choice => format!("\u{2039}  {}  \u{203A}{star}", row.value),
+                Kind::Key | Kind::Action => row.value.clone(),
+            };
             // A change that waits for a restart in yellow, picked or not.
-            self.text(2, if picked || *pending { FAIR } else { WHITE }, &shown, [230.0, y, w - 20.0, y + ROW - 2.0], DT_RIGHT);
+            self.text(2, if picked || row.pending { FAIR } else { WHITE }, &shown, [VALUE, y, w - 20.0, y + ROW - 2.0], DT_RIGHT);
         }
-        let y = TOP + ROW * m.rows.len() as f32 - 2.0;
+        // A longer tab: where its window of rows is.
+        if m.total > ROWS {
+            let (top, all) = (TOP, ROW * ROWS as f32);
+            self.fill(TRACK, [w - 9.0, top, w - 6.0, top + all]);
+            let from = top + all * m.first as f32 / m.total as f32;
+            self.fill(GREY, [w - 9.0, from, w - 6.0, from + all * ROWS as f32 / m.total as f32]);
+        }
+        let y = TOP + ROW * ROWS as f32 - 2.0;
         self.fill(TRACK, [14.0, y, w - 14.0, y + 1.0]);
         self.text(3, GREY, m.help, [22.0, y + 6.0, w - 18.0, y + 30.0], DT_LEFT);
-        self.text(
-            3,
-            GREY,
-            "\u{2191}\u{2193} pick    \u{2190}\u{2192} change    Auto-saved, shown in the launcher",
-            [22.0, y + 32.0, w - 18.0, y + 56.0],
-            DT_LEFT,
-        );
-        let (colour, line) = if m.rows.iter().any(|r| r.2) {
+        self.text(3, GREY, "Tab: next tab    \u{2191}\u{2193} pick    \u{2190}\u{2192} change    or the mouse", [22.0, y + 32.0, w - 18.0, y + 56.0], DT_LEFT);
+        let (colour, line) = if m.tab == KEYBOARD {
+            (GREY, "Walking and driving keys switch by themselves on F (G: by hand)")
+        } else if m.rows.iter().any(|r| r.pending) {
             (FAIR, "Restart the game to use the changes in yellow")
         } else {
-            (GREY, "* needs a restart of the game to take effect")
+            (GREY, "Auto-saved, shown in the launcher; * needs a restart")
         };
         self.text(3, colour, line, [22.0, y + 56.0, w - 18.0, y + 80.0], DT_LEFT);
         // SAFETY: GDI is done with the bitmap; it holds `size` BGRA pixels.
-        unsafe {
+        let mut out = unsafe {
             let _ = GdiFlush();
-            let mut out = std::slice::from_raw_parts(self.bits, (self.size.0 * self.size.1 * 4) as usize).to_vec();
-            for pixel in out.chunks_exact_mut(4) {
+            std::slice::from_raw_parts(self.bits, (self.size.0 * self.size.1 * 4) as usize).to_vec()
+        };
+        // Opaque inside the rounded corners, clear (and black: premultiplied) outside.
+        let (pw, ph) = (self.size.0 as f32, self.size.1 as f32);
+        let r = RADIUS * self.scale;
+        for (i, pixel) in out.chunks_exact_mut(4).enumerate() {
+            let (x, y) = ((i as u32 % self.size.0) as f32 + 0.5, (i as u32 / self.size.0) as f32 + 0.5);
+            let (dx, dy) = ((r - x).max(x - (pw - r)).max(0.0), (r - y).max(y - (ph - r)).max(0.0));
+            if dx > 0.0 && dy > 0.0 && dx.hypot(dy) > r {
+                pixel.copy_from_slice(&[0, 0, 0, 0]);
+            } else {
                 pixel[3] = 0xFF;
             }
-            out
         }
+        out
     }
 }
 
@@ -473,7 +667,11 @@ impl Drop for Painter {
 /// The menu of a presenter.
 pub(super) struct Menu {
     shown: bool,
-    picked: usize,
+    /// The tab shown, and the row picked on each.
+    tab: usize,
+    picked: [usize; TABS.len()],
+    /// The keys tab awaits a new key for its row picked (`true` once every key was up).
+    waiting: Option<bool>,
     /// Per key of [`KEYS`]: held since, and when it last acted.
     held: [Option<(Instant, Instant)>; KEYS.len()],
     /// Closed with this key, still held.
@@ -482,28 +680,36 @@ pub(super) struct Menu {
     presents: (u32, Instant),
     fps: Option<(f64, f64)>,
     painter: Option<Painter>,
-    /// What the picture shows, if it is current.
-    painted: Option<Model>,
-    overlay: Overlay,
+    /// What the window shows, if it is current, and where (screen pixels).
+    painted: Option<(Model, (i32, i32))>,
+    window_shown: bool,
 }
 
 impl Menu {
     pub(super) fn new() -> Menu {
+        let open = std::env::var("VILOCITY_MENU_OPEN").unwrap_or_default();
         Menu {
-            // (`VILOCITY_MENU_OPEN=1`: shown from the start, for a look at it.)
-            shown: std::env::var_os("VILOCITY_MENU_OPEN").is_some_and(|v| v == "1"),
-            picked: 0,
+            // (`VILOCITY_MENU_OPEN=1`: shown from the start, for a look at it; `=keys`: on its keys tab.)
+            shown: open == "1" || open == "keys",
+            tab: if open == "keys" { KEYBOARD } else { 0 },
+            picked: [0; TABS.len()],
+            waiting: None,
             held: [None; KEYS.len()],
             closing: None,
             presents: (0, Instant::now()),
             fps: None,
             painter: None,
             painted: None,
-            overlay: Overlay::new(),
+            window_shown: false,
         }
     }
 
-    /// A frame was presented: keys are looked at.
+    /// How many rows the tab shown has.
+    fn total(&self) -> usize {
+        rows_of(self.tab, None).len()
+    }
+
+    /// A frame was presented: keys (and the menu window's clicks) are looked at.
     pub(super) fn frame(&mut self) {
         let now = Instant::now();
         self.presents.0 += 1;
@@ -543,47 +749,174 @@ impl Menu {
                 (true, Some(_)) => {}
             }
         }
+        // The keys tab's new key: the first one down once all are up (F1 still closes, Esc
+        // keeps the key as it was; Shift, Ctrl and Alt are taken as their left or right one;
+        // the mouse's buttons count too).
+        if self.shown
+            && let Some(armed) = self.waiting
+        {
+            let any = (1..=0xFEu8).filter(|&vk| vk != F1 && vk != ESC && !(0x10..=0x12).contains(&vk)).find(|&vk| down(vk));
+            if !armed {
+                self.waiting = Some(any.is_none() && !down(ESC));
+            } else if let Some(vk) = any {
+                let row = self.picked[KEYBOARD];
+                self.waiting = None;
+                let done = crate::keys_page().is_some_and(|p| p.bind(row, vk));
+                tracing::info!(row, vk = format_args!("{vk:#04x}"), done, "in-game menu: a key changed");
+                // The key that was taken does not act on the menu.
+                acted.retain(|&k| k != vk);
+                if let Some(i) = KEYS.iter().position(|&k| k == vk) {
+                    self.held[i] = Some((now, now));
+                }
+                // Nor does the click that was taken.
+                menu_window::inputs();
+            }
+        }
+        let shift = down(SHIFT);
         for key in acted {
-            self.press(key);
+            self.press(key, shift);
+        }
+        for input in menu_window::inputs() {
+            self.input(input);
         }
         HOLDS_INPUT.store(self.shown || self.closing.is_some(), Ordering::Relaxed);
     }
 
-    fn press(&mut self, key: u8) {
+    fn close(&mut self, key: Option<u8>) {
+        self.shown = false;
+        self.waiting = None;
+        self.closing = key;
+    }
+
+    fn press(&mut self, key: u8, shift: bool) {
+        let tabs = TABS.len();
         match key {
             F1 if !self.shown => self.shown = true,
-            F1 | ESC if self.shown => {
-                self.shown = false;
-                self.closing = Some(key);
+            // Esc while a key is awaited keeps the key as it was.
+            ESC if self.shown && self.waiting.is_some() => self.waiting = None,
+            F1 | ESC if self.shown => self.close(Some(key)),
+            _ if !self.shown || self.waiting.is_some() => {}
+            TAB if shift => self.tab = (self.tab + tabs - 1) % tabs,
+            TAB | PAGE_DOWN => self.tab = (self.tab + 1) % tabs,
+            PAGE_UP => self.tab = (self.tab + tabs - 1) % tabs,
+            UP | DOWN => {
+                let total = self.total().max(1);
+                let p = &mut self.picked[self.tab];
+                *p = if key == UP { (*p + total - 1) % total } else { (*p + 1) % total };
             }
-            _ if !self.shown => {}
-            UP => self.picked = (self.picked + items().len()) % (items().len() + 1),
-            DOWN => self.picked = (self.picked + 1) % (items().len() + 1),
-            LEFT | RIGHT => {
-                let Some(item) = items().get(self.picked) else { return };
-                let at = nearest(item.choices, value(item.knob));
-                let to = if key == LEFT { at.saturating_sub(1) } else { (at + 1).min(item.choices.len() - 1) };
-                if to != at || (item.choices[at].1 - value(item.knob)).abs() > 1e-4 {
-                    live::set(item.knob, Some(item.choices[to].1));
-                    tracing::info!(setting = item.name, value = item.choices[to].0, "in-game menu");
-                }
+            LEFT | RIGHT => self.change(key == RIGHT),
+            ENTER => self.activate(),
+            _ => {}
+        }
+    }
+
+    /// The row picked's setting one choice back or on.
+    fn change(&mut self, on: bool) {
+        let Some(item) = tab_items(self.tab).get(self.picked[self.tab]).copied() else { return };
+        let at = nearest(item.choices, value(item.knob));
+        let to = if on { (at + 1).min(item.choices.len() - 1) } else { at.saturating_sub(1) };
+        if to != at || (item.choices[at].1 - value(item.knob)).abs() > 1e-4 {
+            live::set(item.knob, Some(item.choices[to].1));
+            tracing::info!(setting = item.name, value = item.choices[to].0, "in-game menu");
+            if item.knob == Knob::Volume {
+                crate::volume::set(item.choices[to].1 / 100.0);
             }
-            ENTER if self.picked == items().len() => {
-                for item in items() {
+        }
+    }
+
+    /// Enter (or a click) on the row picked: a key awaited, or the tab's reset.
+    fn activate(&mut self) {
+        let picked = self.picked[self.tab];
+        let rows = rows_of(self.tab, None);
+        match rows.get(picked).map(|r| r.0.kind) {
+            Some(Kind::Key) => self.waiting = Some(false),
+            Some(Kind::Action) if self.tab == KEYBOARD => {
+                let done = crate::keys_page().is_some_and(|p| p.reset());
+                tracing::info!(done, "in-game menu: GTA V's keys again");
+            }
+            Some(Kind::Action) => {
+                for item in tab_items(self.tab) {
                     live::set(item.knob, None);
+                    if item.knob == Knob::Volume {
+                        crate::volume::set(1.0);
+                    }
                 }
-                tracing::info!("in-game menu: every setting as the launcher started it");
+                tracing::info!(tab = TABS[self.tab], "in-game menu: the tab's settings as the launcher started them");
             }
             _ => {}
         }
     }
 
-    /// Records the menu onto `back` (see `overlay::Overlay::draw`), if shown.
-    pub(super) fn draw(&mut self, host: &Host, list: &HostList, back: &ID3D12Resource, size: (u32, u32), format: DXGI_FORMAT) {
+    /// A click or a wheel turn on the menu's window.
+    fn input(&mut self, input: Input) {
         if !self.shown {
             return;
         }
-        let scale = (size.1 as f32 / 1080.0).clamp(0.75, 3.0);
+        let scale = self.painter.as_ref().map_or(1.0, |p| p.scale);
+        match input {
+            Input::Wheel(notches) if self.waiting.is_none() => {
+                let total = self.total().max(1);
+                let p = &mut self.picked[self.tab];
+                *p = (*p as i64 - i64::from(notches)).clamp(0, total as i64 - 1) as usize;
+            }
+            Input::Click { x, y, .. } if self.waiting.is_none() => match hit(x as f32 / scale, y as f32 / scale) {
+                Hit::Close => self.close(None),
+                Hit::Tab(tab) => self.tab = tab,
+                Hit::Row(i, side) => {
+                    let first = self.painted.as_ref().map_or(0, |(m, _)| m.first);
+                    let row = first + i;
+                    if row >= self.total() {
+                        return;
+                    }
+                    self.picked[self.tab] = row;
+                    let kind = rows_of(self.tab, None).get(row).map(|r| r.0.kind);
+                    match (kind, side) {
+                        (Some(Kind::Choice), Some(on)) => self.change(on),
+                        (Some(Kind::Key | Kind::Action), _) => self.activate(),
+                        _ => {}
+                    }
+                }
+                Hit::Nothing => {}
+            },
+            _ => {}
+        }
+    }
+
+    /// Shows the menu, if shown, in its own window over the game's (see `menu_window`), at the
+    /// screen's own pixels; hides that window otherwise. (Called where the frame is recorded.)
+    pub(super) fn draw(&mut self, _host: &Host, _list: &HostList, _back: &ID3D12Resource, _size: (u32, u32), _format: DXGI_FORMAT) {
+        if !self.shown {
+            if self.window_shown {
+                menu_window::hide();
+                self.window_shown = false;
+                self.painted = None;
+            }
+            return;
+        }
+        // Only while the game is in front (Alt+Tab hides it, F1 still open behind).
+        let mut process = 0;
+        // SAFETY: plain queries; room for the answer.
+        unsafe { GetWindowThreadProcessId(GetForegroundWindow(), &mut process) };
+        if process != std::process::id() {
+            if self.window_shown {
+                menu_window::hide();
+                self.window_shown = false;
+                self.painted = None;
+            }
+            return;
+        }
+        // The game's window: its client area on the screen.
+        let Some(game) = super::title_window() else { return };
+        let mut client = RECT::default();
+        let mut origin = windows::Win32::Foundation::POINT::default();
+        // SAFETY: plain queries of the game's window.
+        let placed = unsafe {
+            windows::Win32::UI::WindowsAndMessaging::GetClientRect(game, &mut client).is_ok() && ClientToScreen(game, &mut origin).as_bool()
+        };
+        if !placed || client.bottom <= 0 {
+            return;
+        }
+        let scale = (client.bottom as f32 / 1080.0).clamp(0.75, 3.0);
         if self.painter.as_ref().is_none_or(|p| (p.scale - scale).abs() > 1e-3) {
             self.painter = None;
             self.painter = Painter::new(scale);
@@ -598,12 +931,16 @@ impl Menu {
             }
         }
         let Some(painter) = &self.painter else { return };
-        let m = model(self.picked, self.fps);
-        if self.painted.as_ref() != Some(&m) {
-            self.overlay.set(painter.size, painter.paint(&m), (RADIUS * scale) as u32);
-            self.painted = Some(m);
+        let m = model(self.tab, self.picked[self.tab], self.waiting.is_some(), self.fps);
+        let at = (
+            origin.x + (client.right - painter.size.0 as i32) / 2,
+            origin.y + (client.bottom - painter.size.1 as i32) / 2,
+        );
+        if self.painted.as_ref() != Some(&(m.clone(), at)) {
+            menu_window::show(painter.paint(&m), painter.size, at);
+            self.painted = Some((m, at));
+            self.window_shown = true;
         }
-        self.overlay.draw(host, list, back, size, format, Place::Middle);
     }
 }
 
@@ -665,34 +1002,71 @@ mod tests {
     }
 
     #[test]
-    fn every_setting_has_a_row_and_the_reset_comes_last() {
-        let m = model(items().len(), Some((25.3, 39.5)));
-        assert_eq!(m.rows.len(), items().len() + 1);
-        assert_eq!(m.rows.last().unwrap().1, "Enter");
-        assert_eq!(m.fps, Some((253, 395)));
-        for (row, item) in m.rows.iter().zip(items()) {
-            assert_eq!(row.0, item.name);
-            assert!(item.choices.iter().any(|c| c.0 == row.1) || row.1.parse::<f32>().is_ok(), "{row:?}");
+    fn every_setting_is_on_one_tab_and_each_tab_ends_with_its_reset() {
+        let on_tabs: usize = (0..TABS.len()).filter(|&t| t != KEYBOARD).map(|t| tab_items(t).len()).sum();
+        assert_eq!(on_tabs, items().len());
+        for tab in (0..TABS.len()).filter(|&t| t != KEYBOARD) {
+            let m = model(tab, 0, false, Some((25.3, 39.5)));
+            assert_eq!(m.total, tab_items(tab).len() + 1);
+            assert!(m.total <= ROWS, "{} scrolls", TABS[tab]);
+            assert_eq!(m.rows.last().unwrap().kind, Kind::Action);
+            assert_eq!(m.fps, Some((253, 395)));
+            for (row, item) in m.rows.iter().zip(tab_items(tab)) {
+                assert_eq!(row.name, item.name);
+                assert!(item.choices.iter().any(|c| c.0 == row.value) || row.value.parse::<f32>().is_ok(), "{row:?}");
+            }
         }
+        // The mouse finds what is painted where.
+        assert_eq!(hit(WIDTH - 20.0, 20.0), Hit::Close);
+        assert_eq!(hit(14.0, 70.0), Hit::Tab(0));
+        assert_eq!(hit(WIDTH - 14.0, 70.0), Hit::Tab(TABS.len() - 1));
+        assert_eq!(hit(40.0, TOP + ROW * 2.5), Hit::Row(2, None));
+        assert_eq!(hit(VALUE + 5.0, TOP + 1.0), Hit::Row(0, Some(false)));
+        assert_eq!(hit(WIDTH - 30.0, TOP + 1.0), Hit::Row(0, Some(true)));
     }
 
     /// The picture is painted where GDI is (any Windows): of its size, the
-    /// panel's background in a corner, something lighter where the text is.
+    /// panel's background inside, clear in the corners, something lighter where the text is.
     #[test]
     fn the_menu_is_painted() {
         let Some(painter) = Painter::new(1.0) else {
             eprintln!("no GDI here; not run");
             return;
         };
-        let m = model(2, Some((25.3, 39.5)));
+        let m = model(0, 2, false, Some((25.3, 39.5)));
         let picture = painter.paint(&m);
         let (w, h) = painter.size;
         assert_eq!(picture.len(), (w * h * 4) as usize);
         let at = |x: u32, y: u32| &picture[((y * w + x) * 4) as usize..][..4];
-        assert_eq!(at(w - 2, h - 2), [22, 16, 14, 0xFF], "the panel's background, BGRA");
+        assert_eq!(at(w - 30, h - 4), [22, 16, 14, 0xFF], "the panel's background, BGRA");
+        assert_eq!(at(0, 0), [0, 0, 0, 0], "a rounded corner is clear");
         let lit = picture.chunks_exact(4).filter(|p| p[0] > 120 && p[1] > 120 && p[2] > 120).count();
         assert!(lit > 500, "text was drawn: {lit} light pixels");
         // The bar on the left in the colour of 25 fps (fair: yellow).
         assert_eq!(at(1, h / 2), [21, 204, 250, 0xFF]);
+    }
+    /// `VILOCITY_MENU_DUMP=<folder>`: every tab painted to `menu-<tab>.bmp` there, for a look
+    /// (`cargo test -- --ignored menu_pictures`).
+    #[test]
+    #[ignore]
+    fn menu_pictures() {
+        let (Some(folder), Some(painter)) = (std::env::var_os("VILOCITY_MENU_DUMP"), Painter::new(1.5)) else { return };
+        for tab in 0..TABS.len() {
+            let picture = painter.paint(&model(tab, 1, false, Some((41.0, 24.4))));
+            let (w, h) = painter.size;
+            let mut bmp = Vec::new();
+            bmp.extend_from_slice(b"BM");
+            bmp.extend_from_slice(&(54 + picture.len() as u32).to_le_bytes());
+            bmp.extend_from_slice(&[0; 4]);
+            bmp.extend_from_slice(&54u32.to_le_bytes());
+            bmp.extend_from_slice(&40u32.to_le_bytes());
+            bmp.extend_from_slice(&(w as i32).to_le_bytes());
+            bmp.extend_from_slice(&(-(h as i32)).to_le_bytes());
+            bmp.extend_from_slice(&1u16.to_le_bytes());
+            bmp.extend_from_slice(&32u16.to_le_bytes());
+            bmp.extend_from_slice(&[0; 24]);
+            bmp.extend_from_slice(&picture);
+            std::fs::write(std::path::Path::new(&folder).join(format!("menu-{}.bmp", TABS[tab])), bmp).unwrap();
+        }
     }
 }

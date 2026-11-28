@@ -69,7 +69,10 @@ pub(crate) fn prepare_upscaler(image: &mut PreparedImage, mode: Mode) -> Result<
     // Renderer 7 every time it is asked (the console check has run).
     *field::<8>(image, RENDERER_SELECTION)? = [0xb8, 7, 0, 0, 0, 0x90, 0x90, 0x90];
     // `mov eax, mode; mov [r14+0x90], eax; jmp scaled`.
-    *field::<14>(image, UPSCALER_SIZING)? = [0xb8, mode.ffx_mode(), 0, 0, 0, 0x41, 0x89, 0x86, 0x90, 0, 0, 0, 0xeb, 0x0a];
+    // (Vilocity) DLAA (the whole size) is noted as the quality mode: noted as native AA (0),
+    // the title stopped at a breakpoint 12 s in (2026-11-28).
+    let noted = if mode == Mode::Dlaa { Mode::Quality.ffx_mode() } else { mode.ffx_mode() };
+    *field::<14>(image, UPSCALER_SIZING)? = [0xb8, noted, 0, 0, 0, 0x41, 0x89, 0x86, 0x90, 0, 0, 0, 0xeb, 0x0a];
     if mode != Mode::Quality {
         // The jump leaves the native branch unreached: its load's operand
         // becomes a literal of ours, which the scaled branch loads.
@@ -111,7 +114,7 @@ mod tests {
             prepare_upscaler(&mut image, mode).unwrap();
             assert_eq!(*field::<8>(&mut image, RENDERER_SELECTION).unwrap(), [0xb8, 7, 0, 0, 0, 0x90, 0x90, 0x90]);
             let sizing = *field::<14>(&mut image, UPSCALER_SIZING).unwrap();
-            assert_eq!(sizing[1], mode.ffx_mode());
+            assert_eq!(sizing[1], if mode == Mode::Dlaa { Mode::Quality.ffx_mode() } else { mode.ffx_mode() });
             assert_eq!(sizing[12..], [0xeb, 0x0a]);
             // The jump lands on the scaled load.
             assert_eq!(UPSCALER_SIZING + 14 + 0x0a, SCALED_LOAD);

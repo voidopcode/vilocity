@@ -32,6 +32,18 @@ impl Mode {
         })
     }
 
+    /// (Vilocity) The mode the title can render: at the whole size (DLAA, FSR's native AA) it
+    /// stops at a breakpoint 12 s in, through its FidelityFX path, whatever mode it is told
+    /// (2026-11-28), so the quality scale stands in for it.
+    pub fn renderable(self) -> Self {
+        if self == Mode::Dlaa {
+            tracing::warn!("the whole size (DLAA, native AA) stops the game: the quality scale instead");
+            Mode::Quality
+        } else {
+            self
+        }
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Mode::Dlaa => "dlaa",

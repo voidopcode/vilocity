@@ -113,13 +113,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-28 19:15
+**Latest test run:** 2026-11-28 19:57
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 18.9 fps, 53 ms a frame |
-| Best while playing | 23.7 fps |
-| Last frame | 20.5 fps, 49 ms, 8985 draws, 343 dropped without a pipeline |
+| Frame rate while playing (typical) | 21.8 fps, 46 ms a frame |
+| Best while playing | 25.6 fps |
+| Last frame | 18.7 fps, 53 ms, 10558 draws, 310 dropped without a pipeline |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -330,7 +330,45 @@ picture tests of 2026-11-27 evening ruled out.
   2,000 made-up frames in 100 s (one for each of the game's, about 40 a second shown at 20
   fps), none refused, the game's own rate unchanged (19.6 fps), three 150 s runs passed. Not
   yet run on an AMD card. The HUD is interpolated with the scene (no HUD-less picture yet).
-- **The frame rate panel is on the left, and says the upscaler and frame generation.** Its
+- **Keyboard and mouse as GTA V's.** The keys are GTA V's on GTA VI's own controls (its
+  Settings, Control Scheme "Default", read from the game's screens): on foot W A S D, Shift
+  runs, Space jumps, Ctrl crouches, R is melee, Q takes cover, F or E interact and get in,
+  Tab holsters (held: weapons), C looks behind, right click aims, left click shoots; at the
+  wheel W and S drive and brake, Space is the handbrake, E the horn, H the headlights (held:
+  duck), Q the vehicle menu (radio, lights), F gets out, left click shoots. F switches to the
+  driving keys by itself just after the get-in, and back at once on the way out; G still
+  switches by hand when a get-in did not happen. A keys file Vilocity made before is made the
+  new one at the start (the old one kept as `keys-before-gta5.txt`); one you changed is left
+  as it is. The mouse: each frame now turns by all the motion since the frame before, and a
+  flick past full speed turns its whole way in the frames after (it was lost; long frames
+  lost motion and short ones counted it twice); a loading hitch no longer drags the camera
+  for the frames after. Esc and left Alt no longer give the mouse back (the cursor showed and
+  clicks went to Windows): only another window in front does (Alt+Tab). A connected pad no
+  longer stops the mouse. F1 and the launcher have mouse sensitivity, invert up/down and
+  smoothing, and the game's sound volume (Windows' mixer), all kept and applied at once.
+- **F1, made anew: tabs, the mouse, and sharp text.** Tabs along the top (Graphics, Light,
+  Mouse, Keyboard, Panel, Sound) with their settings inside; Tab and Shift+Tab (or Page Up
+  and Page Down) change tab, the arrows pick and change, and the mouse works too: a click on
+  a tab, on a value's left or right half, the wheel, the close button. While it is open
+  the game lets go of the mouse, and takes it again when it closes. It is a window of its
+  own over the game's, at the screen's own pixels with ClearType text (drawn into the
+  game's picture before, it was scaled with it and blurred); it shows only while the game
+  is in front, centred on it, and the frame rate panel steps aside while it is open. Keyboard lists every key
+  (walking, driving, getting in): Enter or a click, then the new key, kept in `keys.txt`
+  at once; "GTA V's keys again" puts them all back. Each tab ends with its own reset.
+- **More upscaler modes.** DLSS adds Ultra Performance. On AMD and the other cards the
+  upscaler can now be AMD FSR at a mode's scale (Quality, Balanced, Performance, Ultra
+  Performance) on the 1440p and 4K pictures, through the game's own FidelityFX path as for
+  DLSS. DLAA and FSR's native AA (the whole size) are not offered: through that path the
+  game stops at a breakpoint 12 s in at the whole size, whatever mode it is told; asked for
+  anyway, the quality scale stands in (said in the log). (Measured: FSR Performance
+  at 1440p renders 1920x1080 upscaled to 3840x2160; on the RTX 5080 the frame rate in that
+  scene stayed at 18.5, the frame is not limited by its pixels there). FSR frame generation
+  follows the mode chosen.
+- **The frame rate panel is on the left, and says the upscaler and frame generation.** Three
+  styles, set in the launcher or on F1 and shown at once: Compact (the frame rate and one
+  line), Normal, and Detailed (the last minute's frame rate with a graph, committed memory,
+  what other programs hold of the card, the time played); Hidden too, and left or right. Its
   CPU, GPU, VIDEO and RAM lines are the game's own use, each with a bar (the whole PC's are
   gone; a red "CARD FULL" still names what else fills the card). XBOX says the console the
   game runs as and its picture (Series S 1080p, Series X 1440p or 4K). Two
@@ -341,7 +379,8 @@ picture tests of 2026-11-27 evening ruled out.
 - **Every setting, in the launcher and on F1, kept together.** The launcher's options
   have a list for each of the game's settings (upscaler, DLSS model, frame generation,
   light in the shade, shade in creases, brighter nights, fog light cap, reflections
-  stand-in, heat haze, motion blur, steadier picture, torn-frame fix), the picture buttons included.
+  stand-in, heat haze, motion blur, steadier picture, torn-frame fix, mouse sensitivity,
+  invert up/down, mouse smoothing, sound volume, the panel and its side), the picture buttons included.
   Motion blur is off by default (the game's `CS_MotionBlurDownSampleWithVBD` left out: no
   tile has motion, so nothing is blurred; the motion vectors DLSS reads stay); "On" gives
   the game's blur back at the next start.

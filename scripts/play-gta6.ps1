@@ -27,7 +27,7 @@ param(
     # (No 'dlaa': with the scene at the size of the output the game stops at its start, on an
     # assertion of its own. Measured at 1080p: quality 1280x720, balanced 1113x626,
     # performance 960x540, every frame by DLSS; 35.4, 35.4 and 34.1 ms a frame.)
-    [ValidateSet('off', 'quality', 'balanced', 'performance')][string]$Dlss = 'off',
+    [ValidateSet('off', 'quality', 'balanced', 'performance', 'ultraperformance', 'dlaa')][string]$Dlss = 'off',
     # DLSS Frame Generation (RTX 40 and 50): a made-up frame between every two, so twice the
     # frame rate shown; the controls answer at the real one. Needs the same Streamline SDK.
     [switch]$FrameGen,
@@ -195,8 +195,10 @@ $dataDir = if ($env:VILOCITY_DATA_DIR) { $env:VILOCITY_DATA_DIR } else { Join-Pa
 $menu = @{}
 Get-Content (Join-Path $dataDir "menu.txt") -ErrorAction SilentlyContinue | ForEach-Object { if ($_ -match '^\s*(\w+)\s*=\s*([\d.]+)\s*$') { $menu[$Matches[1]] = [double]$Matches[2] } }
 if (-not $Defaults -and $menu.ContainsKey('upscaler')) {
-    $Dlss = @('off', 'quality', 'balanced', 'performance')[[math]::Min(3, [int]$menu.upscaler)]
-    Write-Host ("Upscaler from the in-game menu (F1): " + $(if ($Dlss -eq 'off') { "the game's own (AMD FSR)" } else { "DLSS $Dlss" }) + ".")
+    # 0 off (the game's own), 1 quality, 2 balanced, 3 performance, 4 ultra performance, 5 DLAA
+    # (native AA): DLSS's on an NVIDIA card, AMD FSR's at that scale on the others.
+    $Dlss = @('off', 'quality', 'balanced', 'performance', 'ultraperformance', 'dlaa')[[math]::Max(0, [math]::Min(5, [int]$menu.upscaler))]
+    Write-Host ("Upscaler from the in-game menu (F1): " + $(if ($Dlss -eq 'off') { "the game's own (AMD FSR)" } elseif ($pc.maker -eq 'nvidia') { "DLSS $Dlss" } else { "AMD FSR $Dlss" }) + ".")
 }
 if (-not $Defaults -and $menu.ContainsKey('framegen')) { $FrameGen = $menu.framegen -ge 2 }
 if (-not $Defaults -and $menu.ContainsKey('picture')) { $Picture = @('1080p', '1440p', '4k')[[math]::Min(2, [int]$menu.picture)] }
@@ -237,6 +239,9 @@ $monitor = Join-Path $PSScriptRoot "monitor-gta6.ps1"
 $fsr = Join-Path $env:LOCALAPPDATA "vilocity\fidelityfx\amd_fidelityfx_upscaler_dx12.dll"
 if ($env:VILOCITY_FSR_DLL -eq "off") { Remove-Item Env:VILOCITY_FSR_DLL }
 elseif (-not $env:VILOCITY_FSR_DLL -and (Test-Path $fsr)) { $env:VILOCITY_FSR_DLL = $fsr }
+# AMD FSR at a mode's scale on the other cards (the menu's upscaler there): the game's
+# FidelityFX path at that scale, as for DLSS.
+if (-not $Defaults -and $Dlss -ne 'off' -and $pc.maker -ne 'nvidia') { $env:VILOCITY_FSR_MODE = $Dlss; Write-Host "AMD FSR at the $Dlss scale." }
 # AMD FSR frame generation (the menu's frame generation on a card other than NVIDIA's, whose is
 # DLSS's): AMD's DLL beside the upscaler (the launcher's Get FSR, or scripts\get-fsr.ps1).
 if (-not $Defaults -and $FrameGen -and $pc.maker -ne 'nvidia' -and $env:VILOCITY_FSR_DLL) {
@@ -308,7 +313,7 @@ $watch = if (-not $NoMonitor) { Start-Process powershell -PassThru -ArgumentList
 # (VILOCITY_HUD=0: none).
 if ($env:VILOCITY_HUD -ne "0") {
     $hud = Join-Path $PSScriptRoot "hud-gta6.ps1"
-    Start-Process powershell -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$hud`" -Log `"$log`"" | Out-Null
+    Start-Process powershell -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$hud`" -Log `"$log`" -Menu `"$(Join-Path $dataDir "menu.txt")`"" | Out-Null
 }
 if ($LogWindow) {
     $view = Join-Path $PSScriptRoot "log-gta6.ps1"
