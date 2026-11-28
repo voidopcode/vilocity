@@ -112,8 +112,9 @@ $form.Add_Paint({
     # (4-7 fps at 1440p with 5.6 GB held by others, 2026-11-27; 1080p needs some 5 GB less).
     $full = $null -ne $s.vramUsed -and $s.vramAll -gt 0 -and ($s.vramUsed / $s.vramAll) -gt 0.93
     if ($full) {
-        $who = if ($s.topName -and $s.topVram -ge 1) { " ({0} {1})" -f $s.topName.Substring(0, [math]::Min(12, $s.topName.Length)), (N $s.topVram) } else { ", try 1080p" }
-        & $row 86 "GAME" ("CARD FULL: others {0} GB{1}" -f (N $others), $who) $null $null $null $bad
+        # (Short enough for the panel: "CARD FULL: others 7.3 GB (vramhold 3.0)" ran past its edge.)
+        $text = if ($s.topName -and $s.topVram -ge 1) { "CARD FULL: {0} {1} GB" -f $s.topName.Substring(0, [math]::Min(10, $s.topName.Length)), (N $s.topVram) } else { "CARD FULL: others {0} GB" -f (N $others) }
+        & $row 86 "GAME" $text $null $null $null $bad
     }
     else { & $row 86 "GAME" $(if ($others -ge 2) { "video {0} GB   others hold {1} GB" -f (N $s.gameVram), (N $others) } else { "video {0} GB   shared {1} GB" -f (N $s.gameVram), (N $s.gameShared) }) $null $null $null }
     & $row 104 "RAM" ("game {0}   PC {1} of {2} GB" -f (N $s.gameRam), (N $s.ram), (N $s.ramAll "N0")) $s.ram $s.ramAll $s.gameRam
