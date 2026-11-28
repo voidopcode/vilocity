@@ -52,7 +52,7 @@ $cores = [Environment]::ProcessorCount
 $s = @{ fps = $null; ms = $null; draws = $null; gameCpu = $null; gameGpu = $null; vramUsed = $null; vramAll = $null
         gameVram = $null; gameShared = $null; gameRam = $null; gameCommit = $null; ram = $null; ramAll = $null
         # From the game's log: the upscaler (DLSS or FSR), its mode and sizes, and frame generation.
-        console = $null; up = $null; upMode = $null; upFrom = $null; upTo = $null; fg = $null; fgTimes = 0 }
+        console = $null; shownH = $null; up = $null; upMode = $null; upFrom = $null; upTo = $null; fg = $null; fgTimes = 0 }
 $state = @{ logAt = 0L; id = 0; owner = [IntPtr]::Zero; lastCpu = $null; lastAt = $null; seen = $false; hidden = $false; f8 = $false; tick = 0 }
 # The card's memory in GB, for cards without nvidia-smi (the largest the driver reports).
 $cardAll = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0*' -ErrorAction SilentlyContinue |
@@ -125,8 +125,9 @@ $form.Add_Paint({
     # A thin line between what the game uses and the picture, and another above the keys.
     $g.FillRectangle((& $brush $track), 13, 134, ($PW - 26), 1)
     $g.FillRectangle((& $brush $track), 13, 198, ($PW - 26), 1)
-    # The console the game is run as (its picture: Series S for 1080p, Series X for 1440p and 4K).
-    & $row 140 "XBOX" $(if ($s.console) { $s.console } else { "-" }) $null $null $null
+    # The console the game is run as and its picture: Series S is the 1080p one; on Series X the
+    # display's size it is told (2560x1440 or 3840x2160) is the 1440p or the 4K one.
+    & $row 140 "XBOX" $(if ($s.console) { "{0}   {1}" -f $s.console, $(if ($s.console -eq "Series S") { "1080p" } elseif ($s.shownH -eq 2160) { "4K" } elseif ($s.shownH) { "{0}p" -f $s.shownH } else { "" }) } else { "-" }) $null $null $null
     # The upscaler: which (DLSS in NVIDIA's green, FSR in orange), its mode, and the game's render
     # size to the output's ("game's own": no DLSS or FSR call seen, the console renderer's own size).
     $tint = if ($s.up -eq "DLSS") { $nvidia } elseif ($s.up -eq "FSR") { $amd } else { $white }
@@ -189,6 +190,7 @@ function Read-Upscaling([string]$text) {
         if ($last.Groups[1].Value -eq 'true') { $s.fgTimes = [int]$last.Groups[2].Value; $s.fg = "DLSS {0}x" -f $s.fgTimes } else { $s.fg = "DLSS's: off now"; $s.fgTimes = 0 }
     }
     if ($text -match 'console\s+Xbox (Series [SX])') { $s.console = $Matches[1] }
+    if ($text -match 'display mode reported to the title width=\d+ height=(\d+)') { $s.shownH = [int]$Matches[1] }
     if ($text -match 'upscaling\s+AMD FSR frame generation') { $s.up = "FSR"; $s.upMode = "Quality" }
     foreach ($m in [regex]::Matches($text, "FSR upscaler: the game's upscale render=\[(\d+), (\d+)\] output=\[(\d+), (\d+)\]")) {
         if ($s.up -eq "DLSS") { continue }

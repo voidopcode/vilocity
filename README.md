@@ -113,13 +113,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-28 18:56
+**Latest test run:** 2026-11-28 19:15
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 19.9 fps, 50 ms a frame |
-| Best while playing | 22.4 fps |
-| Last frame | 20.8 fps, 48 ms, 7039 draws, 401 dropped without a pipeline |
+| Frame rate while playing (typical) | 18.9 fps, 53 ms a frame |
+| Best while playing | 23.7 fps |
+| Last frame | 20.5 fps, 49 ms, 8985 draws, 343 dropped without a pipeline |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -333,7 +333,7 @@ picture tests of 2026-11-27 evening ruled out.
 - **The frame rate panel is on the left, and says the upscaler and frame generation.** Its
   CPU, GPU, VIDEO and RAM lines are the game's own use, each with a bar (the whole PC's are
   gone; a red "CARD FULL" still names what else fills the card). XBOX says the console the
-  game runs as (Series S for the 1080p picture, Series X for 1440p and 4K). Two
+  game runs as and its picture (Series S 1080p, Series X 1440p or 4K). Two
   more lines: SCALE (DLSS in green or FSR in orange, its mode, and the game's render height to
   the output's, as "DLSS Quality 1440p to 2160p"; "game's own" without either) and FRAMES
   (DLSS 2x to 4x or FSR 2x, with about how many frames a second reach the screen). Under them,
