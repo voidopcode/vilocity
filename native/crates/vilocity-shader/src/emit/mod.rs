@@ -170,17 +170,29 @@ thread_local! {
 /// meetings): the water's and the underwater fog's tiled light and the triangle clip's heap
 /// defragmentation in the wave-wide form ([`widen`]), loops kept together per host wave
 /// ([`emit_program`]), LDS set up by the group's first thread, LDS atomics in loops without a
-/// meeting, and skips kept around loops that would not end ([`ir::without_skips`]). Off by
+/// meeting, skips kept around loops that would not end ([`ir::without_skips`]), and LDS
+/// accesses outside the program's own shared memory done as the console does them (every
+/// program with LDS, `VILOCITY_LDS_BOUNDS=0` leaves that out). Off by
 /// default: some of these forms make host waves wait for each other inside branches and loops
-/// (pair meetings spin), and a related form hung this PC's card. Off, every program translates
-/// as before. Part of the translation: the shader cache keys on it ([`host_settings`]).
+/// (pair meetings spin), and a related form hung this PC's card. `VILOCITY_WATER_LIGHT=0`
+/// turns it off; every program then translates as before.
+/// Part of the translation: the shader cache keys on it ([`host_settings`]).
 pub fn water_light() -> bool {
     #[cfg(test)]
     if let Some(on) = WATER_LIGHT_FOR_TESTS.with(std::cell::Cell::get) {
         return on;
     }
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("VILOCITY_WATER_LIGHT").is_some_and(|v| v == "1"))
+    *ON.get_or_init(|| std::env::var_os("VILOCITY_WATER_LIGHT").is_none_or(|v| v != "0"))
+}
+
+/// `VILOCITY_LANE_EXITS=1`: a console wave64 compute program whose wave operations sit in a
+/// loop each lane leaves on its own (the water fog's slice loop) gets the form without those
+/// exits ([`crate::ir::without_lane_exits`]) before anything approximate. Part of the
+/// translation: the shader cache keys on it ([`host_settings`]).
+pub fn lane_exits() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VILOCITY_LANE_EXITS").is_some_and(|v| v == "1"))
 }
 
 /// Which of a translated program's group barriers wait for the whole
@@ -525,11 +537,13 @@ pub fn emit(
     let exact_only = matches!(&original, Err(ShaderError::Unsupported { what, .. }) if *what == lower::MASK_ELSEWHERE);
     if stuck && native.stage == HwStage::Cs && native.wave64 && lower::host_max_wave() == 32 {
         let why = std::env::var_os("VILOCITY_WAVE_WHY").is_some();
+        // (the log's 16 hex digits of the program, so each line can be told apart)
+        let tag = if why { blake3::hash(c.input).to_hex()[..16].to_string() } else { String::new() };
         let report = |what: &str, r: &Result<(HostShader, Option<u32>), ShaderError>| {
             if why {
                 match r {
-                    Ok((_, wave)) => eprintln!("WAVE64-RETRY {what}: wave {wave:?}"),
-                    Err(e) => eprintln!("WAVE64-RETRY {what}: {e}"),
+                    Ok((_, wave)) => eprintln!("WAVE64-RETRY #{tag} {what}: wave {wave:?}"),
+                    Err(e) => eprintln!("WAVE64-RETRY #{tag} {what}: {e}"),
                 }
             }
         };
@@ -644,7 +658,7 @@ pub fn emit(
         // `VILOCITY_WAVE_WIDE=1`, which took the form from the two kernels: black
         // blocks on water in daylight.
         let listed = wave_wide_hash_matches(std::env::var_os("VILOCITY_WAVE_WIDE_ONLY").as_deref(), c.input);
-        let wide_on = wide_option.as_ref().map_or(scene_kernel || listed, |v| v == "1");
+        let wide_on = wide_option.as_ref().map_or(scene_kernel || listed || water_light(), |v| v == "1");
         // A single guest wave can iterate an active-lane loop until both host
         // halves have finished. The precise latch and convergence conditions
         // for the driver compute route are checked by widen().
@@ -671,11 +685,23 @@ pub fn emit(
                         return again.map(|(shader, _)| shader);
                     }
                 }
+                // Still stopped inside a loop each lane leaves on its own that also ends on a
+                // count: its exits for when no lane is left also left out
+                // ([`ir::without_lane_exits`]), so both host waves turn it together.
+                let loops = if deep_on && lane_exits() { form("without skips or lane exits", ir::without_lane_exits(p)) } else { None };
+                if let Some((p, st, io, res)) = &loops {
+                    let again = emit_program(c, native, p, st, io, res);
+                    report("without skips or lane exits", &again);
+                    if done(&again) {
+                        return again.map(|(shader, _)| shader);
+                    }
+                }
                 // Still stopped where not every lane runs: the per-lane branches around
                 // those places taken as the console takes them, by the whole wave at once
                 // ([`widen`]), at two group barriers per such branch.
                 if wide_on || driver_loop {
                     let bases = [
+                        loops.as_ref().map(|f| &f.0),
                         deep.as_ref().map(|f| &f.0),
                         forms[1].1.as_ref().map(|f| &f.0),
                         forms[0].1.as_ref().map(|f| &f.0),

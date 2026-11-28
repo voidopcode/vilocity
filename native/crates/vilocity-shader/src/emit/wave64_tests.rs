@@ -1028,9 +1028,11 @@ fn lds_accesses_after_the_last_plain_write_need_no_meeting() {
 /// threads) on a host of 32-lane waves whose LDS write and read stand in one lane-branch region
 /// (a per-lane loop of two blocks), as in the water's tiled light, in a container with the
 /// digest of one of the programs upstream widens: refused with the switch off, as before; the
-/// wave-wide form with it on, the same the archived kernels get either way. A program not
-/// named stays refused either way. (That every other program translates as before with the
-/// switch off was checked once, by hashes of 168 translations before and after the port.)
+/// wave-wide form with it on, the same the archived kernels get with it on. Those translate
+/// either way; on, their LDS accesses are also kept inside the program's own (`lds_bounds`),
+/// so the two forms differ. A program not named stays refused either way. (That every other
+/// program translates as before with the switch off was checked by hashes of the translations
+/// before and after the port: 168, then 238 with the LDS bounds.)
 #[test]
 fn the_water_light_switch_alone_gives_the_named_programs_the_wide_form() {
     const NO_WAVE32: &str = "no wave32 lowering for this wave64 program";
@@ -1086,8 +1088,9 @@ fn the_water_light_switch_alone_gives_the_named_programs_the_wide_form() {
     let off = translate(named, false);
     assert!(refused(&off), "{:?}", off.err());
     assert!(refused(&translate([0; 16], false)));
-    let wide = translate(archived, false).expect("the archived kernel's wide form");
+    let wide = translate(archived, true).expect("the archived kernel's wide form, switch on");
     assert_eq!(translate(named, true).expect("the wide form with the switch on"), wide);
-    assert_eq!(translate(archived, true).expect("the archived kernel, switch on"), wide);
-    assert!(refused(&translate([0; 16], true)));
+    let before = translate(archived, false).expect("the archived kernel's wide form, switch off");
+    assert_ne!(before, wide, "the LDS bounds only with the switch on");
+    assert_eq!(translate([0; 16], true).expect("any wave64 CS with the switch on"), wide);
 }

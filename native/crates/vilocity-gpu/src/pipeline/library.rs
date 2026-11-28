@@ -46,6 +46,14 @@
 //! with a 64 MB file written past the system's cache, mapped and replaced:
 //! 16,352 of 16,384 pages read zeros with the handle closed, none with it
 //! open (the test below). `VILOCITY_LIBRARY_HANDLE=0`: closed, as before.
+//!
+//! That keeping was measured on one Windows 11 PC only. On an RX 9070 XT
+//! (issue 3) two starts crashed inside AMD's compiler, reading a null
+//! pointer, about a second after their first save had renamed a new
+//! library over the file they mapped. So a run that has the file mapped no
+//! longer renames over it: its saves wait beside it ([`NEXT_FILE`]) and the
+//! next start puts the newest in place before mapping. The run loses
+//! nothing: what it stored is in its library already.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -434,9 +442,9 @@ fn one_call() -> Option<MutexGuard<'static, ()>> {
 }
 
 const LIBRARY_FILE: &str = "host-pipelines.bin";
-/// A saved library that could not replace [`LIBRARY_FILE`] while this run
-/// had it mapped (a system that refuses to replace a mapped file): the next
-/// start renames it over the library first ([`Blob::of`]).
+/// A library saved while this run has [`LIBRARY_FILE`] mapped (or one a
+/// system refused to rename over it): the next start renames it over the
+/// library first ([`Blob::of`]).
 const NEXT_FILE: &str = "host-pipelines.next";
 const EARLY_FILE: &str = "early-pipelines.txt";
 /// Title pipelines listed for an early start, at most.
@@ -644,11 +652,12 @@ pub(crate) fn save(now: bool) {
     // Through `used`: a process that asked for none yet (`vilocity shaders`)
     // must not write the earlier runs' list over with nothing.
     let used: Vec<String> = used().iter().flatten().cloned().collect();
-    let library_written = if bytes > 0 { replace_library(dir, &tmp) } else { Ok(()) };
+    let in_use = VIEW[0].load(Ordering::Relaxed) != 0;
+    let library_written = if bytes > 0 { replace_library(dir, &tmp, in_use) } else { Ok(()) };
     if bytes > 0 && library_written.is_ok() {
-        // In place unless the system refused and the new one waits beside it.
+        // In place unless the new one waits beside it (the file is mapped, or the system refused).
         let in_place = !dir.join(NEXT_FILE).exists();
-        if in_place && VIEW[0].load(Ordering::Relaxed) != 0 {
+        if in_place && in_use {
             REPLACED[1].store(crate::host::now_ms(), Ordering::Relaxed);
             REPLACED[0].fetch_add(1, Ordering::Relaxed);
         }
@@ -695,14 +704,15 @@ fn serialise(library: &ID3D12PipelineLibrary1, tmp: &std::path::Path, size: usiz
     std::fs::write(tmp, &bytes)
 }
 
-/// Renames the written library `tmp` over the library's file in `dir`. This
-/// run may have that file mapped: Windows 11 replaces a mapped file, and
-/// the mapping goes on reading the old one for as long as a handle on it
-/// is open ([`holds`]; with none, only the pages in memory at that moment
-/// stay: the rest read as zeros). Where a system refuses, the new library
-/// is left beside it as [`NEXT_FILE`] for the next start.
-fn replace_library(dir: &std::path::Path, tmp: &std::path::Path) -> std::io::Result<()> {
-    std::fs::rename(tmp, dir.join(LIBRARY_FILE)).or_else(|_| std::fs::rename(tmp, dir.join(NEXT_FILE)))
+/// Renames the written library `tmp` over the library's file in `dir`, or,
+/// when this run has that file mapped (`in_use`, see the module's notes) or
+/// the system refuses, leaves it beside it as [`NEXT_FILE`] for the next start.
+fn replace_library(dir: &std::path::Path, tmp: &std::path::Path, in_use: bool) -> std::io::Result<()> {
+    let next = || std::fs::rename(tmp, dir.join(NEXT_FILE));
+    if in_use {
+        return next();
+    }
+    std::fs::rename(tmp, dir.join(LIBRARY_FILE)).or_else(|_| next())
 }
 
 /// Writes `bytes` to a temporary file beside `path`, then renames it over
@@ -834,8 +844,8 @@ mod tests {
     }
 
     /// A mapped file reads as the file's bytes, a file written through a
-    /// mapping holds what was written, and the library's file can be
-    /// replaced while it is mapped (or the new one waits as the next).
+    /// mapping holds what was written, and a save while the library's file
+    /// is mapped leaves that file alone: the next start takes the new one.
     #[test]
     fn the_library_file_is_mapped_and_replaced() {
         let dir = tempfile::tempdir().unwrap();
@@ -856,13 +866,20 @@ mod tests {
             file.bytes_mut().copy_from_slice(&new);
         }
         assert_eq!(std::fs::read(&tmp).unwrap(), new);
-        replace_library(dir.path(), &tmp).unwrap();
+        replace_library(dir.path(), &tmp, true).unwrap();
         assert!(!tmp.exists());
-        // The mapping still reads the old library.
+        // The mapped file is untouched, on disk and through the mapping.
+        assert_eq!(std::fs::read(&path).unwrap(), old);
+        assert_eq!(std::fs::read(dir.path().join(NEXT_FILE)).unwrap(), new);
         assert_eq!(blob.bytes(), &old[..]);
         drop(blob);
-        // The next start reads the new one, wherever the save left it.
+        // The next start reads the new one.
         assert_eq!(Blob::of(dir.path()).bytes(), &new[..]);
+        assert!(!dir.path().join(NEXT_FILE).exists());
+        // Unmapped, a save renames over the file itself.
+        std::fs::write(&tmp, &old).unwrap();
+        replace_library(dir.path(), &tmp, false).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), old);
         assert!(!dir.path().join(NEXT_FILE).exists());
     }
 
@@ -926,7 +943,8 @@ mod tests {
             let mut file = Mapped::create(&tmp, LEN).expect("a new file, mapped");
             file.bytes_mut().fill(0xEE);
         }
-        replace_library(dir.path(), &tmp).unwrap();
+        // (The engine no longer renames over a file it maps; another process may.)
+        replace_library(dir.path(), &tmp, false).unwrap();
         // Every page of the old mapping, read for the first time now.
         let mut expected = vec![0u8; 4096];
         for (page, bytes) in mapped.bytes().chunks(4096).enumerate() {

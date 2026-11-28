@@ -361,6 +361,9 @@ struct Lower<'a> {
     /// With `exchange`: VGPR values every lane holds alike ([`lane_uniform`]); a first-lane
     /// read of one needs nothing from the other host wave.
     uniform: HashSet<Value>,
+    /// With `exchange` and `VILOCITY_FIRSTLANE_ALIKE=1`: the first-lane reads (block,
+    /// instruction) of a value every lane in EXEC holds alike ([`lane_alike_reads`]).
+    alike_reads: HashSet<(usize, usize)>,
     /// With `exchange`: the wave ORs that only steer a loop over each lane's own bits, which
     /// a host wave takes over its own lanes wherever they stand ([`super::own_bits`]).
     own_bits: super::own_bits::OwnBits,
@@ -715,6 +718,130 @@ fn lane_uniform(
         }
     }
     same
+}
+
+/// `VILOCITY_FIRSTLANE_ALIKE=1`: [`lane_alike_under`] is used for first-lane reads.
+/// Off by default until a game run has shown it (made with a miniature of water_shading
+/// CS_TransmissionVolumetrics_Tiled, whose slice loop reads a value made from its counter alone).
+fn firstlane_alike_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VILOCITY_FIRSTLANE_ALIKE").is_some_and(|v| v == "1"))
+}
+
+/// The first-lane reads (block, instruction) of a VGPR value made only from scalars and
+/// constants: by a chain of plain VALU instructions from scalars, constants, [`lane_uniform`]
+/// values and values of this kind. Every lane that made it holds the same number, so the host
+/// wave's own first lane gives the console's (no lane from the other host wave needed). The
+/// compiler moves such a value to a scalar with `v_readfirstlane` inside loops that lanes leave
+/// one by one (water_shading's slice depth made from the loop counter), where [`lane_uniform`]
+/// (unguarded writes in whole-wave blocks only) does not see it.
+/// shortcut: a lane in EXEC at the read is taken to have made the value (the console compiler
+/// scalarises a value only where every active lane holds it; proving it from the lane masks
+/// fails on loop masks); scalars are taken to be the same in both host waves of a console wave,
+/// as [`lane_uniform`] takes them; masks are not followed. Behind `VILOCITY_FIRSTLANE_ALIKE=1`.
+fn lane_alike_reads(p: &Program, st: &Structured, same: &HashSet<Value>) -> HashSet<(usize, usize)> {
+    let is_mask = |v: Value| st.masks.contains_key(&v) || st.highs.contains_key(&v);
+    // masks made as "every lane in EXEC, or none" on a scalar test (`s_cselect_b64 s, exec, 0`):
+    // the same bit in every lane that was in EXEC there
+    let mut exec_or_none: HashSet<Value> = p
+        .blocks
+        .iter()
+        .flat_map(|b| &b.insts)
+        .filter(|inst| {
+            inst.name() == "s_cselect_b64"
+                && matches!(&inst.fields, Fields::Sop { src, .. } if src.len() == 2
+                    && src.iter().any(|o| matches!(o, Operand::Scalar { code, .. } if *code == EXEC))
+                    && src.iter().any(|o| matches!(o, Operand::Const(128))))
+        })
+        .flat_map(|inst| inst.writes.iter().filter(|w| matches!(w.0, Reg::S(_))).map(|w| w.1))
+        .collect();
+    // and through phis (a loop header's, which may take its own value back) all of whose values
+    // are such masks: every scalar phi taken to be one, then those with another value dropped
+    // (and plain scalar copies, `s_mov_b64 s[84:85], s[32:33]` around a loop, as one-way phis)
+    let mut joins: Vec<(Value, Vec<Value>)> = p
+        .blocks
+        .iter()
+        .flat_map(|b| &b.phis)
+        .filter(|phi| matches!(phi.reg, Reg::S(_)))
+        .map(|phi| (phi.value, phi.args.clone()))
+        .collect();
+    if super::lane_exits() {
+        for inst in p.blocks.iter().flat_map(|b| &b.insts) {
+            if matches!(inst.name(), "s_mov_b32" | "s_mov_b64")
+                && inst.reads.len() == inst.writes.len()
+                && inst.reads.iter().chain(&inst.writes).all(|r| matches!(r.0, Reg::S(c) if c != EXEC && c != EXEC + 1))
+            {
+                joins.extend(inst.writes.iter().zip(&inst.reads).map(|(w, r)| (w.1, vec![r.1])));
+            }
+        }
+    }
+    let mut maybe: HashSet<Value> = joins.iter().map(|j| j.0).collect();
+    loop {
+        let drop: Vec<Value> = joins
+            .iter()
+            .filter(|(v, _)| maybe.contains(v))
+            .filter(|(_, args)| args.is_empty() || args.iter().any(|a| !exec_or_none.contains(a) && !maybe.contains(a)))
+            .map(|(v, _)| *v)
+            .collect();
+        if drop.is_empty() {
+            break;
+        }
+        for v in drop {
+            maybe.remove(&v);
+        }
+    }
+    exec_or_none.extend(maybe);
+    let order = crate::ir::reverse_postorder(&p.blocks);
+    let mut out: HashSet<Value> = HashSet::new();
+    let mut reads = HashSet::new();
+    for &b in &order {
+        for (i, inst) in p.blocks[b].insts.iter().enumerate() {
+            let name = inst.name();
+            let Fields::Valu(v) = &inst.fields else { continue };
+            let held = |x: &Value| same.contains(x) || out.contains(x);
+            // the operand's own registers (not the old value a guarded write also reads)
+            let vector = |reg: u8, dwords: u8| -> Vec<Value> {
+                inst.reads
+                    .iter()
+                    .filter(|r| matches!(r.0, Reg::V(x) if x >= reg && x < reg.saturating_add(dwords)))
+                    .map(|r| r.1)
+                    .collect()
+            };
+            if name == "v_readfirstlane_b32" {
+                if let Some(&Operand::Vector { reg, dwords }) = v.src.first() {
+                    let read = vector(reg, dwords);
+                    if !read.is_empty() && read.iter().all(held) {
+                        reads.insert((b, i));
+                    }
+                }
+                continue;
+            }
+            if v.dpp.is_some() || v.sdwa.is_some() || name.starts_with("v_mbcnt") || name.starts_with("v_cmpx") || name.contains("lane") {
+                continue;
+            }
+            let alike = v.src.iter().all(|op| match *op {
+                Operand::Vector { reg, dwords } => {
+                    let read = vector(reg, dwords);
+                    !read.is_empty() && read.iter().all(held)
+                }
+                // a lane mask only where its bit is the same in every lane (a select of EXEC or
+                // 0 on a scalar test: `v_cndmask` then picks the same scalar in every lane)
+                Operand::Scalar { code, .. } if code != NULL => inst.read(Reg::S(code)).is_none_or(|x| {
+                    !is_mask(x) || exec_or_none.contains(&x) || {
+                        let low = st.highs.get(&x).copied().unwrap_or(x);
+                        st.masks
+                            .get(&low)
+                            .is_some_and(|&m| st.bools.support(m).iter().all(|a| matches!(a, Atom::Uniform(_))))
+                    }
+                }),
+                _ => true,
+            });
+            if alike {
+                out.extend(inst.writes.iter().filter(|w| matches!(w.0, Reg::V(_))).map(|w| w.1));
+            }
+        }
+    }
+    reads
 }
 
 /// What a register value holds, for [`wave_local`].
@@ -1422,6 +1549,14 @@ thread_local! {
     pub(super) static TEST_NAN_GUARD: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
+/// Whether accesses outside a program's own shared memory are done as the console does them
+/// (reads give 0, writes are dropped): with [`super::water_light`] on, unless
+/// `VILOCITY_LDS_BOUNDS=0` (taken as inside, as before).
+/// (Vilocity: from trustno1-coder/VIctory-NVIDIA 64d4931, GPL-3.0-or-later, as this.)
+fn lds_bounds() -> bool {
+    super::water_light() && !std::env::var("VILOCITY_LDS_BOUNDS").is_ok_and(|v| v.trim() == "0")
+}
+
 /// Whether LDS atomics in loops go without a meeting of the host waves ([`LdsOrder::looped`]):
 /// with [`super::water_light`] on, unless `VILOCITY_LDS_LOOP_ATOMICS=0` (they meet, as before).
 fn loop_atomics_on() -> bool {
@@ -1439,13 +1574,16 @@ fn own_bits_on() -> bool {
 /// What the translator was told of the host, for a cache's key: the widest
 /// wave, the view heap's limit, where the raw twins of its views start, what
 /// it writes for the console's own hardware, and [`super::water_light`] with the switches
-/// under it (`vilocity-gpu`'s cache does not name them).
+/// under it, bit 6 `VILOCITY_FIRSTLANE_ALIKE` and bit 7 [`super::lane_exits`] (`vilocity-gpu`'s
+/// cache does not name them).
 pub fn host_settings() -> [u32; 5] {
-    [host_max_wave(), super::shader::view_heap_limit(), super::shader::raw_views(), host_rdna(), water_settings()]
+    let switches = water_settings() | u32::from(firstlane_alike_on()) << 6 | u32::from(super::lane_exits()) << 7;
+    [host_max_wave(), super::shader::view_heap_limit(), super::shader::raw_views(), host_rdna(), switches]
 }
 
 /// Bit 0: [`super::water_light`]; then, with it, `VILOCITY_LOOPS_WAVE` 0 or 2,
-/// `VILOCITY_LDS_FIRST_INIT=0`, `VILOCITY_LDS_LOOP_ATOMICS=0` (as each is read).
+/// `VILOCITY_LDS_FIRST_INIT=0`, `VILOCITY_LDS_LOOP_ATOMICS=0`, `VILOCITY_LDS_BOUNDS=0` (as
+/// each is read).
 fn water_settings() -> u32 {
     if !super::water_light() {
         return 0;
@@ -1458,6 +1596,7 @@ fn water_settings() -> u32 {
         | u32::from(loops == Some("2")) << 2
         | u32::from(first_off) << 3
         | u32::from(atomics_off) << 4
+        | u32::from(!lds_bounds()) << 5
 }
 
 static HOST_RDNA: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -1770,6 +1909,7 @@ impl<'a> Lower<'a> {
         if let StageIo::Cs(cs) = x.native.io {
             s.threads = Some(cs.threads);
             s.lds_dwords = cs.lds_bytes() / 4;
+            s.title_lds_dwords = s.lds_dwords;
             // Code reading other lanes needs the console's wave size and
             // lane order; so do lane masks read as numbers, and LDS shared
             // within one wave, where the console compiler leaves out barriers.
@@ -1955,6 +2095,7 @@ impl<'a> Lower<'a> {
             s.prims = x.prims.clone();
             s.threads = Some([ms.threads, 1, 1]);
             s.lds_dwords = ms.lds_bytes.div_ceil(4);
+            s.title_lds_dwords = s.lds_dwords;
             s.mesh = Some(super::shader::Mesh {
                 max_vertices: ms.max_vertices,
                 max_primitives: ms.max_primitives,
@@ -2070,6 +2211,13 @@ impl<'a> Lower<'a> {
             uniform: match &exchange {
                 Some((_, false, all)) if !LOCAL_WAVES.get() => {
                     lane_uniform(p, x.st, all, split_lds && super::group_sync() != 0, &lds_order.unstable)
+                }
+                _ => HashSet::new(),
+            },
+            alike_reads: match &exchange {
+                Some((_, false, all)) if !LOCAL_WAVES.get() && firstlane_alike_on() => {
+                    let same = lane_uniform(p, x.st, all, split_lds && super::group_sync() != 0, &lds_order.unstable);
+                    lane_alike_reads(p, x.st, &same)
                 }
                 _ => HashSet::new(),
             },
@@ -4897,6 +5045,14 @@ impl<'a> Lower<'a> {
             return Ok(some);
         }
         if !made.is_none_or(|b| self.all_lanes(b)) {
+            // A mask whose bit is the same in every lane that runs here (`exec &` the lanes
+            // the wave started with, as the water fog's slice writes have it at 0x2e68): some
+            // lane of the console wave holds it exactly when one of the lanes here does, and
+            // a host wave runs this only with lanes here, so its own answer is the console's.
+            // (With [`super::lane_exits`], whose forms reach such places.)
+            if super::lane_exits() && self.x.st.bools.support(m).iter().all(|a| matches!(a, Atom::Uniform(_))) {
+                return Ok(some);
+            }
             need(made.unwrap_or(0));
             return Err(DIVERGENT_MASK_EXCHANGE);
         }
@@ -5777,16 +5933,49 @@ impl<'a> Lower<'a> {
             return Err("LDS the program does not allocate");
         }
         let a = self.vgprs(inst, addr.as_ref().ok_or("an LDS address")?, 1)?[0];
-        // shortcut: LDS addresses are taken as dword-aligned and in bounds
-        // (out-of-bounds console accesses read 0 and drop writes).
-        let dword = |l: &mut Self, bytes: u32| -> V {
+        // shortcut: LDS addresses are taken as dword-aligned and, unless [`lds_bounds`], in
+        // bounds (out-of-bounds console accesses read 0 and drop writes).
+        // With [`lds_bounds`] (Vilocity: from trustno1-coder/VIctory-NVIDIA 64d4931,
+        // GPL-3.0-or-later, as this): group-shared memory of the host is undefined outside the
+        // program's, and behind the program's dwords lie ours (the host waves' counters and
+        // exchange dwords). So: the dword's place, and whether it is inside (`None`: not asked,
+        // the place taken as inside). A place outside is given as the last dword inside: reads
+        // of it are replaced by 0, writes left out. Seen in `CS_SortRayTiles` (the cloud pass's
+        // sort of its ray tiles, 256 threads a group): of the 32 groups dispatched the 31
+        // without entries of their own clear and read at up to 32 KiB behind their 2.5 KiB.
+        let limit = if lds_bounds() { self.s.title_lds_dwords } else { 0 };
+        let dword = |l: &mut Self, bytes: u32| -> (V, Option<V>) {
             let c = l.cur;
             let o = l.s.m.i32(bytes);
             let at = l.s.m.bin(c, Bin::Add, a, o);
             let two = l.s.m.i32(2);
             let index = l.s.m.bin(c, Bin::LShr, at, two);
             let lds = l.s.lds();
-            l.s.m.element(c, lds, index)
+            if limit == 0 {
+                return (l.s.m.element(c, lds, index), None);
+            }
+            let end = l.s.m.i32(limit);
+            let inside = l.s.m.cmp(c, pred::IULT, index, end);
+            let last = l.s.m.i32(limit - 1);
+            let index = l.s.m.select(c, inside, index, last);
+            (l.s.m.element(c, lds, index), Some(inside))
+        };
+        // (a guard and "inside" together; what a read gives outside)
+        let both = |l: &mut Self, guard: Option<V>, inside: Option<V>| -> Option<V> {
+            match (guard, inside) {
+                (Some(g), Some(i)) => Some(l.s.m.bin(l.cur, Bin::And, g, i)),
+                (g, None) => g,
+                (None, i) => i,
+            }
+        };
+        let read = |l: &mut Self, x: V, inside: Option<V>| -> V {
+            match inside {
+                Some(i) => {
+                    let zero = l.s.m.i32(0);
+                    l.s.m.select(l.cur, i, x, zero)
+                }
+                None => x,
+            }
         };
         let width = |n: &str| match n.rsplit('_').next() {
             Some("b64") => 2,
@@ -5820,7 +6009,7 @@ impl<'a> Lower<'a> {
                 || name.ends_with("_d16_hi")
         });
         if let Some(bits) = sub {
-            let p = dword(self, offset);
+            let (p, inside) = dword(self, offset);
             let o = self.s.m.i32(offset);
             let at = self.s.m.bin(c, Bin::Add, a, o);
             let three = self.s.m.i32(3);
@@ -5830,6 +6019,7 @@ impl<'a> Lower<'a> {
             if name.starts_with("ds_read") {
                 let reg = dst_reg.ok_or("an LDS read result")?;
                 let w = self.s.m.load(c, p);
+                let w = read(self, w, inside);
                 let x = self.s.m.bin(c, Bin::LShr, w, sh);
                 let x = if base.contains("_i") {
                     let k = self.s.m.i32(32 - bits);
@@ -5872,6 +6062,7 @@ impl<'a> Lower<'a> {
                 let ones = self.s.m.i32(u32::MAX);
                 let keep = self.s.m.bin(c, Bin::Xor, m, ones);
                 use super::bitcode::Rmw;
+                let guard = both(self, guard, inside);
                 let at = self.begin_guarded(guard);
                 self.s.m.atomic(self.cur, Rmw::And, p, keep);
                 self.s.m.atomic(self.cur, Rmw::Or, p, x);
@@ -5891,8 +6082,9 @@ impl<'a> Lower<'a> {
             let mut n = 0;
             for (off, w) in elements {
                 for k in 0..w {
-                    let p = dword(self, off + 4 * k);
+                    let (p, inside) = dword(self, off + 4 * k);
                     let x = self.s.m.load(self.cur, p);
+                    let x = read(self, x, inside);
                     self.write(inst, Reg::V(reg + n), x, guard);
                     n += 1;
                 }
@@ -5928,8 +6120,10 @@ impl<'a> Lower<'a> {
             }
             let at = self.begin_guarded(guard);
             for (off, x) in stores {
-                let p = dword(self, off);
+                let (p, inside) = dword(self, off);
+                let here = self.begin_guarded(inside);
                 self.s.m.store(self.cur, p, x);
+                self.end_guarded(here, &[]);
             }
             self.end_guarded(at, &[]);
             return Ok(());
@@ -5964,7 +6158,20 @@ impl<'a> Lower<'a> {
             Some((_, v)) => self.i32_of(v).unwrap_or(self.s.m.i32(0)),
             None => self.s.m.i32(0),
         };
-        let p = dword(self, offset);
+        let (p, inside) = dword(self, offset);
+        // (outside the memory nothing is done; a lane that runs gets 0 back, as a read does)
+        let outside = match inside {
+            Some(i) => {
+                let zero = self.s.m.i32(0);
+                let missed = match guard {
+                    Some(g) => self.s.m.select(self.cur, g, zero, outside),
+                    None => zero,
+                };
+                self.s.m.select(self.cur, i, outside, missed)
+            }
+            None => outside,
+        };
+        let guard = both(self, guard, inside);
         if let Some(max) = match op.as_str() {
             "max_f32" => Some(true),
             "min_f32" => Some(false),
@@ -9649,6 +9856,12 @@ impl<'a> Lower<'a> {
                 let alike = match v.src.first() {
                     Some(&Operand::Vector { reg, .. }) => {
                         inst.read(Reg::V(reg)).is_some_and(|x| self.uniform.contains(&x))
+                            || (!self.alike_reads.is_empty()
+                                && self.x.p.blocks[self.cur_ir]
+                                    .insts
+                                    .iter()
+                                    .position(|i| std::ptr::eq(i, inst))
+                                    .is_some_and(|i| self.alike_reads.contains(&(self.cur_ir, i))))
                     }
                     _ => true,
                 };

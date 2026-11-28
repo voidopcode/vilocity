@@ -778,6 +778,28 @@ pub(crate) fn without_early_outs(p: &Program) -> Option<Program> {
 /// That leaves out most of the skips of the title's large lighting programs, whose bodies
 /// are then code every lane runs.
 pub(crate) fn without_skips(p: &Program, deep: bool) -> Option<Program> {
+    skips_out(p, deep, false)
+}
+
+/// As [`without_skips`] (`deep`), and also without the exits that leave a loop once no lane is
+/// left in it: `s_andn2_b64 m, m, exec` (the lanes still in the loop, less those leaving now)
+/// and `s_cbranch_scc0` out when none is left, the HLSL `break` in a loop the wave turns
+/// together. Where the loop also ends on its own (a scalar count closes it), the lanes walk its
+/// remaining turns with EXEC clear: vector code and every effect are masked, as on the console,
+/// which has left the loop by then; scalar code runs. So an exit stays if the code after the
+/// loop could see that (a scalar the loop writes, read after it), if the loop holds code EXEC
+/// does not mask (scalar stores, barriers, `v_writelane`, exports; whole-wave results read
+/// after the loop), or if it would not end with no lane left. Both host waves of a console wave
+/// then turn the loop together, and the exchanges inside it are in code every lane runs.
+/// Seen in `water_shading:CS_TransmissionVolumetrics_Tiled` (build 1.0.2.1): the wave sums in
+/// its slice loop (0x1e40-0x2ec0, six turns counted in s95, each lane leaving at its own) were
+/// taken over each 32-lane half ("local waves (APPROXIMATE)"), which gave the two 8x4 halves of
+/// every 8x8 tile different light: hard-edged half-tile blocks on the water.
+pub(crate) fn without_lane_exits(p: &Program) -> Option<Program> {
+    skips_out(p, true, true)
+}
+
+fn skips_out(p: &Program, deep: bool, loops: bool) -> Option<Program> {
     let n = p.blocks.len();
     let ends = |b: usize| {
         p.blocks[b].exit == Exit::End
@@ -856,7 +878,8 @@ pub(crate) fn without_skips(p: &Program, deep: bool) -> Option<Program> {
     // same, never ends.
     // (Vilocity: from trustno1-coder/VIctory-NVIDIA 64d4931, GPL-3.0-or-later, as this; only
     // with `VILOCITY_WATER_LIGHT=1`.)
-    let stalls = |b: usize, target: usize, first: usize, inside: &[bool]| -> bool {
+    // `seed`: the dwords known to hold no lane on the way from `b` into `first`.
+    let stalls = |seed: &[Value], b: usize, target: usize, first: usize, inside: &[bool]| -> bool {
         use std::collections::{BTreeMap, BTreeSet};
         // (dwords known to hold no lane, SCC values known)
         type Facts = (BTreeSet<Value>, BTreeMap<Value, bool>);
@@ -867,11 +890,8 @@ pub(crate) fn without_skips(p: &Program, deep: bool) -> Option<Program> {
             let mut dwords = inst.reads.iter().filter(|r| exec(r)).peekable();
             dwords.peek().is_some() && dwords.all(|r| facts.0.contains(&r.1))
         };
-        let Some(branch) = p.blocks[b].insts.last() else {
-            return false;
-        };
         let mut facts: Facts = Default::default();
-        facts.0.extend(branch.reads.iter().filter(|r| exec(r)).map(|r| r.1));
+        facts.0.extend(seed.iter().copied());
         if facts.0.is_empty() {
             return false;
         }
@@ -917,6 +937,23 @@ pub(crate) fn without_skips(p: &Program, deep: bool) -> Option<Program> {
                 {
                     for (e, r) in empty.iter_mut().zip(&inst.reads) {
                         *e = facts.0.contains(&r.1);
+                    }
+                } else if loops
+                    && matches!(name, "s_and_b64" | "s_andn2_b64")
+                    && let Fields::Sop { dst: Some(Operand::Scalar { code: d, .. }), src, .. } = &inst.fields
+                {
+                    // (a mask that holds no lane narrows to none: `and` with it, `andn2` of it)
+                    let none_in = |o: Option<&Operand>, i: u8| {
+                        matches!(o, Some(Operand::Scalar { code, .. })
+                            if inst.read(Reg::S(code + i)).is_some_and(|v| facts.0.contains(&v)))
+                    };
+                    let dword = |i: u8| none_in(src.first(), i) || name == "s_and_b64" && none_in(src.get(1), i);
+                    let (lo, hi) = (dword(0), dword(1));
+                    for (e, w) in empty.iter_mut().zip(&inst.writes) {
+                        *e = w.0 == Reg::S(*d) && lo || w.0 == Reg::S(d + 1) && hi;
+                    }
+                    if lo && hi {
+                        scc = Some(false);
                     }
                 } else if none && name.contains("saveexec") {
                     // (the old EXEC is saved; `and` and `andn1` keep lanes of it only)
@@ -1043,7 +1080,11 @@ pub(crate) fn without_skips(p: &Program, deep: bool) -> Option<Program> {
         if !deep && join.preds.iter().any(|&q| q != b && !inside[q]) {
             return None;
         }
-        if crate::emit::water_light() && stalls(b, target, first, &inside) {
+        // (Always with the lane exits left out: their loops' extra turns run with EXEC clear.)
+        let seed: Vec<Value> = p.blocks[b].insts.last().map_or(Vec::new(), |branch| {
+            branch.reads.iter().filter(|r| matches!(r.0, Reg::S(c) if c == EXEC || c == EXEC + 1)).map(|r| r.1).collect()
+        });
+        if (loops || crate::emit::water_light()) && stalls(&seed, b, target, first, &inside) {
             if std::env::var_os("VILOCITY_WAVE_WHY").is_some() {
                 eprintln!(
                     "WAVE64-SKIP kept at {:#x}: a loop behind it does not end with no lane left",
@@ -1054,12 +1095,186 @@ pub(crate) fn without_skips(p: &Program, deep: bool) -> Option<Program> {
         }
         Some(inside)
     };
+    let why = std::env::var_os("VILOCITY_WAVE_WHY").is_some();
+    let reach = |from: usize| -> Vec<bool> {
+        let mut seen = vec![false; n];
+        let mut stack = vec![from];
+        while let Some(x) = stack.pop() {
+            if std::mem::replace(&mut seen[x], true) {
+                continue;
+            }
+            if !matches!(p.blocks[x].exit, Exit::End | Exit::Indirect) {
+                stack.extend(p.blocks[x].exit.successors());
+            }
+        }
+        seen
+    };
+    let sets_exec = |inst: &Inst| inst.writes.iter().any(|w| matches!(w.0, Reg::S(c) if c == EXEC || c == EXEC + 1));
+    // `s_or_saveexec_b64 s, -1`: the whole wave on, whatever EXEC held
+    let whole_on = |inst: &Inst| {
+        inst.name().starts_with("s_or_saveexec")
+            && matches!(&inst.fields, Fields::Sop { src, .. } if src.first() == Some(&Operand::Const(193)))
+    };
+    // A loop exit taken when no lane is left in the loop ([`without_lane_exits`]): the way on,
+    // if the exit can be left out.
+    let lane_exit = |b: usize| -> Option<usize> {
+        let Exit::Branch { taken, not_taken } = p.blocks[b].exit else {
+            return None;
+        };
+        let last = p.blocks[b].insts.last()?;
+        let (empty, go_on) = match last.name() {
+            "s_cbranch_scc0" => (taken, not_taken),
+            "s_cbranch_scc1" => (not_taken, taken),
+            _ => return None,
+        };
+        // SCC from `m = m & ~exec`: the lanes still in the loop, less those leaving now
+        let scc = last.read(Reg::Scc)?;
+        let narrow = p.blocks[b].insts.iter().rev().find(|i| i.write(Reg::Scc) == Some(scc))?;
+        let Fields::Sop { dst: Some(Operand::Scalar { code: d, .. }), src, .. } = &narrow.fields else {
+            return None;
+        };
+        if narrow.name() != "s_andn2_b64" || !matches!(src.get(1), Some(Operand::Scalar { code: EXEC, .. })) {
+            return None;
+        }
+        let mask = [narrow.write(Reg::S(*d))?, narrow.write(Reg::S(d + 1))?];
+        let keep = |reason: &str| {
+            if why {
+                eprintln!("WAVE64-LANE-EXIT kept at {:#x}: {reason}", p.blocks[b].offset);
+            }
+            None
+        };
+        let ahead = reach(go_on);
+        if !ahead[b] || reach(empty)[b] {
+            return keep("not a way out of a loop");
+        }
+        // the loop: the blocks ahead of the way on that lead back to the branch
+        let mut body = vec![false; n];
+        let mut stack = vec![b];
+        while let Some(x) = stack.pop() {
+            if body[x] || !ahead[x] && x != b {
+                continue;
+            }
+            body[x] = true;
+            stack.extend(p.blocks[x].preds.iter().copied());
+        }
+        // another way out of the loop, which the lanes then take
+        let elsewhere = (0..n)
+            .filter(|&x| body[x])
+            .any(|x| p.blocks[x].exit.successors().iter().any(|&s| !body[s] && !(x == b && s == empty)));
+        if !elsewhere {
+            return keep("no other way out of the loop");
+        }
+        // the way on clears EXEC with the empty mask before anything else runs
+        let on = &p.blocks[go_on];
+        if on.preds != [b] {
+            return keep("the way on is entered elsewhere too");
+        }
+        let mut cleared = false;
+        for inst in &on.insts {
+            if sets_exec(inst) {
+                cleared = inst.name() == "s_and_b64" && mask.iter().all(|m| inst.reads.iter().any(|r| r.1 == *m));
+                break;
+            }
+            if !matches!(inst.fields, Fields::Sop { .. } | Fields::Sopp { .. }) {
+                break;
+            }
+        }
+        if !cleared {
+            return keep("the way on does not clear EXEC first");
+        }
+        // nothing in the loop that EXEC does not mask
+        let unmasked = [
+            "s_store", "s_buffer_store", "s_atomic", "s_buffer_atomic", "s_scratch", "s_dcache", "s_barrier",
+            "s_sendmsg", "s_setpc", "s_swappc", "s_call", "v_writelane", "ds_gws", "ds_ordered", "exp",
+        ];
+        let in_loop = || (0..n).filter(|&x| body[x]).flat_map(|x| &p.blocks[x].insts);
+        if let Some(i) = in_loop().find(|i| unmasked.iter().any(|u| i.name().starts_with(u))) {
+            return keep(&format!("{} in the loop", i.name()));
+        }
+        // what the loop writes: scalars must not be read after it; VGPRs written with the whole
+        // wave on only as the old value of a register written again with the whole wave on
+        let mut scalars: HashSet<Value> = HashSet::new();
+        let mut whole: HashSet<Value> = HashSet::new();
+        for x in (0..n).filter(|&x| body[x]) {
+            let mut wide = false;
+            for phi in &p.blocks[x].phis {
+                if !matches!(phi.reg, Reg::V(_)) {
+                    scalars.insert(phi.value);
+                }
+            }
+            for inst in &p.blocks[x].insts {
+                if whole_on(inst) {
+                    wide = true;
+                } else if sets_exec(inst) {
+                    wide = false;
+                }
+                for w in &inst.writes {
+                    match w.0 {
+                        Reg::V(_) if wide && !whole_on(inst) => {
+                            whole.insert(w.1);
+                        }
+                        Reg::V(_) => {}
+                        _ => {
+                            scalars.insert(w.1);
+                        }
+                    }
+                }
+            }
+        }
+        let mut grew = true;
+        while grew {
+            grew = false;
+            for x in 0..n {
+                for phi in &p.blocks[x].phis {
+                    for set in [&mut scalars, &mut whole] {
+                        if !set.contains(&phi.value) && phi.args.iter().any(|a| set.contains(a)) {
+                            set.insert(phi.value);
+                            grew = true;
+                        }
+                    }
+                }
+            }
+        }
+        for x in (0..n).filter(|&x| !body[x]) {
+            let mut wide = false;
+            for inst in &p.blocks[x].insts {
+                if whole_on(inst) {
+                    wide = true;
+                } else if sets_exec(inst) {
+                    wide = false;
+                }
+                for r in &inst.reads {
+                    let exec = matches!(r.0, Reg::S(c) if c == EXEC || c == EXEC + 1);
+                    if !exec && scalars.contains(&r.1) {
+                        return keep(&format!("{:?} the loop writes is read after it at {:#x}", r.0, inst.machine.offset));
+                    }
+                    if whole.contains(&r.1) && !(wide && inst.writes.iter().any(|w| w.0 == r.0)) {
+                        return keep(&format!("a whole-wave {:?} of the loop is read after it at {:#x}", r.0, inst.machine.offset));
+                    }
+                }
+            }
+        }
+        // and it still ends with no lane left
+        if stalls(&mask, b, empty, go_on, &body) {
+            return keep("the loop would not end with no lane left");
+        }
+        if why {
+            eprintln!("WAVE64-LANE-EXIT left out at {:#x}: the loop turns on with no lane left", p.blocks[b].offset);
+        }
+        Some(go_on)
+    };
     let mut blocks = p.blocks.clone();
     let mut any = false;
     for b in 0..n {
         let Exit::Branch { taken, not_taken } = p.blocks[b].exit else {
             continue;
         };
+        if loops && let Some(go_on) = lane_exit(b) {
+            blocks[b].insts.pop();
+            blocks[b].exit = Exit::Jump(go_on);
+            any = true;
+            continue;
+        }
         if !p.blocks[b].insts.last().is_some_and(|i| i.name() == "s_cbranch_execz") {
             continue;
         }
@@ -1071,6 +1286,21 @@ pub(crate) fn without_skips(p: &Program, deep: bool) -> Option<Program> {
     }
     if !any {
         return None;
+    }
+    if loops {
+        // blocks only a left-out exit led to are no longer reached: emptied, as renaming
+        // follows only what is
+        let mut reached = vec![false; n];
+        let mut stack = vec![0];
+        while let Some(x) = stack.pop() {
+            if !std::mem::replace(&mut reached[x], true) {
+                stack.extend(blocks[x].exit.successors());
+            }
+        }
+        for x in (0..n).filter(|&x| !reached[x]) {
+            blocks[x].insts.clear();
+            blocks[x].exit = Exit::End;
+        }
     }
     for block in &mut blocks {
         block.phis.clear();
@@ -1902,6 +2132,67 @@ mod tests {
             .iter()
             .filter(|b| b.insts.last().is_some_and(|i| i.name() == "s_cbranch_execz"))
             .count()
+    }
+
+    /// A loop of six turns counted in s14 that each lane leaves once `s14 > v0` (the HLSL
+    /// `break`): `s_andn2_b64 s[6:7], s[6:7], exec` drops the leaving lanes and
+    /// `s_cbranch_scc0` leaves when none is left. `body` follows the lanes' work; `counted`
+    /// closes the loop on the count (else it turns back unconditionally); `after` follows the
+    /// restore of EXEC behind the loop.
+    fn lane_loop(body: &[u32], counted: bool, after: &[u32]) -> Program {
+        let mut w = vec![
+            0xBE84_047E, // s_mov_b64 s[4:5], exec
+            0xBE8E_0380, // s_mov_b32 s14, 0
+            0xBE86_047E, // s_mov_b64 s[6:7], exec
+        ];
+        let head = w.len();
+        w.extend([
+            0xBE8A_047E, // s_mov_b64 s[10:11], exec
+            0x7DA8_000E, // v_cmpx_gt_u32 exec, s14, v0
+            0x8A86_7E06, // s_andn2_b64 s[6:7], s[6:7], exec
+            0,           // s_cbranch_scc0 out (below)
+            0x87FE_060A, // s_and_b64 exec, s[10:11], s[6:7]
+            0x7E02_020E, // v_mov_b32 v1, s14
+        ]);
+        let exit = head + 3;
+        w.extend_from_slice(body);
+        w.push(0x810E_810E); // s_add_i32 s14, s14, 1
+        if counted {
+            w.push(0xBF09_860E); // s_cmp_ge_u32 s14, 6
+            w.push(0xBF84_0000 | (head as i32 - w.len() as i32 - 1) as u16 as u32); // s_cbranch_scc0 head
+        } else {
+            w.push(0xBF82_0000 | (head as i32 - w.len() as i32 - 1) as u16 as u32); // s_branch head
+        }
+        w[exit] = 0xBF84_0000 | (w.len() - exit - 1) as u32; // s_cbranch_scc0 out
+        w.push(0xBEFE_0404); // out: s_mov_b64 exec, s[4:5]
+        w.extend_from_slice(after);
+        w.push(S_ENDPGM);
+        build_words(&w, true)
+    }
+
+    fn scc0_branches(p: &Program) -> usize {
+        p.blocks
+            .iter()
+            .filter(|b| b.insts.last().is_some_and(|i| i.name() == "s_cbranch_scc0"))
+            .count()
+    }
+
+    #[test]
+    fn a_lane_exit_is_left_out_when_the_loop_ends_on_its_count_and_nothing_sees_the_extra_turns() {
+        // the lanes turn on with EXEC clear until the count ends the loop
+        let plain = lane_loop(&[], true, &[]);
+        assert_eq!(scc0_branches(&plain), 2);
+        assert!(without_skips(&plain, true).is_none());
+        assert_eq!(scc0_branches(&without_lane_exits(&plain).expect("left out")), 1);
+        // the count is read after the loop: the extra turns would show
+        let read = lane_loop(&[], true, &[0x7E04_020E]); // v_mov_b32 v2, s14
+        assert!(without_lane_exits(&read).is_none());
+        // a barrier in the loop, which EXEC does not mask
+        let barrier = lane_loop(&[0xBF8A_0000], true, &[]); // s_barrier
+        assert!(without_lane_exits(&barrier).is_none());
+        // no count: the lanes' exit is the only way out
+        let endless = lane_loop(&[], false, &[]);
+        assert!(without_lane_exits(&endless).is_none());
     }
 
     #[test]

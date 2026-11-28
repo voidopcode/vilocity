@@ -113,18 +113,26 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-28 15:08
+**Latest test run:** 2026-11-28 15:31
 
 | Measure | Value |
 |---------|-------|
 | Frame rate while playing | no frames of the world in this run (menus only) |
-| Shaders that failed to translate | compute 7 |
+| Shaders that failed to translate | none |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
 
 Latest: "will it work on this PC" in the launcher, clothes and faces drawn with another
 texture's colours, the 4-7 fps drops explained and shown on the overlay, and what the
 picture tests of 2026-11-27 evening ruled out.
+- **A start after a good run no longer crashes on AMD (issue 3, to confirm there).** On an RX 9070
+  XT the start after a run crashed two seconds in, inside AMD's shader compiler (a null pointer),
+  until the cache was deleted. Both crashes came a second after the run's first save of the host
+  pipeline library had renamed a new file over the one the run was reading from (the same kind of
+  failure as runs 72, 73 and 82 here, a removed device after pages of that file read as zeros).
+  A run now leaves its saves beside that file (`host-pipelines.next`), and the next start puts
+  the newest in place before reading it. Nothing is lost: the run's own new pipelines are in its
+  library already.
 - **The launcher shows its version.** Under the Update button: the workspace version, and for a
   copy made with git the commit and its date (`v0.1.0 · 10b81fc · 28 Nov 2026`), else the
   engine's build date, so a report can say which build it comes from.
