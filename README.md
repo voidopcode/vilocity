@@ -113,13 +113,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-28 15:47
+**Latest test run:** 2026-11-28 17:13
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 26.3 fps, 38 ms a frame |
-| Best while playing | 38.5 fps |
-| Last frame | 26.3 fps, 38 ms, 4542 draws, 134 dropped without a pipeline |
+| Frame rate while playing (typical) | 25.6 fps, 39 ms a frame |
+| Best while playing | 32.6 fps |
+| Last frame | 24.9 fps, 40 ms, 5364 draws, 274 dropped without a pipeline |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -309,7 +309,10 @@ picture tests of 2026-11-27 evening ruled out.
 - **Every setting, in the launcher and on F1, kept together.** The launcher's options
   have a list for each of the game's settings (upscaler, DLSS model, frame generation,
   light in the shade, shade in creases, brighter nights, fog light cap, reflections
-  stand-in, heat haze, steadier picture, torn-frame fix), the picture buttons included.
+  stand-in, heat haze, motion blur, steadier picture, torn-frame fix), the picture buttons included.
+  Motion blur is off by default (the game's `CS_MotionBlurDownSampleWithVBD` left out: no
+  tile has motion, so nothing is blurred; the motion vectors DLSS reads stay); "On" gives
+  the game's blur back at the next start.
   "Shade in creases" (live) is how strongly the light stand-in darkens corners and folds,
   faces included: its 0.6 m reach is the suspect for dark patches on faces in close-ups. They and the game's
   F1 menu read and write one file (`menu.txt` in the data folder), so each shows what

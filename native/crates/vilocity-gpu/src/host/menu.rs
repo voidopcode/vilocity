@@ -103,6 +103,12 @@ const HAZE: Item = Item {
     choices: &[("On", 0.0), ("Off", 1.0)],
     help: "The game's shimmer above hot ground and fire. Applies at the next start",
 };
+const BLUR: Item = Item {
+    name: "Motion blur *",
+    knob: Knob::Blur,
+    choices: &[("Off", 0.0), ("On", 1.0)],
+    help: "The game's blur when the camera or things move fast. Next start",
+};
 const TORN_FIX: Item = Item {
     name: "Torn-frame fix *",
     knob: Knob::TornFix,
@@ -154,9 +160,9 @@ const CAP: Item = Item {
 
 /// The settings of an NVIDIA card (DLSS, frame generation), and of the others
 /// (the game's own AMD FSR, no frame generation).
-static NVIDIA_ITEMS: [Item; 13] =
-    [PICTURE, UPSCALER_NVIDIA, DLSS_MODEL, FRAME_GEN, CAP, LIGHT, SHADE, NIGHT, FOG, REFLECTIONS, HAZE, STEADY, TORN_FIX];
-static OTHER_ITEMS: [Item; 11] = [PICTURE, UPSCALER_OTHER, CAP, LIGHT, SHADE, NIGHT, FOG, REFLECTIONS, HAZE, STEADY, TORN_FIX];
+static NVIDIA_ITEMS: [Item; 14] =
+    [PICTURE, UPSCALER_NVIDIA, DLSS_MODEL, FRAME_GEN, CAP, LIGHT, SHADE, NIGHT, FOG, REFLECTIONS, HAZE, BLUR, STEADY, TORN_FIX];
+static OTHER_ITEMS: [Item; 12] = [PICTURE, UPSCALER_OTHER, CAP, LIGHT, SHADE, NIGHT, FOG, REFLECTIONS, HAZE, BLUR, STEADY, TORN_FIX];
 
 /// The settings this PC's card has.
 fn items() -> &'static [Item] {
@@ -199,6 +205,7 @@ fn at_start(knob: Knob) -> f32 {
         },
         Knob::Haze => f32::from(u8::from(std::env::var("VILOCITY_LEAVE_OUT").is_ok_and(|v| v.contains("731a39171b568298")))),
         Knob::TornFix => f32::from(u8::from(std::env::var("VILOCITY_CARD_STEPS").is_ok_and(|v| v.trim() == "0"))),
+        Knob::Blur => f32::from(u8::from(!std::env::var("VILOCITY_LEAVE_OUT").is_ok_and(|v| v.contains("51e19585b4753814")))),
         Knob::Shade => std::env::var("VILOCITY_AMBIENT_SHADE")
             .ok()
             .and_then(|v| v.split(',').next().and_then(|s| s.trim().parse::<f32>().ok()))
@@ -215,7 +222,7 @@ fn value(knob: Knob) -> f32 {
 /// Whether a change of `knob` waits for the next start.
 fn next_start(knob: Knob) -> bool {
     match knob {
-        Knob::Upscaler | Knob::Picture | Knob::DlssModel | Knob::Haze | Knob::TornFix => true,
+        Knob::Upscaler | Knob::Picture | Knob::DlssModel | Knob::Haze | Knob::TornFix | Knob::Blur => true,
         Knob::FrameGen => !crate::streamline::framegen_live(),
         _ => false,
     }

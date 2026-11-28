@@ -741,6 +741,7 @@ $menuItems = @(
     @{ key = 'fog'; label = 'Fog light cap'; choices = @(@('Game', 0), @('1.0', 1.0), @('1.5', 1.5), @('2.0', 2.0), @('3.0', 3.0)); default = { 1.5 } }
     @{ key = 'reflections'; label = 'Reflections stand-in'; choices = @(@('Off', 0), @('On', 1)); default = { 0 } }
     @{ key = 'haze'; label = 'Heat haze *'; choices = @(@('On', 0), @('Off', 1)); default = { 0 } }
+    @{ key = 'blur'; label = 'Motion blur *'; choices = @(@('Off', 0), @('On', 1)); default = { 0 } }
     @{ key = 'steady'; label = 'Steadier picture (about 1.5 ms slower)'; choices = @(@('Off', 0), @('On', 1)); default = { if ($set.steady) { 1 } else { 0 } } }
     @{ key = 'tornfix'; label = 'Torn-frame fix * (much slower)'; choices = @(@('Off', 0), @('On', 1)); default = { 0 } }
 )

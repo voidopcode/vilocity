@@ -43,9 +43,11 @@ pub(crate) enum Knob {
     /// How strongly the light stand-in shades creases (`VILOCITY_AMBIENT_SHADE`'s
     /// first value; 1 as it is, 0 none).
     Shade,
+    /// The title's motion blur at the next start: 0 left out (the default), 1 as the game has it.
+    Blur,
 }
 
-pub(crate) const KNOBS: [Knob; 13] = [
+pub(crate) const KNOBS: [Knob; 14] = [
     Knob::Light,
     Knob::Night,
     Knob::Fog,
@@ -59,6 +61,7 @@ pub(crate) const KNOBS: [Knob; 13] = [
     Knob::Haze,
     Knob::TornFix,
     Knob::Shade,
+    Knob::Blur,
 ];
 
 impl Knob {
@@ -78,6 +81,7 @@ impl Knob {
             Knob::Haze => "haze",
             Knob::TornFix => "tornfix",
             Knob::Shade => "shade",
+            Knob::Blur => "blur",
         }
     }
 }

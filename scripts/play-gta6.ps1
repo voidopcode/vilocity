@@ -203,6 +203,8 @@ if (-not $Defaults -and $menu.ContainsKey('picture')) { $Picture = @('1080p', '1
 if (-not $Defaults -and $menu.dlssmodel -ge 1) { $env:VILOCITY_DLSS_PRESET = @('', 'j', 'k', 'l', 'm')[[math]::Min(4, [int]$menu.dlssmodel)] }
 # (The title's heat haze, CS_IndirectApplyDiffusionInScattering_HeatHaze, left out.)
 if (-not $Defaults -and $menu.haze -ge 1) { $env:VILOCITY_LEAVE_OUT = (@($env:VILOCITY_LEAVE_OUT, '731a39171b568298') | Where-Object { $_ }) -join ',' }
+# The title's motion blur left out unless F1 or the launcher turned it on (the user's choice, 2026-11-28).
+if (-not $Defaults -and -not ($menu.blur -ge 1)) { $env:VILOCITY_LEAVE_OUT = (@($env:VILOCITY_LEAVE_OUT, '51e19585b4753814') | Where-Object { $_ }) -join ',' }
 # The torn-frame fix: the steps done on the card ahead of the flights left out (no torn frames, much slower).
 if (-not $Defaults -and $menu.tornfix -ge 1) { $env:VILOCITY_CARD_STEPS = "0" }
 # DLSS: only with an NVIDIA card and the Streamline SDK's files there (louketa/foxhound's way).
