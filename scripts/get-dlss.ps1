@@ -46,7 +46,7 @@ try {
             throw "$dll is not signed by NVIDIA"
         }
     }
-    Write-Host "DLSS is ready: $bin (NVIDIA's licences beside it). Choose an upscaler in the launcher's Options or in the game (F1)." -ForegroundColor Green
+    Write-Host "DLSS is ready: $bin (NVIDIA's licences beside it). Choose an upscaler in the launcher's Settings or in the game (F1)." -ForegroundColor Green
     exit 0
 } catch {
     Write-Host "Could not get DLSS: $($_.Exception.Message)" -ForegroundColor Yellow

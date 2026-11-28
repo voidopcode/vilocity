@@ -63,15 +63,21 @@ last line says `Finished`.
 1. Open the launcher: `.\target\release\vilocity-launcher.exe` in the same PowerShell
    window (or double-click that file). It leaves a **Vilocity** shortcut in the
    `vilocity` folder: use that from then on.
-2. Pick your game folder. **This PC** shows what the launcher found (card,
-   video memory, RAM); fix anything it marks in red. If another program holds
-   video memory, **Close it** frees it.
-3. Choose **1080p**, **1440p** or **4K** (1080p is the fastest) and press **PLAY**.
+2. The launcher looks for your game folder by itself; **Change folder** picks another.
+   On a first start it sets the best settings for your PC (the picture your card and
+   memory take, DLSS where it is installed), and **Will it run on this PC?** shows what
+   they need of the card and the memory against what is free. **This PC** has every
+   check: fix anything it marks in red (if another program holds video memory,
+   **Close it** frees it).
+3. Press **PLAY**. The rest is optional, and all of it is in the launcher: **Settings**
+   (the box at the top finds any setting, the engine's own included), **Keys and mouse**
+   (press **+**, then the key) and **Tools** (help, save backups, clearing the cache).
 
 The launcher picks the engine's settings for your PC. The first start
 translates the game's shaders ahead (about a minute on 16 cores), and the first
 session stutters while the graphics driver builds its pipelines;
-**Tools → Build all pipelines ahead** does that before you play instead.
+**Tools → Cache and temporary files → Build all pipelines ahead** does that
+before you play instead.
 
 **5. In the game**
 - An Xbox controller works. With keyboard and mouse, click in the window to
@@ -79,7 +85,7 @@ session stutters while the graphics driver builds its pipelines;
   [Controls](#controls).
 - **F11**: full screen or window. **F8**: hides or shows the frame rate panel.
 
-**Updating**: the launcher's **Update** button (bottom left) turns purple when a newer
+**Updating**: the launcher's **Update** button (top right) turns purple when a newer
 Vilocity is out. Pressing it asks first, then downloads it and builds the engine in the
 background, and opens the launcher again when done; up to date, it only says so. By hand:
 in the `vilocity` folder run `git pull`, then `cargo build --release -p vilocity` again.
@@ -90,10 +96,12 @@ in the `vilocity` folder run `git pull`, then `cargo build --release -p vilocity
   it yet. It only opens the launcher, and you build it yourself from its source
   (`apps/vilocity/src/bin/vilocity-launcher.rs`). Double-click **`Vilocity Launcher.cmd`** in the
   `vilocity` folder instead: it opens the same launcher.
-- "Engine: not built yet": run the build in step 3, then press **Check again** in the launcher.
-- Logs are in `%LOCALAPPDATA%\vilocity\logs`. Bring the newest one, with your
-  card, driver and Windows version, to the
-  [Discord server](https://discord.gg/mWzP7ejTek).
+- "Engine: not built yet": run the build in step 3 (or press **Build it** beside that line),
+  then **Check again** on the launcher's **This PC** page.
+- For help, press **Help on Discord** in the launcher: it opens the
+  [Discord server](https://discord.gg/mWzP7ejTek). **Tools → Ask for help → Copy a report**
+  puts your card, driver, settings and the end of the newest log on the clipboard (your user
+  name taken out) to paste there. The logs themselves are in `%LOCALAPPDATA%\vilocity\logs`.
 
 ## GTA VI progress
 
@@ -113,13 +121,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-28 19:57
+**Latest test run:** 2026-11-28 20:18
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 21.8 fps, 46 ms a frame |
-| Best while playing | 25.6 fps |
-| Last frame | 18.7 fps, 53 ms, 10558 draws, 310 dropped without a pipeline |
+| Frame rate while playing (typical) | 29.6 fps, 34 ms a frame |
+| Best while playing | 44.7 fps |
+| Last frame | 22.8 fps, 44 ms, 7988 draws, 174 dropped without a pipeline |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
@@ -127,6 +135,35 @@ loads saves and gets into the world. The world is where the work is now.
 Latest: "will it work on this PC" in the launcher, clothes and faces drawn with another
 texture's colours, the 4-7 fps drops explained and shown on the overlay, and what the
 picture tests of 2026-11-27 evening ruled out.
+- **A new launcher: everything can be set in it.** Tabs along the top; PLAY, what is happening
+  and what is chosen along the bottom of every page.
+  - **Best for this PC**: one press sets the picture the card and the memory take (1440p only
+    with a 14 GB card, 40 GB of memory and no more than 3 GB of the card held by other
+    programs) and DLSS Quality where it is installed. A first start sets them by itself, and
+    **Undo** puts the settings of before back. With no game folder known, the game is looked
+    for on the PC's drives.
+  - **Will it run on this PC?**: two bars show what the chosen picture needs of the card and
+    of the memory against what is free (what a running game holds counts as its own).
+  - **Settings**: one box finds a setting by a word, each says what it does where the mouse
+    points, and those that change in a running game are marked. The same box finds any of the
+    engine's settings by its name or its note in the source, to be set there: no
+    `NAME=VALUE` line to type.
+  - **Keys and mouse**: press **+** beside an action, then the key or mouse button; a click
+    takes a key away. The actions have the game's own names, as on F1's keys page. The
+    mouse's speed, smoothing and up/down are there too.
+  - **Setups**: Fastest, Sharpest, your own by name, and one as a line of text to send to
+    someone (a pasted one can only pick among a setting's own choices, and never turns the
+    sandbox off).
+  - **Tools**: a help report, save backups put back from a list, and **Clear them** for the
+    cache and the temporary files of the game and the launcher. What older versions of the
+    shader translator made is never read again and nothing removed it: 98 GB in 2.85 million
+    files on the PC this is made on. (Tried on made-up files so far: the first real clearing,
+    and the start after it, is still to be watched.)
+  - **Steadier**: the PC is checked on a thread of its own (the window is there about 2 s after the
+    start), an error in a button's or a timer's code is said and written to
+    `logs\launcher.txt` while the window stays, a second launcher shows the first, and a game
+    that runs already is followed, not started twice. `scripts\launcher.ps1 -Check` tries the
+    launcher's own logic in a folder of its own.
 - **The wave-wide shader forms are off by default again (`VILOCITY_WATER_LIGHT=1` to try them).**
   v0.1.117 turned them on for every wave64 program that translates no other way. That family
   once hung an RTX 5080 and froze the whole PC, and it also covered programs that lost the card
@@ -925,8 +962,8 @@ except G, F8 (the frame rate panel), F11 (the whole screen), Left Alt (gives the
 mouse back) and the keys Windows keeps for itself.
 
 The keys are in `%LOCALAPPDATA%\vilocity\data\keys.txt` (made on the first
-start): change them there and save, and the running game takes them within a
-second. `VILOCITY_MOUSE_SENSITIVITY` (1.0) sets the mouse's speed. (Keys and
+start): change them on the launcher's **Keys and mouse** page, or in the file, and the
+running game takes them within a second. `VILOCITY_MOUSE_SENSITIVITY` (1.0) sets the mouse's speed. (Keys and
 mouse are proneonn/Vertex's, by way of cool_fox.)
 
 ### Sandbox

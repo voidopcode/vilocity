@@ -37,7 +37,7 @@ try {
         }
         Move-Item $tmp $to -Force
     }
-    Write-Host "AMD FSR is ready: $Into (AMD's licence beside it). FSR frame generation can be turned on in the launcher's Options or in the game (F1)." -ForegroundColor Green
+    Write-Host "AMD FSR is ready: $Into (AMD's licence beside it). FSR frame generation can be turned on in the launcher's Settings or in the game (F1)." -ForegroundColor Green
     exit 0
 } catch {
     Write-Host "Could not get AMD FSR: $($_.Exception.Message)" -ForegroundColor Yellow

@@ -225,7 +225,7 @@ if ($Dlss -ne 'off' -and -not $Defaults) {
         }
         Write-Host "DLSS ($Dlss) through the Streamline SDK in $sl."
     } else {
-        Write-Host "DLSS is not on: it needs an NVIDIA RTX card and NVIDIA's Streamline SDK (sl.interposer.dll) in $sl (the launcher's Options: Get DLSS, or scripts\get-dlss.ps1)."
+        Write-Host "DLSS is not on: it needs an NVIDIA RTX card and NVIDIA's Streamline SDK (sl.interposer.dll) in $sl (the launcher's Settings: Get DLSS, or scripts\get-dlss.ps1)."
     }
 }
 # The console the title is shown, and the size of the screen it is told of.
@@ -246,7 +246,7 @@ if (-not $Defaults -and $Dlss -ne 'off' -and $pc.maker -ne 'nvidia') { $env:VILO
 # DLSS's): AMD's DLL beside the upscaler (the launcher's Get FSR, or scripts\get-fsr.ps1).
 if (-not $Defaults -and $FrameGen -and $pc.maker -ne 'nvidia' -and $env:VILOCITY_FSR_DLL) {
     if (Test-Path (Join-Path (Split-Path $env:VILOCITY_FSR_DLL) "amd_fidelityfx_framegeneration_dx12.dll")) { $env:VILOCITY_FSR_FRAMEGEN = "1"; Write-Host "AMD FSR frame generation on." }
-    else { Write-Host "AMD FSR frame generation needs AMD's DLLs: the launcher's Options, Get FSR (or scripts\get-fsr.ps1)." }
+    else { Write-Host "AMD FSR frame generation needs AMD's DLLs: the launcher's Settings, Get FSR (or scripts\get-fsr.ps1)." }
 }
 
 # One game at a time: two that start together share the card, the caches and DLSS's
@@ -327,7 +327,7 @@ try {
     Write-Host "Vilocity exited with code $code (log: $log)"
     # (Issue 3: a PC where Windows refused the sandbox its own folders.)
     if (-not $NoSandbox -and $code -ne 0 -and (Select-String -Path $log -Pattern '(os error 5)' -SimpleMatch -Quiet)) {
-        Write-Host "Windows refused the sandbox a folder (access denied). To play without the sandbox: launcher, Options, untick Sandbox. Please attach this log to an issue."
+        Write-Host "Windows refused the sandbox a folder (access denied). To play without the sandbox: launcher, Settings, turn Sandbox off. Please attach this log to an issue."
     }
     # (Issue 3: AMD's compiler crashed reading the pipeline library an earlier run saved, two seconds in;
     # deleting the cache cured it. Only the library goes: the next start makes it again.)
