@@ -1882,8 +1882,10 @@ impl HostHeap {
     /// grey ([`neutral_for`], no card memory) while it views no host texture, instead of
     /// nothing, which reads as black: black faces and black streaks on the sun's glint at
     /// 1440p with the card full (2026-11-28). A slot that still shows an earlier copy keeps it.
+    /// `VILOCITY_HELD_GREY=0`: nothing, as before.
     pub(crate) fn texture_slot_grey(&self, index: u32, handle: u64) {
-        if self.kept_in(index).is_some() {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if !*ON.get_or_init(|| std::env::var_os("VILOCITY_HELD_GREY").is_none_or(|v| v != "0")) || self.kept_in(index).is_some() {
             return;
         }
         let Some(view) = crate::descriptor::view(handle) else { return };

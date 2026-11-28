@@ -113,13 +113,13 @@ loads saves and gets into the world. The world is where the work is now.
 | 9 | Missions start to finish | 🔴 not yet | ░░░░░░░░░░ |
 
 <!-- status:start (written by scripts/update-status.ps1 on every commit; edits here are overwritten) -->
-**Latest test run:** 2026-11-28 01:23
+**Latest test run:** 2026-11-28 01:36
 
 | Measure | Value |
 |---------|-------|
-| Frame rate while playing (typical) | 20.8 fps, 48 ms a frame |
-| Best while playing | 28.0 fps |
-| Last frame | 16.1 fps, 62 ms, 10122 draws, 253 dropped without a pipeline |
+| Frame rate while playing (typical) | 15.7 fps, 64 ms a frame |
+| Best while playing | 22.6 fps |
+| Last frame | 20.7 fps, 48 ms, 3835 draws, 334 dropped without a pipeline |
 | Shaders that failed to translate | compute 7 |
 | Host pipelines refused by the driver | 0 |
 <!-- status:end -->
