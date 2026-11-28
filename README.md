@@ -60,8 +60,9 @@ PowerShell they can show in red as `NativeCommandError`): it worked when the
 last line says `Finished`.
 
 **4. Play**
-1. Double-click **`Vilocity Launcher.cmd`** in the `vilocity` folder. From then on use the
-   **Vilocity** shortcut it leaves next to it: the same launcher, with no console window.
+1. Open the launcher: `.\target\release\vilocity-launcher.exe` in the same PowerShell
+   window (or double-click that file). It leaves a **Vilocity** shortcut in the
+   `vilocity` folder: use that from then on.
 2. Pick your game folder. **This PC** shows what the launcher found (card,
    video memory, RAM); fix anything it marks in red. If another program holds
    video memory, **Close it** frees it.
@@ -761,7 +762,7 @@ engine's own commands are under `vilocity native ...` and `vilocity compat ...`.
 
 ### GTA VI first run
 
-Double-click the `Vilocity` shortcut (or `Vilocity Launcher.cmd` before the first build): pick the game folder, look at what the
+Double-click the `Vilocity` shortcut (the first time, `target\release\vilocity-launcher.exe`): pick the game folder, look at what the
 check of the PC says, press PLAY. Without the window:
 `scripts\play-gta6.ps1 -Game <game folder>` starts the game with the engine's
 measured settings and opens `scripts\monitor-gta6.ps1`: frame rate, memory, CPU

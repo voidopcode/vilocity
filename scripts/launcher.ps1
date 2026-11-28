@@ -1,6 +1,6 @@
 # The Vilocity launcher: one window to check the PC, pick the game folder, set the
 # options and play GTA VI. Start it with the "Vilocity" shortcut in the repository's folder
-# (made once the engine is built; before that "Vilocity Launcher.cmd"). It runs scripts\play-gta6.ps1, which holds the engine's settings; what is
+# (target\release\vilocity-launcher.exe, built with the engine, makes it the first time). It runs scripts\play-gta6.ps1, which holds the engine's settings; what is
 # chosen here is kept in %LOCALAPPDATA%\vilocity\launcher.json.
 #   scripts\launcher.ps1 [-Shot <file.png> [-Page <0-4>]]   (-Shot: draw the window, at that page, to a picture and leave)
 param([string]$Shot, [int]$Page = 0)
