@@ -96,7 +96,9 @@ if (-not $Defaults) {
     # these are the settings of its own launcher, measured there on an RTX 4090
     # (a median of about 30 fps as a Series S). Each can be set before starting.
     $settings = [ordered]@{
-        VILOCITY_AMBIENT = "0.8"; VILOCITY_AMBIENT_AIR = "1.5"   # light in the shade, in place of the traced light
+        # Light in the shade, in place of the traced light: 1.2 (it was 0.8, cool_fox's; against the
+        # sun the sides turned to the camera were near black: issue 6).
+        VILOCITY_AMBIENT = "1.2"; VILOCITY_AMBIENT_AIR = "1.5"
         VILOCITY_TEXTURE_NO_WAIT = "1"
         VILOCITY_RELAY = "2"; VILOCITY_RELAY_COPY = "1"; VILOCITY_WIDE_BACK = "1"   # what shaders wrote is copied back by threads of its own
         VILOCITY_CARD_REHASH_RUNS = "1"; VILOCITY_CARD_STEPS = "2"; VILOCITY_CARD_AWAKE = "1"

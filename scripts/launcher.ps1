@@ -735,7 +735,7 @@ $menuItems = @(
     @{ key = 'upscaler'; label = 'Upscaler *'; nvidia = $true; dlss = $true; choices = @(@('DLSS Off', 0), @('DLSS Quality', 1), @('DLSS Balanced', 2), @('DLSS Performance', 3)); default = { if ($set.dlss) { 1 } else { 0 } } }
     @{ key = 'dlssmodel'; label = 'DLSS model *'; nvidia = $true; dlss = $true; choices = @(@('Default', 0), @('J', 1), @('K', 2), @('L', 3), @('M', 4)); default = { 0 } }
     @{ key = 'framegen'; label = 'Frame generation'; nvidia = $true; fg = $true; choices = @(@('Off', 0), @('2x', 2), @('3x', 3), @('4x', 4)); default = { if ($set.framegen) { 2 } else { 0 } } }
-    @{ key = 'light'; label = 'Light in the shade'; choices = @(@('Off', 0), @('0.4', 0.4), @('0.6', 0.6), @('0.8', 0.8), @('1.0', 1.0), @('1.2', 1.2), @('1.5', 1.5)); default = { 0.8 } }
+    @{ key = 'light'; label = 'Light in the shade'; choices = @(@('Off', 0), @('0.4', 0.4), @('0.6', 0.6), @('0.8', 0.8), @('1.0', 1.0), @('1.2', 1.2), @('1.5', 1.5)); default = { 1.2 } }
     @{ key = 'shade'; label = 'Shade in creases (faces too)'; choices = @(@('Off', 0), @('0.5', 0.5), @('1.0', 1.0)); default = { 1.0 } }
     @{ key = 'night'; label = 'Brighter nights'; choices = @(@('Off', 0), @('0.03', 0.03), @('0.05', 0.05), @('0.08', 0.08), @('0.12', 0.12)); default = { if ($set.night) { 0.05 } else { 0 } } }
     @{ key = 'fog'; label = 'Fog light cap'; choices = @(@('Game', 0), @('1.0', 1.0), @('1.5', 1.5), @('2.0', 2.0), @('3.0', 3.0)); default = { 1.5 } }
